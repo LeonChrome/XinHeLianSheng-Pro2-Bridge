@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>XinHeLianShengPico2WFlasher</AssemblyName>
+    <AssemblyTitle>新和联胜 Pico 2 W 固件工具</AssemblyTitle>
+    <Product>新和联胜 Pico 2 W Pro2 无线背挂</Product>
+    <Description>内置并校验 Pico 2 W Pro2 无线桥接固件的一键刷写工具。</Description>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.9.0-r40-candidate</InformationalVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationIcon>..\v55_manager_app\assets\icon.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource
+      Include="..\..\release\pico2w-pro2-wireless-test-r40\XinHeLianSheng-Pico2W-Pro2-Wireless-Bridge-test-r40.uf2"
+      LogicalName="XinHeLianSheng.Pico2W.Firmware.r40.uf2" />
+  </ItemGroup>
+</Project>

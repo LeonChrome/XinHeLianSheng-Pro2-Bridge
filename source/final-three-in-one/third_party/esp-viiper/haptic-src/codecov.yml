@@ -1,0 +1,14 @@
+ignore:
+  - "examples/go/**/*"
+  - "**/_testing/**/*"
+  - "cmd/viiper/**/*"
+  - "docs/**/*"
+  - "tests/e2e/**/*"
+  - "internal/codegen/**/*"
+
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+

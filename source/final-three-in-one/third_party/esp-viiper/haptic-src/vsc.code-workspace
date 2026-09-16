@@ -1,0 +1,28 @@
+{
+    "folders": [
+        {
+            "path": "docs"
+        },
+        {
+            "path": "scripts"
+        },
+        {
+            "path": "examples"
+        },
+        {
+            "path": ".github"
+        },
+        {
+            "name": "root",
+            "path": "."
+        }
+    ],
+    "extensions": {
+        "recommendations": [
+            "golang.go"
+        ]
+    },
+    "settings": {
+        "powershell.cwd": "root"
+    }
+}

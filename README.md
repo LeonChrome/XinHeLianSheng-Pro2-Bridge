@@ -1,5 +1,9 @@
 # 新和联胜三合一 / XinHeLianSheng Three-In-One
 
+> **项目已停止更新。** 不再计划新的功能、优化、修复版本或 Release。现有源码、程序、历史下载及开源协议保留，供使用、学习和自行 fork；已知问题不承诺后续修复。
+>
+> **This project is discontinued.** No further features, optimizations, fixes or releases are planned. Existing source, binaries, historical downloads and licenses remain available for use, study and independent forks. Future fixes for known issues are not promised.
+
 把真实 **Switch 2 Pro / Pro2 手柄**用于更多设备与游戏：一个 Windows 控制中心，三个独立入口——**Pico 2 W 背挂、ESP32-S3 接收板、Windows BLE / VIIPER 无开发板版**。
 
 Use a real **Switch 2 Pro / Pro2 controller** with more devices and games through one Windows control center and three separate routes: **Pico 2 W backpack, ESP32-S3 receiver, and Windows BLE / VIIPER without a bridge board**.
@@ -159,9 +163,17 @@ d32df651d33e6964c4fae41b07823bfddc5fb3809d176ec367410da27def3202
 
 Release checksums verify downloads. `PACKAGE_VERIFY.txt` verifies extraction/hashes of four embedded backends, **not end-to-end hardware stability**. Publication does not further modify communication code or overwrite legacy builds.
 
-默认分支 `main` 是项目首页和指南，**GitHub 自动源码压缩包不等于四个后端的统一构建快照**。历史源码路线保留在 `codex/v6.2.25-finale-dual-release` 和 `codex/v5.9.13-finale-dual-release`；本次所内置修改版 VIIPER 的源码、构建文件与许可证另附在 [VIIPER Bundled Source](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/three-in-one-r40-test/XinHeLianSheng-VIIPER-Bundled-Source.zip)。
+**整体源码已整理到 [source/final-three-in-one](source/final-three-in-one)，构建与版本对应详见 [源码说明](source/final-three-in-one/README.md)。** 包含控制中心、Pico 刷机工具与现存 R55 固件、ESP V5.9.19 固件 / Manager、独立 Switch 1 R4 实验、Windows V6.2.32 R2、修改版 VIIPER、工具和测试。固定源码检查点：[final-source-20260916](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/tree/final-source-20260916/source/final-three-in-one)。
 
-The default `main` branch contains the landing page and guides; **GitHub's automatic source archive is not a unified build snapshot of all four backends**. Historical source routes remain in the two release branches above. Modified bundled VIIPER source/build files/licenses are available in the separately attached source archive.
+**Complete maintained-route source is collected in [source/final-three-in-one](source/final-three-in-one); see its README for building and version provenance.** It includes the center, Pico flasher/current R55 firmware, ESP V5.9.19 firmware/Manager, separate Switch 1 R4 experiment, Windows V6.2.32 R2, modified VIIPER, tooling and tests. The fixed source checkpoint is `final-source-20260916`.
+
+**源码封存不改变已发布 EXE。** Pico 固件源码是现存 R55，不是历史 R40 的逐字快照；R40 UF2 保留供 R40 刷机工具编译使用，不能仅指定 `r40` 编译标签就把 R55 源码还原成旧固件。其他源码也不承诺与已发布二进制逐字节重现。SDK、编译器、系统驱动安装、日志、凭据与缓存不属于项目源码。
+
+**Source publication does not change the released EXE.** Pico firmware source is the available R55, not an exact historical R40 snapshot. R40 UF2 is retained for rebuilding the R40 flasher; setting a revision string to `r40` cannot restore old firmware behavior. Byte-identical reproduction is not promised for other binaries either. SDKs, compilers, installed drivers, logs, credentials and caches are not project source.
+
+历史源码路线仍保留在 `codex/v6.2.25-finale-dual-release` 和 `codex/v5.9.13-finale-dual-release`。Release 原来附带的 [VIIPER Bundled Source](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/three-in-one-r40-test/XinHeLianSheng-VIIPER-Bundled-Source.zip) 也继续保留。GitHub 默认分支旧目录属于历史代码，以 `source/final-three-in-one` 为本次封存入口。
+
+Historical source branches and the previously attached VIIPER archive remain available. Legacy directories on the default branch are historical references; use `source/final-three-in-one` as the final publication entry.
 
 项目自有代码保留 [Apache-2.0](LICENSE)，第三方组件继续适用各自协议，详见 [分发说明 / Distribution Notice](docs/THREE_IN_ONE_DISTRIBUTION_NOTICE.md) 和 [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)。本项目独立于 Nintendo、Sony、Microsoft、Valve 等厂商；模式、商标与素材不代表官方授权或认证。
 

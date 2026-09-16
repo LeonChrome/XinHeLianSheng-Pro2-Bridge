@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.26100.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Y700Switch2V60Viiper</AssemblyName>
+    <AssemblyTitle>PRO2 手柄无线接收器控制板 V6.2.32 Test r2</AssemblyTitle>
+    <Product>PRO2 手柄无线接收器控制板</Product>
+    <Description>V6.2.32 test r2 fixes full-range capture lifetime and completion feedback.</Description>
+    <Version>6.2.32</Version>
+    <AssemblyVersion>6.2.32.0</AssemblyVersion>
+    <FileVersion>6.2.32.0</FileVersion>
+    <InformationalVersion>6.2.32-stick-calibration-test-r2</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;artifacts\**</DefaultItemExcludes>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
+    <Resource Include="Assets\Characters\kratos.png" />
+    <Resource Include="Assets\Characters\mario.png" />
+    <Resource Include="Assets\Characters\master-chief.png" />
+    <EmbeddedResource Include="..\..\tools\viiper\haptic-v0.8.0\viiper-haptic.exe" LogicalName="Embedded.viiper.haptic.exe" />
+    <EmbeddedResource Include="..\..\tools\viiper\haptic-v0.8.0\LICENSE.txt" LogicalName="Embedded.viiper.haptic.license" />
+    <EmbeddedResource Include="..\..\tools\usbip-win2\v0.9.7.7\USBip-0.9.7.7-x64.exe" LogicalName="Embedded.usbip.installer" />
+    <EmbeddedResource Include="..\..\tools\usbip-win2\v0.9.7.7\LICENSE.txt" LogicalName="Embedded.usbip.license" />
+  </ItemGroup>
+</Project>
+
+

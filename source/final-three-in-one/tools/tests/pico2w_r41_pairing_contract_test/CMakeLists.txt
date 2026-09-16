@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.17)
+project(pico2w_r41_pairing_contract_test CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(SRC "${CMAKE_CURRENT_LIST_DIR}/../../../firmware/pico2w_pro2_wireless_bridge/src")
+add_executable(pico2w_r41_pairing_contract_test main.cpp)
+target_include_directories(pico2w_r41_pairing_contract_test PRIVATE "${SRC}")
+target_compile_definitions(pico2w_r41_pairing_contract_test PRIVATE
+    CLASSIC_GAMEPAD_SOURCE="${SRC}/classic_gamepad.cpp"
+    BTSTACK_CONFIG_SOURCE="${SRC}/btstack_config.h")
+if(MSVC)
+    target_compile_options(pico2w_r41_pairing_contract_test PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(pico2w_r41_pairing_contract_test PRIVATE -Wall -Wextra -Werror)
+endif()

@@ -1,0 +1,188 @@
+<Window x:Class="XinHeLianSheng.Pico2WFlasher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="新和联胜 Pico 2 W 固件工具"
+        Width="980" Height="800" MinWidth="820" MinHeight="620"
+        WindowStartupLocation="CenterScreen" Background="#0D1020"
+        FontFamily="Microsoft YaHei UI" Foreground="#F4F6FF">
+    <Window.Resources>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="#171B30" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Padding" Value="20" />
+            <Setter Property="Margin" Value="0,0,0,14" />
+        </Style>
+        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#2A304D" />
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#12162A" Padding="28,22">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="新和联胜 Pico 2 W 固件工具" FontSize="26" FontWeight="Bold" />
+                    <TextBlock Text="识别开发板、校验固件、刷入并验证启动，一次完成。"
+                               Foreground="#AAB2D5" Margin="0,6,0,0" FontSize="14" />
+                </StackPanel>
+                <Border Grid.Column="1" Background="#252B49" CornerRadius="12" Padding="14,8">
+                    <TextBlock x:Name="FirmwareBadge" Text="读取内置固件…" Foreground="#C9C6FF"
+                               FontWeight="SemiBold" VerticalAlignment="Center" />
+                </Border>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled" Padding="28,22">
+            <StackPanel MaxWidth="920">
+                <Border Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border x:Name="StatusDot" Width="14" Height="14" CornerRadius="7"
+                                Background="#F4B740" VerticalAlignment="Top" Margin="0,5,14,0" />
+                        <StackPanel Grid.Column="1">
+                            <TextBlock x:Name="DeviceStatusTitle" Text="正在检测 Pico 2 W…"
+                                       FontSize="19" FontWeight="Bold" />
+                            <TextBlock x:Name="DeviceStatusDetail" Margin="0,7,18,0"
+                                       Foreground="#AAB2D5" FontSize="13.5" />
+                        </StackPanel>
+                        <Button x:Name="RefreshButton" Grid.Column="2" Style="{StaticResource SecondaryButton}"
+                                Content="重新检测" Click="RefreshButton_Click" Padding="16,9" />
+                    </Grid>
+                </Border>
+
+                <Grid Margin="0,0,0,14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="14" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="14" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0">
+                        <StackPanel>
+                            <TextBlock Text="1" FontSize="30" FontWeight="Bold" Foreground="#7770FF" />
+                            <TextBlock Text="断开 Pro2" FontSize="16" FontWeight="Bold" Margin="0,6,0,5" />
+                            <TextBlock Text="刷写时仅保留 Pico 的电脑 USB。关闭背挂电池电源，避免双路供电。"
+                                       Foreground="#AAB2D5" FontSize="13" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0">
+                        <StackPanel>
+                            <TextBlock Text="2" FontSize="30" FontWeight="Bold" Foreground="#7770FF" />
+                            <TextBlock Text="进入 BOOTSEL" FontSize="16" FontWeight="Bold" Margin="0,6,0,5" />
+                            <TextBlock Text="可点击自动进入；若旧固件不支持，就按住 BOOTSEL 再插电脑 USB。"
+                                       Foreground="#AAB2D5" FontSize="13" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="4" Style="{StaticResource Card}" Margin="0">
+                        <StackPanel>
+                            <TextBlock Text="3" FontSize="30" FontWeight="Bold" Foreground="#7770FF" />
+                            <TextBlock Text="刷入并验证" FontSize="16" FontWeight="Bold" Margin="0,6,0,5" />
+                            <TextBlock Text="工具只接受 RP2350，并在重启后读取 r40 身份。现有分模式配对资料保留。"
+                                       Foreground="#AAB2D5" FontSize="13" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="配对与重连" FontSize="18" FontWeight="Bold" />
+                        <TextBlock Margin="0,9,0,0" Foreground="#D6DAF0"
+                                   Text="切换模式后：没有保存过主机就持续开放配对；已有主机先快速回连一次，失败后进入 30 秒连续可发现窗口，避免反复主动连接时让新设备看得见却连不上。" />
+                        <TextBlock Margin="0,8,0,0" Foreground="#FFD38A" FontWeight="SemiBold"
+                                   Text="Windows 正常应直接完成 PS5 / Edge 配对。若旧蓝牙适配器或驱动弹出 PIN，只输入 0000；不要输入 1234。" />
+                        <TextBlock Margin="0,8,0,0" Foreground="#C9C6FF" FontWeight="SemiBold"
+                                   Text="换新设备：长按 GL + GR + ZL + ZR + Plus + Minus 2 秒。Pro2 轻震两下后，当前模式重新开放配对。" />
+                        <Grid Margin="0,13,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="WirelessStatusButton" Grid.Column="0"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Content="读取当前无线状态"
+                                    Click="WirelessStatusButton_Click" Padding="14,9" />
+                            <Button x:Name="ClearPairingButton" Grid.Column="2"
+                                    Background="#8A3D5B" Content="清除旧配对并重新开放"
+                                    Click="ClearPairingButton_Click" Padding="14,9" />
+                        </Grid>
+                        <TextBlock Margin="0,8,0,0" Foreground="#AAB2D5"
+                                   Text="PC / Android / macOS / iPhone：在系统蓝牙页面选择 Xbox Wireless Controller、Wireless Controller 或 DualSense Edge Wireless Controller。Switch 1：切到 Pro Controller 模式，再进入“手柄 > 更改握法/顺序”。" />
+                        <Border Background="#351C28" CornerRadius="9" Padding="12,9" Margin="0,11,0,0">
+                            <TextBlock Foreground="#FFB4C1"
+                                       Text="主机边界：Xbox BLE 不能连接 Xbox 主机；PS5 / Edge 蓝牙身份当前不能完成实体 PS5 主机要求的 USB 首次配对与认证。" />
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="刷机操作" FontSize="18" FontWeight="Bold" />
+                        <TextBlock x:Name="FirmwareDetail" Margin="0,8,0,16" Foreground="#AAB2D5" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="AutoBootselButton" Grid.Column="0"
+                                    Content="让已连接的 Pico 自动进入 BOOTSEL"
+                                    Click="AutoBootselButton_Click" IsEnabled="False" />
+                            <Button x:Name="FlashButton" Grid.Column="2"
+                                    Content="开始刷入内置固件" Click="FlashButton_Click"
+                                    IsEnabled="False" />
+                        </Grid>
+                        <CheckBox x:Name="VerifyAfterFlashCheckBox" IsChecked="True"
+                                  Content="刷写后等待调试串口并验证固件版本（推荐）"
+                                  Margin="2,15,0,0" Foreground="#D6DAF0" />
+                        <ProgressBar x:Name="FlashProgress" Height="8" Margin="0,16,0,0"
+                                     Minimum="0" Maximum="100" Value="0"
+                                     Background="#282D47" Foreground="#6C63FF" />
+                        <TextBlock x:Name="OperationStatus" Text="等待开发板。"
+                                   Margin="0,10,0,0" Foreground="#C8CEE9" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="180" />
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
+                            <TextBlock Text="诊断记录" FontSize="17" FontWeight="Bold" />
+                            <Button HorizontalAlignment="Right" Style="{StaticResource SecondaryButton}"
+                                    Content="打开日志目录" Click="OpenLogDirectory_Click" Padding="13,7" />
+                        </Grid>
+                        <TextBox x:Name="LogTextBox" Grid.Row="1" IsReadOnly="True"
+                                 Background="#0C0F1D" Foreground="#BFC7E8" BorderThickness="0"
+                                 Padding="12" FontFamily="Consolas" FontSize="12.5"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 TextWrapping="NoWrap" />
+                    </Grid>
+                </Border>
+
+                <TextBlock Text="能力边界：Xbox 模式无陀螺仪；PS5 / Edge 不模拟音频设备和 HD haptic；Xbox 与 PS5 实体主机均不在当前支持范围；Pro2 静默模式只有配合 GP3 控制的 5 V 负载开关，才能真正断开 Pro2 有线主机。"
+                           Foreground="#7F88AB" FontSize="12.5" Margin="4,0,4,18" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

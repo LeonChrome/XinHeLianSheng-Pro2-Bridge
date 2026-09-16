@@ -1,0 +1,481 @@
+<Window x:Class="Y700Switch2V55Manager.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PRO2 手柄无线接收器控制板"
+        Width="1320" Height="880" MinWidth="1120" MinHeight="760"
+        Background="#F3F6FA"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <SolidColorBrush x:Key="Ink" Color="#0F172A"/>
+        <SolidColorBrush x:Key="Muted" Color="#64748B"/>
+        <SolidColorBrush x:Key="PanelFill" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="PanelBorder" Color="#D9E2EC"/>
+        <LinearGradientBrush x:Key="HeroFill" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#0F172A" Offset="0"/>
+            <GradientStop Color="#14253F" Offset="0.52"/>
+            <GradientStop Color="#1E293B" Offset="1"/>
+        </LinearGradientBrush>
+
+        <Style x:Key="Panel" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource PanelFill}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="18"/>
+            <Setter Property="Padding" Value="18"/>
+            <Setter Property="Margin" Value="0,0,0,14"/>
+        </Style>
+
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+
+        <Style x:Key="HintText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="LineHeight" Value="20"/>
+        </Style>
+
+        <Style x:Key="MetricLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+        </Style>
+
+        <Style x:Key="MetricValue" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
+        <Style x:Key="InputBox" TargetType="TextBox">
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="BorderBrush" Value="#CBD5E1"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="FieldCombo" TargetType="ComboBox">
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="BorderBrush" Value="#CBD5E1"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+        </Style>
+
+        <Style x:Key="ModernButton" TargetType="Button">
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="MinWidth" Value="92"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="BorderBrush" Value="#CBD5E1"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Background" Value="#0F766E"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#0F766E"/>
+        </Style>
+
+        <Style x:Key="RoseButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Background" Value="#E11D48"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#E11D48"/>
+        </Style>
+
+        <Style x:Key="SubtleButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Background" Value="#F8FAFC"/>
+        </Style>
+
+        <Style x:Key="ModeDeckButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="BorderThickness" Value="1.4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top"
+                Background="{StaticResource HeroFill}"
+                BorderBrush="#1E293B"
+                BorderThickness="0,0,0,1"
+                Padding="24,20,24,18">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Border Background="#E0F2FE" BorderBrush="#7DD3FC" BorderThickness="1" CornerRadius="15" Padding="10,4" Margin="0,0,10,0">
+                            <TextBlock Text="V5.9.18 Switch 1 Connect + Rumble Test r4" Foreground="#0F172A" FontSize="12" FontWeight="SemiBold"/>
+                        </Border>
+                        <Border Background="#172554" BorderBrush="#60A5FA" BorderThickness="1" CornerRadius="15" Padding="10,4">
+                            <TextBlock Text="ESP 控制台" Foreground="#FFFFFF" FontSize="12" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                    <TextBlock Text="PRO2 手柄无线接收器控制板"
+                               Foreground="#F8FAFC"
+                               FontSize="30"
+                               FontWeight="SemiBold"
+                               Margin="0,12,0,6"/>
+                    <TextBlock Text="这个 EXE 只负责 ESP32-S3 的固件烧录、USB/串口检测、Pro2 BLE 绑定与日志诊断。五个模式点击即刷入：PS5、Pro2、Xbox、PS5 Edge、Switch 1。"
+                               Foreground="#CBD5E1"
+                               FontSize="14"
+                               TextWrapping="Wrap"
+                               MaxWidth="860"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button Style="{StaticResource PrimaryButton}" Content="首次使用向导" Click="OpenFirstRunGuide_Click"
+                            Margin="0,0,10,0" Padding="14,8" MinWidth="116"/>
+                    <Border Background="{Binding UsbIndicatorBrush}" CornerRadius="18" Padding="12,8" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="10" Height="10" Fill="#FFFFFF" Margin="0,0,8,0"/>
+                            <TextBlock Text="{Binding UsbLightText}" Foreground="#FFFFFF" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Background="{Binding BleDisplayBackgroundBrush}" BorderBrush="{Binding BleDisplayBorderBrush}" BorderThickness="1" CornerRadius="18" Padding="12,8" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="10" Height="10" Fill="{Binding BleDisplayBrush}" Margin="0,0,8,0"/>
+                            <TextBlock Text="{Binding BleDisplayText}" Foreground="{Binding BleDisplayForegroundBrush}" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Background="{Binding OverallStatusBackgroundBrush}" CornerRadius="18" Padding="12,8">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="10" Height="10" Fill="{Binding OverallBrush}" Margin="0,0,8,0"/>
+                            <TextBlock Text="{Binding OverallStatus}" Foreground="{Binding OverallStatusForegroundBrush}" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Margin="18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="382"/>
+                <ColumnDefinition Width="18"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource SectionTitle}" Text="连接与检测"/>
+                            <ComboBox Style="{StaticResource FieldCombo}"
+                                      ItemsSource="{Binding Ports}"
+                                      SelectedItem="{Binding SelectedPort}"
+                                      DisplayMemberPath="DisplayName"
+                                      Margin="0,0,0,10"/>
+                            <WrapPanel Margin="-4,0,0,0">
+                                <Button Style="{StaticResource SubtleButton}" Content="刷新串口" Command="{Binding RefreshPortsCommand}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="USB 检查" Command="{Binding CheckUsbCommand}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="音频列表" Command="{Binding ListAudioCommand}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="修复 CH343 驱动" Command="{Binding RepairCh343DriverCommand}" IsEnabled="{Binding CanRepairCh343Driver}"/>
+                            </WrapPanel>
+                            <TextBlock Style="{StaticResource HintText}" Text="{Binding PortStatus}" Margin="0,10,0,0"/>
+                            <TextBlock Style="{StaticResource HintText}" Text="{Binding UsbStatus}" Margin="0,6,0,0"/>
+                            <TextBlock Style="{StaticResource HintText}" Text="{Binding AudioStatus}" Margin="0,6,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource SectionTitle}" Text="Pro2 手柄连接"/>
+                            <Border Background="#EFF6FF" BorderBrush="#93C5FD" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding ConnectionGuideTitle}" FontSize="16" FontWeight="SemiBold" Foreground="#1E3A8A"/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="{Binding ConnectionGuideDetail}" Margin="0,6,0,0"/>
+                                    <TextBlock Style="{StaticResource MetricLabel}" Text="{Binding ConnectionTargetText}" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <WrapPanel Margin="-4,0,0,0">
+                                <Button Style="{StaticResource PrimaryButton}" Content="首次连接" Command="{Binding BleFirstPairCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                <Button Style="{StaticResource PrimaryButton}" Content="重连已配对" Command="{Binding BleReconnectCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="更换手柄" Command="{Binding BleReplaceControllerCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                            </WrapPanel>
+                            <TextBlock Style="{StaticResource HintText}" Text="{Binding BleStatus}" Margin="0,10,0,0"/>
+
+                            <Expander Header="高级 BLE 工具" Margin="0,12,0,0">
+                                <StackPanel Margin="0,8,0,0">
+                                    <WrapPanel Margin="-4,0,0,0">
+                                        <Button Style="{StaticResource SubtleButton}" Content="扫描" Command="{Binding BleScanCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="列表" Command="{Binding BleListCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="自动开" Command="{Binding BleAutoOnCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="自动关" Command="{Binding BleAutoOffCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="断开" Command="{Binding BleDisconnectCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                    </WrapPanel>
+                                    <TextBlock Style="{StaticResource MetricLabel}" Text="目标地址 / 序号 / 名称关键词" Margin="0,10,0,4"/>
+                                    <TextBox Style="{StaticResource InputBox}" Text="{Binding BleTarget, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBlock Style="{StaticResource MetricLabel}" Text="扫描结果" Margin="0,10,0,4"/>
+                                    <ComboBox Style="{StaticResource FieldCombo}"
+                                              ItemsSource="{Binding BleDevices}"
+                                              SelectedItem="{Binding SelectedBleDevice}"
+                                              DisplayMemberPath="DisplayName"/>
+                                    <WrapPanel Margin="-4,8,0,0">
+                                        <Button Style="{StaticResource PrimaryButton}" Content="连接所选目标" Command="{Binding BleConnectCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="重置摇杆中心" Command="{Binding InputRecalibrateCommand}" IsEnabled="{Binding CanUseBleButtons}"/>
+                                    </WrapPanel>
+                                    <TextBlock Style="{StaticResource HintText}" Text="{Binding BleCandidates}" Margin="0,8,0,0" FontFamily="Consolas"/>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource SectionTitle}" Text="快捷工具"/>
+                            <WrapPanel Margin="-4,0,0,0">
+                                <Button Style="{StaticResource PrimaryButton}" Content="首次使用向导" Click="OpenFirstRunGuide_Click"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="joy.cpl" Command="{Binding OpenJoyCommand}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="设备管理器" Command="{Binding OpenDeviceManagerCommand}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="HID 恢复固件" Command="{Binding FlashHidOnlyCommand}" IsEnabled="{Binding CanSwitchModes}"/>
+                                <Button Style="{StaticResource RoseButton}" Content="清理固件" Command="{Binding EraseFirmwareCommand}" IsEnabled="{Binding CanSwitchModes}"/>
+                            </WrapPanel>
+
+                            <Expander Header="Dual Pro2 BLE 能力探针" Margin="0,12,0,0">
+                                <StackPanel Margin="0,8,0,0">
+                                    <TextBlock Style="{StaticResource HintText}" Text="当前 ESP 固件只实现双 Pro2 BLE 探针：两只真实手柄、单手柄镜像、或全合成 133Hz。四只 Pro2 133Hz 暂未实现为正式能力。"/>
+                                    <WrapPanel Margin="-4,8,0,0">
+                                        <Button Style="{StaticResource SubtleButton}" Content="刷入双 Pro2 探针" Command="{Binding ActivateDualPro2ProbeModeCommand}" IsEnabled="{Binding CanSwitchModes}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="真实双手柄" Command="{Binding DualProbeRealCommand}" IsEnabled="{Binding CanUseDualProbeButtons}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="单手柄镜像" Command="{Binding DualProbeMirrorCommand}" IsEnabled="{Binding CanUseDualProbeButtons}"/>
+                                        <Button Style="{StaticResource PrimaryButton}" Content="全合成 133Hz" Command="{Binding DualProbeSyntheticCommand}" IsEnabled="{Binding CanUseDualProbeButtons}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="读取状态" Command="{Binding DualProbeStatusCommand}" IsEnabled="{Binding CanUseDualProbeButtons}"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Expander>
+
+                            <TextBlock Style="{StaticResource MetricLabel}" Text="下一步动作" Margin="0,12,0,4"/>
+                            <TextBlock Style="{StaticResource MetricValue}" Text="{Binding NextAction}"/>
+                            <TextBlock Style="{StaticResource MetricLabel}" Text="内置包" Margin="0,12,0,4"/>
+                            <TextBlock Style="{StaticResource HintText}" Text="{Binding FirmwareSummary}"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="0.95*"/>
+                    <RowDefinition Height="1.05*"/>
+                </Grid.RowDefinitions>
+
+                <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <Border Style="{StaticResource Panel}">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource SectionTitle}" Text="五模式烧录台"/>
+                                        <TextBlock Style="{StaticResource HintText}" Text="点击卡片会直接刷入对应固件。刷写完成后请重新插拔原生 USB / OTG，再执行 USB 检查。"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                        <TextBlock Style="{StaticResource MetricLabel}" Text="当前 USB 模式"/>
+                                        <TextBlock Style="{StaticResource MetricValue}" Text="{Binding CurrentModeLabel}" HorizontalAlignment="Right"/>
+                                        <TextBlock Style="{StaticResource MetricLabel}" Text="目标模式" Margin="0,10,0,0"/>
+                                        <TextBlock Style="{StaticResource MetricValue}" Text="{Binding DesiredModeLabel}" HorizontalAlignment="Right"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <UniformGrid Columns="2" Rows="3">
+                                    <Button Style="{StaticResource ModeDeckButton}"
+                                            Background="{Binding DualSenseCardBackground}"
+                                            BorderBrush="{Binding DualSenseCardBorderBrush}"
+                                            Command="{Binding ActivateDualSenseModeCommand}"
+                                            IsEnabled="{Binding CanSwitchModes}"
+                                            Margin="0,0,10,10"
+                                            ToolTip="{Binding DualSenseCardTooltip}">
+                                        <StackPanel Margin="18">
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="PS5 标准" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                                <Border Grid.Column="1" Background="{Binding DualSenseCardBadgeBrush}" CornerRadius="12" Padding="10,4">
+                                                    <TextBlock Text="{Binding DualSenseCardStateText}" Foreground="#FFFFFF" FontSize="12" FontWeight="SemiBold"/>
+                                                </Border>
+                                            </Grid>
+                                            <TextBlock Style="{StaticResource HintText}" Text="VID_054C&amp;PID_0CE6。标准 DualSense 路线，主打 HD 震动与 PS5 IMU。"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Style="{StaticResource ModeDeckButton}"
+                                            Background="{Binding Pro2CardBackground}"
+                                            BorderBrush="{Binding Pro2CardBorderBrush}"
+                                            Command="{Binding ActivatePro2ModeCommand}"
+                                            IsEnabled="{Binding CanSwitchModes}"
+                                            Margin="10,0,0,10"
+                                            ToolTip="{Binding Pro2CardTooltip}">
+                                        <StackPanel Margin="18">
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="Pro2 / Nintendo" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                                <Border Grid.Column="1" Background="{Binding Pro2CardBadgeBrush}" CornerRadius="12" Padding="10,4">
+                                                    <TextBlock Text="{Binding Pro2CardStateText}" Foreground="#FFFFFF" FontSize="12" FontWeight="SemiBold"/>
+                                                </Border>
+                                            </Grid>
+                                            <TextBlock Style="{StaticResource HintText}" Text="VID_057E&amp;PID_2069。主打 Steam 原生 Pro Controller 和稳定 BLE 桥接。"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Style="{StaticResource ModeDeckButton}"
+                                            Background="{Binding XboxCardBackground}"
+                                            BorderBrush="{Binding XboxCardBorderBrush}"
+                                            Command="{Binding ActivateXboxModeCommand}"
+                                            IsEnabled="{Binding CanSwitchModes}"
+                                            Margin="0,10,10,0"
+                                            ToolTip="{Binding XboxCardTooltip}">
+                                        <StackPanel Margin="18">
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="Xbox / XInput" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                                <Border Grid.Column="1" Background="{Binding XboxCardBadgeBrush}" CornerRadius="12" Padding="10,4">
+                                                    <TextBlock Text="{Binding XboxCardStateText}" Foreground="#FFFFFF" FontSize="12" FontWeight="SemiBold"/>
+                                                </Border>
+                                            </Grid>
+                                            <TextBlock Style="{StaticResource HintText}" Text="VID_045E&amp;PID_028E。主打广泛兼容，普通双马达震动回传到 Pro2。"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Style="{StaticResource ModeDeckButton}"
+                                            Background="{Binding DualSenseEdgeCardBackground}"
+                                            BorderBrush="{Binding DualSenseEdgeCardBorderBrush}"
+                                            Command="{Binding ActivateDualSenseEdgeModeCommand}"
+                                            IsEnabled="{Binding CanSwitchModes}"
+                                            Margin="10,10,0,0"
+                                            ToolTip="{Binding DualSenseEdgeCardTooltip}">
+                                        <StackPanel Margin="18">
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="PS5 Edge" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                                <Border Grid.Column="1" Background="{Binding DualSenseEdgeCardBadgeBrush}" CornerRadius="12" Padding="10,4">
+                                                    <TextBlock Text="{Binding DualSenseEdgeCardStateText}" Foreground="#FFFFFF" FontSize="12" FontWeight="SemiBold"/>
+                                                </Border>
+                                            </Grid>
+                                            <TextBlock Style="{StaticResource HintText}" Text="VID_054C&amp;PID_0DF2。Edge 身份，保留 L4/R4 背键与 HD 震动路线。"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Style="{StaticResource ModeDeckButton}"
+                                            Background="{Binding Switch1ProCardBackground}"
+                                            BorderBrush="{Binding Switch1ProCardBorderBrush}"
+                                            Command="{Binding ActivateSwitch1ProModeCommand}"
+                                            IsEnabled="{Binding CanSwitchModes}"
+                                            Margin="0,10,10,0"
+                                            ToolTip="{Binding Switch1ProCardTooltip}">
+                                        <StackPanel Margin="18">
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="Switch 1 / Pro 转接" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                                <Border Grid.Column="1" Background="{Binding Switch1ProCardBadgeBrush}" CornerRadius="12" Padding="10,4">
+                                                    <TextBlock Text="{Binding Switch1ProCardStateText}" Foreground="#FFFFFF" FontSize="12" FontWeight="SemiBold"/>
+                                                </Border>
+                                            </Grid>
+                                            <TextBlock Style="{StaticResource HintText}" Text="VID_057E&amp;PID_2009。初代 Switch 专用测试模式；主机需开启 Pro Controller Wired Communication，不支持 NFC。"/>
+                                        </StackPanel>
+                                    </Button>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Panel}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="20"/>
+                                    <ColumnDefinition Width="1.15*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource MetricLabel}" Text="目标模式概览"/>
+                                    <TextBlock Style="{StaticResource MetricValue}" Text="{Binding DesiredModeLabel}"/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="{Binding DesiredModeDescription}" Margin="0,6,0,0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Style="{StaticResource MetricLabel}" Text="切换提示"/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="{Binding ModeDeckHint}"/>
+                                    <TextBlock Style="{StaticResource MetricLabel}" Text="切换诊断" Margin="0,12,0,4"/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="{Binding ModeSwitchStatus}"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <Border Grid.Row="1" Style="{StaticResource Panel}" Margin="0,0,0,0" MinHeight="260">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource SectionTitle}" Text="日志台"/>
+                            <TextBox Grid.Column="1"
+                                     Style="{StaticResource InputBox}"
+                                     Text="{Binding CustomCommand, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="12,0,10,0"
+                                     ToolTip="串口命令，例如 status lite / ble multiprobe / dual status / haptic status / ble list"/>
+                            <WrapPanel Grid.Column="2">
+                                <Button Style="{StaticResource SubtleButton}" Content="发送" Command="{Binding SendCustomCommand}" IsEnabled="{Binding CanSendCustomSerialCommand}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="清空" Command="{Binding ClearLogCommand}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="导出" Command="{Binding SaveLogCommand}"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="日志目录" Command="{Binding OpenLogFolderCommand}"/>
+                            </WrapPanel>
+                        </Grid>
+
+                        <TextBox x:Name="LogBox"
+                                 Grid.Row="1"
+                                 Text="{Binding LogText, Mode=OneWay}"
+                                 TextChanged="LogBox_TextChanged"
+                                 FontFamily="Consolas"
+                                 FontSize="12"
+                                 IsReadOnly="True"
+                                 IsUndoEnabled="False"
+                                 TextWrapping="NoWrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 Background="#0B1220"
+                                 Foreground="#DBE7F3"
+                                 BorderThickness="0"
+                                 Padding="12"/>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>
+
+

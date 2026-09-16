@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Y700Switch2V55Manager</AssemblyName>
+    <AssemblyTitle>PRO2 手柄无线接收器控制板 V5.9.18 Switch 1 连接与震动测试 r4</AssemblyTitle>
+    <Product>PRO2 手柄无线接收器控制板</Product>
+    <Description>V5.9.18 Switch 1 连接与震动测试 r4，修复 NimBLE GAP 扫描取消竞态、崩溃重启与无限重连。</Description>
+    <Version>5.9.18.4</Version>
+    <AssemblyVersion>5.9.18.4</AssemblyVersion>
+    <FileVersion>5.9.18.4</FileVersion>
+    <InformationalVersion>5.9.18-switch1-connect-rumble-test-r4</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationIcon>assets\icon.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="assets\icon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="assets\photos\switch2_pro_controller_front.jpg" />
+    <Resource Include="assets\photos\xbox_controller_black.png" />
+    <Resource Include="assets\photos\xin_heliansheng.png" />
+    <EmbeddedResource Include="embedded\firmware\v5.9\**\*.*" LogicalName="embedded/firmware/v5.9/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="embedded\tools\**\*.*" LogicalName="embedded/tools/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
+
+
+

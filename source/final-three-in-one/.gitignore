@@ -1,0 +1,26 @@
+# Generated outputs only; retained embedded runtime inputs are intentional.
+**/bin/
+**/obj/
+**/build*/
+**/artifacts/
+**/managed_components/
+**/node_modules/
+**/__pycache__/
+**/.vs/
+*.log
+*.tmp
+*.bak
+*.user
+*.suo
+*.pdb
+*.ilk
+*.o
+*.obj
+*.pyc
+*.dmp
+*.env
+*.pfx
+*.key
+sdkconfig
+sdkconfig.old
+sdkconfig.h

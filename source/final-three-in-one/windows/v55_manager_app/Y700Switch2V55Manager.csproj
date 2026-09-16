@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Y700Switch2V55Manager</AssemblyName>
+    <AssemblyTitle>PRO2 手柄无线接收器控制板 V5.9.19 稳定版本</AssemblyTitle>
+    <Product>PRO2 手柄无线接收器控制板</Product>
+    <Description>V5.9.19 新和联胜 ESP 控制台，修复虚假按键边沿与模式漂移，并新增 macOS 标准 HID 固件。</Description>
+    <Version>5.9.19</Version>
+    <AssemblyVersion>5.9.19.0</AssemblyVersion>
+    <FileVersion>5.9.19.0</FileVersion>
+    <InformationalVersion>5.9.19-input-macos-mode-stability</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationIcon>assets\icon.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="assets\icon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="assets\photos\switch2_pro_controller_front.jpg" />
+    <Resource Include="assets\photos\xbox_controller_black.png" />
+    <Resource Include="assets\photos\xin_heliansheng.png" />
+    <EmbeddedResource Include="embedded\firmware\v5.9\**\*.*" LogicalName="embedded/firmware/v5.9/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="embedded\tools\**\*.*" LogicalName="embedded/tools/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
+
+
+

@@ -1,0 +1,166 @@
+﻿{
+    "packageVersion":  "v5.9.18-switch1-connect-rumble-test-r4-aio",
+    "firmwareVersion":  "5.9.18-switch1-connect-rumble-test-r4-manager",
+    "target":  "esp32s3",
+    "flashMode":  "dio",
+    "flashFreq":  "80m",
+    "flashSize":  "16MB",
+    "defaultProfile":  "pro2_bridge_v5_5",
+    "profiles":  [
+                     {
+                         "id":  "hid_audio_uac1_4ch_dualsense",
+                         "label":  "Xin He Lian Sheng / PS5 standard",
+                         "app":  "esp32s3_dualsense_identity_experiment.bin",
+                         "assets":  [
+                                        {
+                                            "offset":  "0x0",
+                                            "path":  "hid_audio_uac1_4ch_dualsense/bootloader/bootloader.bin",
+                                            "sha256":  "359355f3b3b0bc53ca5722182d0c32b72347289be1dc5dee19a871205fa3df23"
+                                        },
+                                        {
+                                            "offset":  "0x8000",
+                                            "path":  "hid_audio_uac1_4ch_dualsense/partition_table/partition-table.bin",
+                                            "sha256":  "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+                                        },
+                                        {
+                                            "offset":  "0x10000",
+                                            "path":  "hid_audio_uac1_4ch_dualsense/esp32s3_dualsense_identity_experiment.bin",
+                                            "sha256":  "fbecf9a717478b6d6e32278d1e1460f9034b56e2e4178740e25ea5967509724d"
+                                        }
+                                    ]
+                     },
+                     {
+                         "id":  "hid_audio_uac1_4ch_edge",
+                         "label":  "Xin He Lian Sheng / PS5 Edge",
+                         "app":  "esp32s3_dualsense_identity_experiment.bin",
+                         "assets":  [
+                                        {
+                                            "offset":  "0x0",
+                                            "path":  "hid_audio_uac1_4ch_edge/bootloader/bootloader.bin",
+                                            "sha256":  "a7197bdcf7ff61febb57fea399708d7f6eec56332324b7aa83286f5b66477d7f"
+                                        },
+                                        {
+                                            "offset":  "0x8000",
+                                            "path":  "hid_audio_uac1_4ch_edge/partition_table/partition-table.bin",
+                                            "sha256":  "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+                                        },
+                                        {
+                                            "offset":  "0x10000",
+                                            "path":  "hid_audio_uac1_4ch_edge/esp32s3_dualsense_identity_experiment.bin",
+                                            "sha256":  "649a74e4b152801a59ae08e65668e924c0d4b0d417df2bf8fe14b49c613a6a71"
+                                        }
+                                    ]
+                     },
+                     {
+                         "id":  "hid_only",
+                         "label":  "HID-only recovery",
+                         "app":  "esp32s3_dualsense_identity_experiment.bin",
+                         "assets":  [
+                                        {
+                                            "offset":  "0x0",
+                                            "path":  "hid_only/bootloader/bootloader.bin",
+                                            "sha256":  "ff8d2578a0f5559f68b0412d918c57583a1c5b7637b8e4c275ea502bb796a369"
+                                        },
+                                        {
+                                            "offset":  "0x8000",
+                                            "path":  "hid_only/partition_table/partition-table.bin",
+                                            "sha256":  "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+                                        },
+                                        {
+                                            "offset":  "0x10000",
+                                            "path":  "hid_only/esp32s3_dualsense_identity_experiment.bin",
+                                            "sha256":  "95d12553671daef29412ca376bea8255dfca0a6175aea3356b8c463f6cacce3e"
+                                        }
+                                    ]
+                     },
+                     {
+                         "id":  "pro2_bridge_v5_5",
+                         "label":  "Pro2 / Nintendo bridge",
+                         "app":  "esp32s3_switch2_bridge.bin",
+                         "assets":  [
+                                        {
+                                            "offset":  "0x0",
+                                            "path":  "pro2_bridge_v5_5/bootloader/bootloader.bin",
+                                            "sha256":  "41f8ef66dfacabe6e359f9ad27f8ebe35f22e5e6c06e33ab0648ce14e25c16e8"
+                                        },
+                                        {
+                                            "offset":  "0x8000",
+                                            "path":  "pro2_bridge_v5_5/partition_table/partition-table.bin",
+                                            "sha256":  "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+                                        },
+                                        {
+                                            "offset":  "0x10000",
+                                            "path":  "pro2_bridge_v5_5/esp32s3_switch2_bridge.bin",
+                                            "sha256":  "b192e85a34083c95d834b1e6f7e2f5958aeb1d193ba193e5ca3193674cd4b15f"
+                                        }
+                                    ]
+                     },
+                     {
+                         "id":  "xinput_bridge_v5_8",
+                         "label":  "Xbox / XInput bridge",
+                         "app":  "esp32s3_switch2_bridge.bin",
+                         "assets":  [
+                                        {
+                                            "offset":  "0x0",
+                                            "path":  "xinput_bridge_v5_8/bootloader/bootloader.bin",
+                                            "sha256":  "75e953ed2d461874d7d589a55b4c990ce6d55ec713d06af3a94cfe55eed43168"
+                                        },
+                                        {
+                                            "offset":  "0x8000",
+                                            "path":  "xinput_bridge_v5_8/partition_table/partition-table.bin",
+                                            "sha256":  "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+                                        },
+                                        {
+                                            "offset":  "0x10000",
+                                            "path":  "xinput_bridge_v5_8/esp32s3_switch2_bridge.bin",
+                                            "sha256":  "b02db634872410ff85cdd460551b48a0e6b793707714bf51e7164926776e7e3a"
+                                        }
+                                    ]
+                     },
+                     {
+                         "id":  "switch1_pro_bridge_v5_9_18_test",
+                         "label":  "Switch 1 / Pro wired-to-wireless test",
+                         "app":  "esp32s3_switch2_bridge.bin",
+                         "assets":  [
+                                        {
+                                            "offset":  "0x0",
+                                            "path":  "switch1_pro_bridge_v5_9_18_test/bootloader/bootloader.bin",
+                                            "sha256":  "773e5541c30580df3370f62b1adea485cd4cb6c324032db6dc6c322cff3ba7e6"
+                                        },
+                                        {
+                                            "offset":  "0x8000",
+                                            "path":  "switch1_pro_bridge_v5_9_18_test/partition_table/partition-table.bin",
+                                            "sha256":  "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+                                        },
+                                        {
+                                            "offset":  "0x10000",
+                                            "path":  "switch1_pro_bridge_v5_9_18_test/esp32s3_switch2_bridge.bin",
+                                            "sha256":  "6e073488b2b8dc6b113973be26a1e05a6ac2e6efd3613c7dfa01de8cc4b33d3d"
+                                        }
+                                    ]
+                     },
+                     {
+                         "id":  "dual_pro2_probe_v5_9",
+                         "label":  "Dual Pro2 BLE capacity probe",
+                         "app":  "esp32s3_switch2_bridge.bin",
+                         "assets":  [
+                                        {
+                                            "offset":  "0x0",
+                                            "path":  "dual_pro2_probe_v5_9/bootloader/bootloader.bin",
+                                            "sha256":  "80c9e95254c0e1b343daae76e851b1d396c60103164d7abefc21da64077436ce"
+                                        },
+                                        {
+                                            "offset":  "0x8000",
+                                            "path":  "dual_pro2_probe_v5_9/partition_table/partition-table.bin",
+                                            "sha256":  "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+                                        },
+                                        {
+                                            "offset":  "0x10000",
+                                            "path":  "dual_pro2_probe_v5_9/esp32s3_switch2_bridge.bin",
+                                            "sha256":  "29426126ecf0f40efe0d2327d18f5947552ba5e914ac6852e16aa6e0ef4d6a9b"
+                                        }
+                                    ]
+                     }
+                 ],
+    "notes":  "V5.9.18 Switch 1 connection and rumble test r4: fixes the r3 NimBLE GAP cancel/restart race with a single persistent reconnect supervisor and DISC_COMPLETE-owned transitions; keeps the rumble, VIIPER owner, and mode-detection fixes. Existing V5.9.17 profiles remain unchanged."
+}

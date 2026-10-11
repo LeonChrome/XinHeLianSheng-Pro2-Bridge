@@ -3227,6 +3227,20 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         CancellationToken cancellationToken,
         bool experimentalConsent = false)
     {
+        try { await RunBleTurboConfiguratorCoreAsync(restore, cancellationToken, experimentalConsent); }
+        catch (Exception ex)
+        {
+            RecordWin10ConfigurationAttempt(restore ? "restore" : "apply_" + SelectedWin10BlePreset.Id,
+                "流程未完成；类型=" + ex.GetType().Name + "；HRESULT=0x" + ex.HResult.ToString("X8") +
+                (ex is System.ComponentModel.Win32Exception native ? "；Win32Error=" + native.NativeErrorCode : "") +
+                "；不能据此认定参数已生效或达到 133Hz。");
+            throw;
+        }
+    }
+
+    private async Task RunBleTurboConfiguratorCoreAsync(
+        bool restore, CancellationToken cancellationToken, bool experimentalConsent)
+    {
         Win10BlePresetDefinition preset = SelectedWin10BlePreset;
         if (!restore)
         {
@@ -3266,12 +3280,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         AppendLog("[BLE_TURBO_CONFIG] action=" + (restore ? "restore_stack" : "apply_stack_" + preset.Id) +
                   " elevation=requested");
         DateTimeOffset configurationRequestedAt = DateTimeOffset.UtcNow;
+        RecordWin10ConfigurationAttempt(restore ? "restore" : "apply_" + preset.Id, "正在申请管理员配置进程；尚未确认写入或重启完成。");
         using Process? process = Process.Start(startInfo);
         if (process == null)
         {
             throw new InvalidOperationException("管理员配置进程没有启动。 ");
         }
         await process.WaitForExitAsync(cancellationToken);
+        RecordWin10ConfigurationAttempt("child_exit", "exit=" + process.ExitCode + "；进程成功退出不等于实际输入提速。");
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException(
@@ -3289,6 +3305,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         BleConfigurationOperationResult completion = BleConfigurationOperationEvidence.Read(
             restore ? "restore" : "apply", restore ? "original" : preset.Id, configurationRequestedAt);
         bool restartPending = !completion.Known || !completion.RestartSucceeded;
+        RecordWin10ConfigurationAttempt("completion", completion.Code + "；结果已核实=" + completion.Known +
+            "；适配器重启已核实=" + completion.RestartSucceeded + "；真实 FD2 仍需实测。");
         AppendLog("[BLE_TURBO_CONFIG] completion=" + completion.Code + " known=" + completion.Known +
             " restart_verified=" + completion.RestartSucceeded + " automatic_retest_allowed=" + (!restartPending));
         Status = restore ? "蓝牙参数已恢复；如热重启未成功，请正常重启 Windows。"

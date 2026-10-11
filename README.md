@@ -2,7 +2,7 @@
 
 让 **Switch 2 Pro（Pro2）手柄无线接入 Windows**，支持 Steam / Pro2、Pro1、Xbox 与 PS5 兼容模式。纯软件连接，无需 ESP、Pico 或外置接收器。
 
-**[下载 v1.3.17](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v1.3.17)** · [更新说明](docs/RELEASE_v1.3.17_ZH.md) · [源码与构建](source/final-three-in-one/README.md)
+**[下载 v1.3.18](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v1.3.18)** · [更新说明](docs/RELEASE_v1.3.18_ZH.md) · [源码与构建](source/final-three-in-one/README.md)
 
 ![PRO2 手柄助手首页](docs/images/pro2-v1.3.17-home.png)
 
@@ -12,6 +12,7 @@
 - Pro1 / Xbox / PS5 支持背键与 C 键映射：单键、组合键、连发、顺序动作、延迟；未连接也可设置。
 - 陀螺仪校准、震动强度调节、PS5 触觉转换。
 - 显示真实输入频率、电量档位、固件、耳机插入状态及系统 / 蓝牙诊断。
+- “系统与蓝牙信息”直接显示每组预设的请求状态、实测间隔和最终结果，复制全部信息即可反馈。
 - 自动重连；真实输入达到 60Hz 可兼容游玩，首页提示低速原因与优化建议。
 
 ## 使用
@@ -25,6 +26,7 @@
 目标为**真实 133Hz 输入**。真实 FD2 / Parsed 均达到 60Hz 且输入正常时允许游玩；低速时首页显示诊断，不用重复帧伪造回报率。
 
 - **Win11**：自动尝试连接参数，实测后选用较优方案。
+- 每组请求、异常返回码、完整测量和恢复记录在“系统与蓝牙信息”查看；缺失记录明确标注，不推测请求成功。
 - **Win10**：首页“优化蓝牙 · Win10” → 默认“固定 7.5ms” → “授权并测试”。提供三组预设、自动备份和“恢复原参数”；打开选项不会修改系统。
 - Win10 优化会修改系统全局 BLE 参数，其他蓝牙设备可能暂时断开；不能安全重启蓝牙时会提示重启 Windows。
 

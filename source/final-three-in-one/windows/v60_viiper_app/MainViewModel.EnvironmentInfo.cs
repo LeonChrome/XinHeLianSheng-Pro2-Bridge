@@ -14,6 +14,8 @@ public sealed partial class MainViewModel
     private bool environmentInfoBusy;
     private string environmentInfoStatus = "正在准备系统与蓝牙信息…";
     private string environmentMetadata = "尚未采集系统与蓝牙信息。";
+    private string win10ConfigurationHistoryText = "";
+    private string win10ConfigurationAttemptText = "";
 
     public bool EnvironmentInfoBusy => environmentInfoBusy;
     public string EnvironmentInfoStatus => environmentInfoStatus;
@@ -46,6 +48,9 @@ public sealed partial class MainViewModel
         " / " + CompactFirmwareHint + Environment.NewLine + "游戏输出：" +
         (Running ? CompactActualMode : "未启动；BLE 连接不等于游戏手柄已经创建") + Environment.NewLine +
         "电量更新：" + inputSource.RuntimeBatteryRefreshStatus + Environment.NewLine +
+        Environment.NewLine + inputSource.GetAdaptiveDiagnosticText(includeHistory: !previewOnly) +
+        (win10ConfigurationHistoryText.Length > 0 ? "\n" + win10ConfigurationHistoryText + "\n" : "") +
+        (win10ConfigurationAttemptText.Length > 0 ? "\nWin10 本次程序配置操作记录\n" + win10ConfigurationAttemptText : "") +
         (HasLowRateWarning ? "\n低速判定\n" + LowRateReportText : "");
 
     private void InitializeEnvironmentInfo()
@@ -94,9 +99,23 @@ public sealed partial class MainViewModel
     {
         environmentSnapshot = snapshot;
         environmentMetadata = SystemBluetoothDiagnostics.Format(snapshot);
+        bool isWin10 = Version.TryParse(snapshot.System.Version, out Version? systemVersion)
+            && systemVersion.Build is >= 19041 and < 22000;
+        win10ConfigurationHistoryText = isWin10
+            ? previewOnly ? Win10BleDiagnosticHistory.Format(null) : Win10BleDiagnosticHistory.ReadAndFormat(true)
+            : "";
         environmentInfoStatus = "采集于 " + snapshot.CapturedAt.ToString("HH:mm:ss") +
             (snapshot.Warning.Length > 0 ? " · 部分信息未获取" : " · 只读信息");
         NotifyEnvironmentInfo();
+    }
+
+    private void RecordWin10ConfigurationAttempt(string stage, string detail)
+    {
+        if (win10ConfigurationAttemptText.Length > 8192) win10ConfigurationAttemptText = "较早操作已省略。\n";
+        win10ConfigurationAttemptText += DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz") +
+            " · " + stage.Replace('\r', ' ').Replace('\n', ' ') + " · " +
+            detail.Replace('\r', ' ').Replace('\n', ' ') + "\n";
+        OnPropertyChanged(nameof(EnvironmentReportText));
     }
 
     private void NotifyEnvironmentInfo()

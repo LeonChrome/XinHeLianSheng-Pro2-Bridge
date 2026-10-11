@@ -41,11 +41,15 @@ internal static class Program
             BleMeasuredTrialRegressionTests.Run(Check);
             BleAdaptivePresetRegressionTests.Run(Check);
             BleAdaptiveSessionRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
+            BleMeasurementWindowRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
+            BleAdaptiveDiagnosticsRegressionTests.Run(Check);
+            BleAdaptiveDiagnosticStoreRegressionTests.Run(Check, output);
             BleAdaptiveAbiRegressionTests.Run(Check);
             Win10BlePresetRegressionTests.Run(Check);
             Win10GeneralizedStackRegressionTests.Run(Check);
             GeneralizedReportedEnvironmentRegressionTests.Run(Check);
             BleConfigurationOperationRegressionTests.Run(Check);
+            Win10BleDiagnosticHistoryRegressionTests.Run(Check);
             BleOptimizationUiRegressionTests.Run(Check);
             BleGeneralizedUiRegressionTests.Run(Check);
             Win10HomeUiRegressionTests.Run(Check);
@@ -92,9 +96,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "1.3.17.0", "BLE compatibility release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "1.3.18.0", "BLE compatibility release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "1.3.17-home-ble-controls", "BLE compatibility release metadata");
+            "1.3.18-ble-preset-diagnostics", "BLE compatibility release metadata");
         Check(assembly.GetType("Y700Switch2V60Viiper.Pro2LiveBatteryReadPolicy") == null,
             "formal release excludes experimental battery query policy");
         Check(assembly.GetType("Y700Switch2V60Viiper.BleOutputIsolationExperiment") == null,
@@ -888,7 +892,7 @@ internal static class Program
             Save(window, "ui-home-win10-optimization-closed.png");
         }
         Check(vm.IsPro2Selected && !vm.Running, "new settings default Steam/Pro2, no hardware start");
-        Check(vm.CompactSystemText.EndsWith("v1.3.17") &&
+        Check(vm.CompactSystemText.EndsWith("v1.3.18") &&
             (vm.CompactSystemText.Contains("Windows 10") || vm.CompactSystemText.Contains("Windows 11")), "UI system family/version follows runtime metadata");
         Check(vm.CompactCanConnect && vm.CompactConnectText == "连接 Pro2", "offline connection button remains usable");
         var settingsTabs = Descendants<TabControl>(window).First();
@@ -919,17 +923,31 @@ internal static class Program
         settingsTabs.SelectedIndex = 0; Pump(window);
         typeof(MainViewModel).GetMethod("ApplyEnvironmentSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(vm, [EnvironmentDiagnosticsRegressionTests.Fixture()]);
+        var trialFixture = new BleAdaptiveMeasurement(new(10.01, 167, 167, 25, true, true, 60.56, 48), 0, 119.93);
+        var trialResult = new BleAdaptiveRunResult(null, trialFixture, trialFixture, true,
+            "final_low_rate_verified", new[] { new BleAdaptiveTrialRecord("win11_fixed_7p5", true, trialFixture, "no_meaningful_improvement") });
+        var trialSnapshot = BleAdaptiveDiagnosticSnapshot.FromRun(trialResult, new[] {
+            new BleAdaptiveRequestEvidence("win11_fixed_7p5", "apply", 6, 6, 0, 600, "Success", true,
+                ApiCalled: true, ParameterSource: "own_abi") });
+        typeof(Pro2BleInputSource).GetField("adaptiveDiagnosticSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(vm.Pro2Slots[0].InputSource, trialSnapshot);
         var infoButton = (Button)window.FindName("FooterEnvironmentInfoButton");
         infoButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); Pump(window);
         var infoWindow = window.OwnedWindows.OfType<EnvironmentInfoWindow>().Single();
         var infoBox = (System.Windows.Controls.TextBox)infoWindow.FindName("EnvironmentReportBox");
         Check(infoBox.IsReadOnly && infoBox.Text.Contains("22.250.0.2") && infoBox.Text.Contains("Windows 11") &&
             infoBox.Text.Contains("游戏输出：未启动"), "real information window renders driver and output independently");
+        Check(infoBox.Text.Contains("API Status=Success") && infoBox.Text.Contains("实际间隔=60.00ms") &&
+            infoBox.Text.Contains("win11_fixed_15") && infoBox.Text.Contains("没有本组请求或实测记录"),
+            "real copyable information window renders exact request evidence and all preset outcomes");
         Check(!vm.Busy && !vm.Running && vm.Pro2Slots.All(s => !s.InputSource.IsRunning),
             "opening environment window does not run a connection or mode operation");
         infoButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); Pump(window);
         Check(window.OwnedWindows.OfType<EnvironmentInfoWindow>().Count() == 1, "info window single instance");
         Save(infoWindow, "ui-system-bluetooth.png");
+        int presetSection = infoBox.Text.IndexOf("蓝牙预设测试记录", StringComparison.Ordinal);
+        infoBox.ScrollToLine(infoBox.GetLineIndexFromCharacterIndex(presetSection)); Pump(infoWindow);
+        Save(infoWindow, "ui-ble-presets-diagnostics.png");
         infoWindow.Width = 440; infoWindow.Height = 340; Pump(infoWindow);
         Check(infoBox.ActualHeight > 0 && Descendants<ScrollViewer>(infoWindow)
             .All(s => s.ComputedHorizontalScrollBarVisibility != Visibility.Visible),
@@ -938,6 +956,8 @@ internal static class Program
         AwaitUi(vm.ExportEnvironmentInfoAsync(Path.Combine(output, "environment-export-fixture.txt")), window);
         Check(File.ReadAllText(Path.Combine(output, "environment-export-fixture.txt")).Contains("1.9.1051.3008"),
             "information export includes all adapters without connection or VIIPER dependency");
+        Check(File.ReadAllText(Path.Combine(output, "environment-export-fixture.txt")).Contains("API Status=Success"),
+            "existing save/export includes preset outcomes without requesting any new test");
         var source = vm.Pro2Slots[0].InputSource;
         var sourceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
         typeof(Pro2BleInputSource).GetField("transportConnected", sourceFlags)!.SetValue(source, true);

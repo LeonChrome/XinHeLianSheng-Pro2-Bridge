@@ -16,7 +16,7 @@
             <RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel>
             <TextBlock Text="系统与蓝牙信息" FontSize="24" FontWeight="SemiBold"/>
-            <TextBlock Text="设备信息自动记录到启动日志；这里可直接复制或保存。" Foreground="#667870" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            <TextBlock Text="包含系统、驱动及每组蓝牙预设结果。直接复制即可；查看不会重新测试。" Foreground="#667870" Margin="0,8,0,0" TextWrapping="Wrap"/>
         </StackPanel>
         <TextBlock Grid.Row="1" Text="{Binding EnvironmentInfoStatus}" Foreground="#315847" Margin="0,16,0,12" TextWrapping="Wrap"/>
         <Border Grid.Row="2" Background="White" BorderBrush="#DFE7E2" BorderThickness="1" CornerRadius="12" Padding="14">

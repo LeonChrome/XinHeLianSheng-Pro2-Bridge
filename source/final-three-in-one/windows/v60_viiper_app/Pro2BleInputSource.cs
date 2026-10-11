@@ -3128,7 +3128,8 @@ public sealed partial class Pro2BleInputSource :
     private async Task<BleTrialMeasurement> CaptureParameterTrialAsync(
         string phase, int milliseconds, IProgress<string> progress, CancellationToken token)
     {
-        var capture = new Win10BleDiagnosticCapture(Stopwatch.GetTimestamp(), DateTimeOffset.UtcNow);
+        long captureStartTicks = Stopwatch.GetTimestamp();
+        var capture = new Win10BleDiagnosticCapture(captureStartTicks, DateTimeOffset.UtcNow);
         lock (gate)
         {
             if (activeBleDiagnosticCapture != null) throw new InvalidOperationException("BLE capture already active.");
@@ -3142,7 +3143,8 @@ public sealed partial class Pro2BleInputSource :
         bool connectedAtEnd;
         try
         {
-            await Task.Delay(milliseconds, token);
+            await BleMeasurementWindow.WaitUntilElapsedAsync(
+                captureStartTicks, TimeSpan.FromMilliseconds(milliseconds), token);
             lock (gate)
             {
                 samples = capture.Snapshot(Stopwatch.GetTimestamp());
@@ -3619,6 +3621,7 @@ public sealed partial class Pro2BleInputSource :
             win11CompatibilityTrialAttempted = false;
             compatibilityOptimizationSummary = "";
             adaptiveOptimizationRunAttempted = false;
+            ResetAdaptiveDiagnosticEvidenceNoLock();
             retainedConnectionPreference = null;
             liveParsedRateHz = 0;
             liveFd2RateHz = 0;

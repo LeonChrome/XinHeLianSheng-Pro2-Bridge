@@ -32,8 +32,29 @@ public static class BleAdaptiveSessionRunner
     {
         backend.Report("正在测量原连接 · 10 秒");
         BleAdaptiveMeasurement native = await backend.MeasureAsync("NATIVE", token);
-        BleAdaptivePresetPlan plan = BleAdaptivePresetPolicy.CreatePlan(capabilities, native, preferred);
         var trials = new List<BleAdaptiveTrialRecord>();
+        token.ThrowIfCancellationRequested();
+        if (!backend.Connected || !native.Sample.Connected)
+            return new(null, native, native with { Sample = native.Sample with { Connected = false } },
+                false, "link_disconnected", trials);
+        if (!BleAdaptivePresetPolicy.IsValidMeasurement(native))
+        {
+            // Timer rounding, a stale packet or an incomplete first window must
+            // not silently turn an empty plan into a completed preset test. One
+            // same-connection retry is bounded and sends no parameter requests.
+            backend.Report("原连接测量无效 · 同连接补测 10 秒（1/1）；尚未发送预设");
+            native = await backend.MeasureAsync("NATIVE_RETRY", token);
+            token.ThrowIfCancellationRequested();
+            if (!backend.Connected || !native.Sample.Connected)
+                return new(null, native, native with { Sample = native.Sample with { Connected = false } },
+                    false, "link_disconnected", trials);
+            if (!BleAdaptivePresetPolicy.IsValidMeasurement(native))
+            {
+                backend.Report("未进行参数测试 · 两次原连接测量均无效；未发送预设");
+                return new(null, native, native, false, "native_measurement_not_ready", trials);
+            }
+        }
+        BleAdaptivePresetPlan plan = BleAdaptivePresetPolicy.CreatePlan(capabilities, native, preferred);
         if (plan.Candidates.Count == 0)
             return new(null, native, native, BleAdaptivePresetPolicy.IsValidMeasurement(native), plan.Code, trials);
 
@@ -51,7 +72,7 @@ public static class BleAdaptiveSessionRunner
                 restoreFailed = true;
                 winner = null;
                 backend.ReleaseTrialRequest();
-                backend.Report("此前请求恢复被拒绝，已释放试验参数；真实间隔是否恢复需要实测。");
+                backend.Report("此前请求恢复被拒绝，已尝试释放试验参数；清理结果见记录，真实间隔是否恢复需要实测。");
             }
             return restored;
         }
@@ -137,7 +158,7 @@ public static class BleAdaptiveSessionRunner
                 catch (Exception ex)
                 {
                     backend.ReleaseTrialRequest();
-                    backend.Report("取消后的请求恢复失败，已释放试验参数：" + ex.GetType().Name);
+                    backend.Report("取消后的请求恢复失败，已尝试释放试验参数；清理结果见记录：" + ex.GetType().Name);
                 }
             }
         }

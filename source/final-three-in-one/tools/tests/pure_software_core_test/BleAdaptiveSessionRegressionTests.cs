@@ -20,6 +20,77 @@ internal static class BleAdaptiveSessionRegressionTests
         Task<BleAdaptiveRunResult> Run(MockBackend backend, CancellationToken token = default) =>
             BleAdaptiveSessionRunner.RunAsync(caps, backend, null, token);
 
+        var shortNative = native66 with { Sample = native66.Sample with { DurationSeconds = 9.999 } };
+        var retriedNative = new MockBackend(shortNative, native66, target, target);
+        var retriedNativeResult = await Run(retriedNative);
+        check(retriedNative.MeasurePhases.SequenceEqual(new[] { "NATIVE", "NATIVE_RETRY", "win11_fixed_7p5", "win11_fixed_7p5_VERIFY" }) &&
+            retriedNative.Requests.Count == 1 && retriedNativeResult.FinalVerified &&
+            retriedNativeResult.Code == "final_target_verified" && retriedNativeResult.Native == native66,
+            "a 9.999-second first window is retried once on the same connection before any preset is requested");
+        check(retriedNative.Reports.Any(r => r.Contains("尚未发送预设", StringComparison.Ordinal)),
+            "incomplete first-window recovery clearly states that no preset request has been sent yet");
+
+        var invalidTwice = new MockBackend(shortNative, shortNative);
+        var invalidTwiceResult = await Run(invalidTwice);
+        check(invalidTwice.MeasurePhases.SequenceEqual(new[] { "NATIVE", "NATIVE_RETRY" }) &&
+            invalidTwice.Requests.Count == 0 && invalidTwice.Releases == 0 && invalidTwiceResult.Trials.Count == 0 &&
+            invalidTwiceResult.Selected == null && !invalidTwiceResult.FinalVerified &&
+            invalidTwiceResult.Code == "native_measurement_not_ready",
+            "two invalid baseline windows stop with explicit not-ready result, no presets and no restoration mutation");
+        check(invalidTwice.Reports.Last().Contains("未进行参数测试", StringComparison.Ordinal) &&
+            invalidTwice.Reports.Last().Contains("未发送预设", StringComparison.Ordinal) &&
+            invalidTwice.Reports.All(r => !r.Contains("方案测试完成", StringComparison.Ordinal)),
+            "an empty invalid-baseline plan is never reported as completed preset testing");
+
+        var targetAfterRetry = new MockBackend(shortNative, target);
+        var targetAfterRetryResult = await Run(targetAfterRetry);
+        check(targetAfterRetry.Requests.Count == 0 && targetAfterRetryResult.Trials.Count == 0 &&
+            targetAfterRetryResult.FinalVerified && targetAfterRetryResult.Code == "native_target_preserved" &&
+            targetAfterRetry.MeasurePhases.SequenceEqual(new[] { "NATIVE", "NATIVE_RETRY" }),
+            "valid native 133Hz recovered by the single retry remains untouched by all parameter presets");
+
+        foreach (var invalidNative in new[]
+        {
+            native66 with { CompletedAgeSeconds = 16 },
+            native66 with { Sample = native66.Sample with { LastInputAgeMs = 2001 } },
+            native66 with { Sample = native66.Sample with { ParsedCount = 0 } },
+            native66 with { MaximumGapMs = 1 }
+        })
+        {
+            var invalidBackend = new MockBackend(invalidNative, invalidNative);
+            var invalidResult = await Run(invalidBackend);
+            check(invalidBackend.MeasurePhases.Count == 2 && invalidBackend.Requests.Count == 0 &&
+                invalidResult.Code == "native_measurement_not_ready" && !invalidResult.FinalVerified,
+                "stale, incomplete or inconsistent baseline evidence receives only one retry and never a parameter request");
+        }
+
+        var nativeDisconnected = new MockBackend(Sample(connected: false));
+        var nativeDisconnectedResult = await Run(nativeDisconnected);
+        check(nativeDisconnected.MeasurePhases.SequenceEqual(new[] { "NATIVE" }) && nativeDisconnected.Requests.Count == 0 &&
+            !nativeDisconnectedResult.FinalVerified && nativeDisconnectedResult.Code == "link_disconnected",
+            "a disconnected first baseline stops without trying to retry a dead connection");
+        var disconnectedRetry = new MockBackend(shortNative, Sample(connected: false));
+        var disconnectedRetryResult = await Run(disconnectedRetry);
+        check(disconnectedRetry.MeasurePhases.SequenceEqual(new[] { "NATIVE", "NATIVE_RETRY" }) &&
+            disconnectedRetry.Requests.Count == 0 && !disconnectedRetryResult.FinalVerified &&
+            disconnectedRetryResult.Code == "link_disconnected",
+            "disconnect during the single baseline retry cannot be reported as a completed or verified preset test");
+
+        using (var cancelled = new CancellationTokenSource())
+        {
+            var cancelledRetry = new MockBackend(shortNative, native66);
+            cancelledRetry.BeforeMeasure = phase =>
+            {
+                if (phase == "NATIVE_RETRY") cancelled.Cancel();
+            };
+            bool cancelledThrown = false;
+            try { await Run(cancelledRetry, cancelled.Token); }
+            catch (OperationCanceledException) { cancelledThrown = true; }
+            check(cancelledThrown && cancelledRetry.MeasurePhases.Count == 2 && cancelledRetry.Requests.Count == 0 &&
+                cancelledRetry.Releases == 0 && cancelledRetry.ActivePreset == null,
+                "cancellation during baseline retry propagates without requests, restores or an extra retry");
+        }
+
         var noIntervalReader = new MockBackend(native66, target, target);
         var measuredWithoutReader = await BleAdaptiveSessionRunner.RunAsync(new(true, true, false),
             noIntervalReader, null, CancellationToken.None);

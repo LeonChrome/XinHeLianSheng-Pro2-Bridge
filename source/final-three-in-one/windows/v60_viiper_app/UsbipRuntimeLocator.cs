@@ -10,7 +10,7 @@ using Microsoft.Win32;
 
 namespace Y700Switch2V60Viiper;
 
-public sealed record UsbipRuntime(string ExePath, string DirectoryPath);
+public sealed record UsbipRuntime(string ExePath, string DirectoryPath, string Source = "unknown");
 public sealed record UsbipInstaller(string InstallerPath, string? LicensePath);
 public sealed record UsbipProbeResult(bool Ready, string Detail);
 
@@ -19,13 +19,16 @@ public static class UsbipRuntimeLocator
     public const string BundledVersion = "v0.9.7.7";
     public const string InstallerFileName = "USBip-0.9.7.7-x64.exe";
 
-    public static UsbipRuntime? Find()
+    public static UsbipRuntime? Find(string? configuredExePath = null)
     {
-        foreach (string candidate in CandidatePaths().Distinct(StringComparer.OrdinalIgnoreCase))
+        string configured = configuredExePath ?? V60UserSettings.Load().UsbipExecutablePath;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in CandidatePaths(configured))
         {
-            if (File.Exists(candidate))
+            string path = NormalizeExecutablePath(candidate.Path);
+            if (path.Length > 0 && seen.Add(path) && File.Exists(path))
             {
-                return new UsbipRuntime(candidate, Path.GetDirectoryName(candidate) ?? "");
+                return new UsbipRuntime(path, Path.GetDirectoryName(path) ?? "", candidate.Source);
             }
         }
 
@@ -152,45 +155,117 @@ public static class UsbipRuntimeLocator
         return false;
     }
 
-    private static IEnumerable<string> CandidatePaths()
+    public static string NormalizeExecutablePath(string? value)
     {
-        foreach (string pathCandidate in PathEnvironmentCandidates())
-        {
-            yield return pathCandidate;
-        }
+        string path = NormalizeAbsolutePath(value);
+        return path.Length > 0 && string.Equals(Path.GetFileName(path), "usbip.exe", StringComparison.OrdinalIgnoreCase)
+            ? path : "";
+    }
 
-        foreach (string registryCandidate in InstalledProductCandidates())
+    private static string NormalizeAbsolutePath(string? value)
+    {
+        try
         {
-            yield return registryCandidate;
+            string text = Environment.ExpandEnvironmentVariables((value ?? "").Trim().Trim('"')).Trim();
+            return Path.IsPathFullyQualified(text) ? Path.GetFullPath(text) : "";
         }
+        catch { return ""; }
+    }
 
-        foreach (string localRoot in LocalSearchRoots())
+    // DisplayIcon may be "D:\\Custom Folder\\usbip.exe",0. Strip the icon
+    // index BEFORE parsing quotes, rather than leaving a trailing quote behind.
+    // UninstallString is used only to infer a sibling directory, never executed.
+    public static string ParseRegisteredExecutablePath(string? value)
+    {
+        string text = (value ?? "").Trim();
+        if (text.StartsWith('"'))
         {
-            foreach (string found in TryFindUnder(localRoot))
-            {
-                yield return found;
-            }
+            int closing = text.IndexOf('"', 1);
+            if (closing < 0) return "";
+            text = text.Substring(1, closing - 1);
         }
-
-        foreach (string programRoot in ProgramFilesRoots())
+        else
         {
-            yield return Path.Combine(programRoot, "USBip", "usbip.exe");
-            yield return Path.Combine(programRoot, "USBIP", "usbip.exe");
-            yield return Path.Combine(programRoot, "usbip-win2", "usbip.exe");
-            yield return Path.Combine(programRoot, "USBip-win2", "usbip.exe");
-            yield return Path.Combine(programRoot, "USBip", "bin", "usbip.exe");
-            yield return Path.Combine(programRoot, "usbip-win2", "bin", "usbip.exe");
+            int ending = text.LastIndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+            if (ending < 0) return "";
+            text = text[..(ending + 4)];
+        }
+        string path = NormalizeAbsolutePath(text);
+        return path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? path : "";
+    }
+
+    public static IReadOnlyList<string> GetInstallRecordCandidatePaths(
+        string? installLocation, string? displayIcon, string? uninstallString)
+    {
+        var paths = new List<string>();
+        AddDirectory(installLocation);
+        foreach (string? registered in new[] { displayIcon, uninstallString })
+        {
+            string executable = ParseRegisteredExecutablePath(registered);
+            if (executable.Length == 0) continue;
+            if (NormalizeExecutablePath(executable).Length > 0) paths.Add(executable);
+            AddDirectory(Path.GetDirectoryName(executable));
+        }
+        return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+        void AddDirectory(string? value)
+        {
+            string directory = NormalizeAbsolutePath(value);
+            if (directory.Length == 0) return;
+            paths.Add(Path.Combine(directory, "usbip.exe"));
+            paths.Add(Path.Combine(directory, "bin", "usbip.exe"));
         }
     }
 
-    private static IReadOnlyList<string> InstalledProductCandidates()
+    public static IEnumerable<string> GetPathCandidates(string? pathValue)
     {
-        var candidates = new List<string>();
+        foreach (string entry in (pathValue ?? "").Split(Path.PathSeparator,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string directory = NormalizeAbsolutePath(entry);
+            if (directory.Length > 0) yield return Path.Combine(directory, "usbip.exe");
+        }
+    }
+
+    private static IEnumerable<(string Path, string Source)> CandidatePaths(string configuredExePath)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredExePath)) yield return (configuredExePath, "saved_manual_path");
+        foreach (EnvironmentVariableTarget target in new[] { EnvironmentVariableTarget.Process,
+            EnvironmentVariableTarget.User, EnvironmentVariableTarget.Machine })
+        {
+            string? path = null;
+            try { path = Environment.GetEnvironmentVariable("PATH", target); } catch { }
+            foreach (string candidate in GetPathCandidates(path)) yield return (candidate, "path_" + target);
+        }
+        foreach (var candidate in InstalledProductCandidates()) yield return candidate;
+        foreach (string localRoot in LocalSearchRoots())
+        {
+            foreach (string found in TryFindUnder(localRoot)) yield return (found, "near_application");
+        }
+        foreach (string programRoot in ProgramFilesRoots())
+        {
+            foreach (string relative in new[] { "USBip", "usbip-win2" })
+            {
+                yield return (Path.Combine(programRoot, relative, "usbip.exe"), "common_directory");
+                yield return (Path.Combine(programRoot, relative, "bin", "usbip.exe"), "common_directory");
+            }
+        }
+    }
+
+    private static IReadOnlyList<(string Path, string Source)> InstalledProductCandidates()
+    {
+        var candidates = new List<(string Path, string Source)>();
+        foreach (RegistryHive hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
         foreach (RegistryView view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
         {
             try
             {
-                using RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
+                using (RegistryKey? appPath = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\usbip.exe"))
+                {
+                    string path = NormalizeExecutablePath(appPath?.GetValue(null) as string);
+                    if (path.Length > 0) candidates.Add((path, "app_paths_" + hive + "_" + view));
+                }
                 using RegistryKey? uninstall = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
                 if (uninstall == null)
                 {
@@ -199,35 +274,21 @@ public static class UsbipRuntimeLocator
 
                 foreach (string subKeyName in uninstall.GetSubKeyNames())
                 {
-                    using RegistryKey? product = uninstall.OpenSubKey(subKeyName);
-                    string displayName = product?.GetValue("DisplayName") as string ?? "";
-                    if (!displayName.Contains("USBip", StringComparison.OrdinalIgnoreCase) &&
-                        !displayName.Contains("USB-IP", StringComparison.OrdinalIgnoreCase))
+                    try
                     {
-                        continue;
+                        using RegistryKey? product = uninstall.OpenSubKey(subKeyName);
+                        string displayName = product?.GetValue("DisplayName") as string ?? "";
+                        if (!displayName.Contains("USBip", StringComparison.OrdinalIgnoreCase) &&
+                            !displayName.Contains("USB-IP", StringComparison.OrdinalIgnoreCase) &&
+                            !displayName.Contains("USB/IP", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        foreach (string path in GetInstallRecordCandidatePaths(
+                            product?.GetValue("InstallLocation") as string,
+                            product?.GetValue("DisplayIcon") as string,
+                            product?.GetValue("UninstallString") as string))
+                            candidates.Add((path, "uninstall_" + hive + "_" + view));
                     }
-
-                    string installLocation = product?.GetValue("InstallLocation") as string ?? "";
-                    if (!string.IsNullOrWhiteSpace(installLocation))
-                    {
-                        candidates.Add(Path.Combine(installLocation.Trim().Trim('"'), "usbip.exe"));
-                        candidates.Add(Path.Combine(installLocation.Trim().Trim('"'), "bin", "usbip.exe"));
-                    }
-
-                    string displayIcon = product?.GetValue("DisplayIcon") as string ?? "";
-                    if (!string.IsNullOrWhiteSpace(displayIcon))
-                    {
-                        string iconPath = displayIcon.Trim().Trim('"');
-                        int argumentSeparator = iconPath.IndexOf(',');
-                        if (argumentSeparator > 0)
-                        {
-                            iconPath = iconPath[..argumentSeparator];
-                        }
-                        if (iconPath.EndsWith("usbip.exe", StringComparison.OrdinalIgnoreCase))
-                        {
-                            candidates.Add(iconPath);
-                        }
-                    }
+                    catch { /* One inaccessible/bad product must not hide all others. */ }
                 }
             }
             catch
@@ -236,25 +297,6 @@ public static class UsbipRuntimeLocator
             }
         }
         return candidates;
-    }
-
-    private static IEnumerable<string> PathEnvironmentCandidates()
-    {
-        string path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (string dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            string candidate;
-            try
-            {
-                candidate = Path.Combine(dir, "usbip.exe");
-            }
-            catch
-            {
-                continue;
-            }
-
-            yield return candidate;
-        }
     }
 
     private static IEnumerable<string> LocalSearchRoots()
@@ -356,7 +398,7 @@ public static class UsbipRuntimeLocator
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "PRO2WirelessReceiverControlBoard",
             "embedded",
-            "v6.2.32-test-r2",
+            "pure-software-v1.0.0",
             "usbip-win2",
             BundledVersion);
         Directory.CreateDirectory(root);

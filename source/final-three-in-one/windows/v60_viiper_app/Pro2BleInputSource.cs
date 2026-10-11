@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
+using Windows.Devices.Enumeration;
 using Windows.Devices.Radios;
 using Windows.Storage.Streams;
 
@@ -47,7 +48,7 @@ public sealed record Pro2BleDisconnectSignal(
         " abnormal=" + IsAbnormal.ToString().ToLowerInvariant();
 }
 
-public sealed class Pro2BleInputSource :
+public sealed partial class Pro2BleInputSource :
     IGamepadInputSource,
     IGamepadInputMetricsSource,
     IGamepadInputRateSource,
@@ -55,9 +56,98 @@ public sealed class Pro2BleInputSource :
     IGamepadSessionInputSource,
     IGamepadFreshSequentialInputSource,
     IGamepadRealtimeInputSource,
+    IGamepadSignaledInputSource,
     IGamepadRuntimeTelemetrySink,
     IGamepadOutputSink
 {
+    private readonly InputFrameSignal inputSignal = new();
+    private volatile Pro2ConnectionPhase connectionPhase;
+    private volatile bool transportConnected;
+    private volatile bool rateAccepted;
+    private long liveRateProbeTicks;
+    private uint liveRateProbeRaw, liveRateProbeParsed;
+    private double liveParsedRateHz;
+    private long liveRateMeasuredTicks;
+    private readonly NotifyGapWindow liveNotifyGaps = new();
+    public Pro2ConnectionPhase ConnectionPhase => connectionPhase;
+    public bool IsTransportConnected => transportConnected;
+    public bool IsHighRateReady => IsRunning && transportConnected && rateAccepted;
+    public event Action? ConnectionStateChanged;
+
+    private void SetConnectionPhase(Pro2ConnectionPhase phase)
+    {
+        connectionPhase = phase;
+        ConnectionStateChanged?.Invoke();
+    }
+
+    public void RecheckLiveRate()
+    {
+        bool recovered = false;
+        bool downgraded = false;
+        string windowMessage = "";
+        lock (gate)
+        {
+            if (!IsRunning) return;
+            long now = Stopwatch.GetTimestamp();
+            if (liveRateProbeTicks == 0 || fd2InputNotifyCount < liveRateProbeRaw ||
+                fd2InputParsedCount < liveRateProbeParsed)
+            {
+                liveRateProbeTicks = now;
+                liveRateProbeRaw = fd2InputNotifyCount;
+                liveRateProbeParsed = fd2InputParsedCount;
+                liveNotifyGaps.Reset();
+                rateStability.Reset();
+                return;
+            }
+            double seconds = Stopwatch.GetElapsedTime(liveRateProbeTicks, now).TotalSeconds;
+            if (seconds < 5) return;
+            double rawHz = (fd2InputNotifyCount - liveRateProbeRaw) / seconds;
+            double parsedHz = (fd2InputParsedCount - liveRateProbeParsed) / seconds;
+            liveParsedRateHz = parsedHz;
+            liveFd2RateHz = rawHz;
+            liveRateMeasuredTicks = now;
+            windowMessage = "[PRO2_BLE_RATE_WINDOW] seconds=" + seconds.ToString("F2") +
+                " fd2_hz=" + rawHz.ToString("F2") + " parsed_hz=" + parsedHz.ToString("F2") +
+                " " + liveNotifyGaps.SummarizeAndReset(out lastLiveGapSummary);
+            rateStability.ObserveWindow(new(liveRateProbeTicks, now,
+                fd2InputNotifyCount - liveRateProbeRaw, fd2InputParsedCount - liveRateProbeParsed, lastLiveGapSummary));
+            BleRateStabilitySnapshot health = rateStability.Snapshot(now);
+            windowMessage += " health=" + health.State + " health_threshold_hz=" + health.HighRateThresholdHz +
+                " good_windows=" + health.ConsecutiveGoodWindows + " low_windows=" + health.ConsecutiveLowWindows +
+                " measured_seconds=" + health.ValidMeasuredSeconds.ToString("F1");
+            liveRateProbeTicks = now;
+            liveRateProbeRaw = fd2InputNotifyCount;
+            liveRateProbeParsed = fd2InputParsedCount;
+            double minimum = PureSoftware133Mode.IsEnabled ? PureSoftware133Mode.MinimumAcceptedHz : MinimumTargetNotifyRateHz;
+            if (rawHz >= minimum && parsedHz >= minimum &&
+                Stopwatch.GetElapsedTime(lastParsedNotifyTicks, now).TotalMilliseconds < 500)
+            {
+                recovered = !rateAccepted;
+                rateAccepted = true;
+                lastPerformanceWarning = "";
+                lastPerformanceFailure = "";
+                linkRateClass = "133hz";
+            }
+            else
+            {
+                downgraded = rateAccepted;
+                rateAccepted = false;
+                linkRateClass = "rate_limited";
+                lastPerformanceWarning = "真实输入速率未达标：" + windowMessage;
+            }
+        }
+        connectionProgress?.Report(windowMessage);
+        if (downgraded) SetConnectionPhase(Pro2ConnectionPhase.RateLimited);
+        if (recovered)
+        {
+            SetConnectionPhase(Pro2ConnectionPhase.Ready);
+            connectionProgress?.Report("[PRO2_BLE_LINK] live rate recovered; virtual output may start without reconnect.");
+        }
+        if (!downgraded && !recovered) ConnectionStateChanged?.Invoke();
+    }
+
+    public Task<bool> WaitForInputAsync(TimeSpan timeout, CancellationToken token) =>
+        inputSignal.WaitAsync(timeout, token);
     private static readonly Guid NotifyFd2Uuid = Guid.Parse("ab7de9be-89fe-49ad-828f-118f09df7fd2");
     private static readonly Guid NotifyLegacyUuid = Guid.Parse("7492866c-ec3e-4619-8258-32755ffcc0f8");
     private static readonly Guid AckUuid = Guid.Parse("c765a961-d9d8-4d36-a20a-5315b111836a");
@@ -102,6 +192,8 @@ public sealed class Pro2BleInputSource :
     ];
 
     private readonly object gate = new();
+    private Pro2FirmwareInfo? firmwareInfo;
+    public Pro2FirmwareInfo? FirmwareInfo { get { lock (gate) return firmwareInfo; } }
     private readonly object writeGate = new();
     private readonly Pro2HidReportParser parser = new();
     private readonly Pro2InputStabilityOptions inputStabilityOptions =
@@ -113,8 +205,12 @@ public sealed class Pro2BleInputSource :
     private readonly List<BleCandidate> lastCandidates = [];
     private BluetoothLEAdvertisementWatcher? watcher;
     private BluetoothLEDevice? device;
+    private readonly List<GattDeviceService> ownedGattServices = [];
     private GattSession? gattSession;
     private BluetoothLEPreferredConnectionParametersRequest? connectionParametersRequest;
+    private Win11CustomConnectionParameters? customConnectionParameters;
+    private readonly bool customConnectionParameterExperiment =
+        Win11CustomConnectionParameters.IsCliRequested(Environment.GetCommandLineArgs());
     private GattCharacteristic? commandCharacteristic;
     private GattCharacteristic? fd2Characteristic;
     private GattCharacteristic? legacyCharacteristic;
@@ -151,6 +247,14 @@ public sealed class Pro2BleInputSource :
     private CancellationTokenSource? rumbleWriterCts;
     private SemaphoreSlim? rumbleSignal;
     private Task? rumbleWriterTask;
+    private Pro2BatteryStatus? batteryStatus;
+    private long batteryStatusTicks;
+    private volatile string batteryLevelReadStatus = "not_attempted";
+    public string BatteryLevelReadStatus => batteryLevelReadStatus;
+    private readonly bool initialBatterySnapshotTest =
+        Pro2InitialBatterySnapshot.IsRequested(Environment.GetCommandLineArgs());
+    private Pro2ChargeStatus? chargeStatus;
+    private long chargeStatusTicks;
     private byte[]? pendingRumblePacket;
     private GamepadState rawState = GamepadState.Neutral();
     private GamepadState filteredState = GamepadState.Neutral();
@@ -175,6 +279,7 @@ public sealed class Pro2BleInputSource :
     private string lastScanDiagnostic = "";
     private string connectedLabel = "";
     private string connectedAddress = "";
+    private BluetoothAddressType connectedAddressType;
     private string lastNotifySummary = "";
     private string lastParseSource = "";
     private long lastNotifySummaryTicks;
@@ -196,6 +301,27 @@ public sealed class Pro2BleInputSource :
     private string fd2ReportRateStatus = "not_requested";
     private ushort fd2ReportRateDescriptorHandle;
     private string fd2ReportRateDescriptorUuid = "";
+    private string fd2ReportRateValueBefore = "not_read";
+    private string fd2ReportRateValueAfter = "not_read";
+    private Win10BleDiagnosticCapture? activeBleDiagnosticCapture;
+#if PRO2_OUTPUT_ISOLATION_EXPERIMENT
+    private BleNotifyLayerProbe? notifyLayerProbe;
+
+    internal void BeginNotifyLayerProbe(BleNotifyLayerProbe probe)
+    {
+        if (Interlocked.CompareExchange(ref notifyLayerProbe, probe, null) != null)
+            throw new InvalidOperationException("A notify layer capture is already active.");
+    }
+
+    internal void EndNotifyLayerProbe(BleNotifyLayerProbe probe)
+    {
+        Interlocked.CompareExchange(ref notifyLayerProbe, null, probe);
+        probe.Stop(Stopwatch.GetTimestamp());
+    }
+#endif
+    private BleTrialMeasurement? win11BeforeParameters;
+    private BleTrialMeasurement? win11AfterCustomParameters;
+    private string win11ParameterRouteStatus = "not_evaluated";
     private IProgress<string>? connectionProgress;
     private string linkRateClass = "unknown";
     private string lastPerformanceFailure = "";
@@ -261,6 +387,10 @@ public sealed class Pro2BleInputSource :
     {
         get { lock (gate) return connectedAddress; }
     }
+    public BluetoothAddressType ConnectedAddressType
+    {
+        get { lock (gate) return connectedAddressType; }
+    }
 
     public bool TryConsumeDisconnectSignal(out Pro2BleDisconnectSignal signal)
     {
@@ -307,6 +437,11 @@ public sealed class Pro2BleInputSource :
         {
             lock (gate)
             {
+                if (lastParsedNotifyTicks == 0 ||
+                    Stopwatch.GetElapsedTime(lastParsedNotifyTicks).TotalMilliseconds >= 500) return 0;
+                if (liveRateMeasuredTicks != 0 &&
+                    Stopwatch.GetElapsedTime(liveRateMeasuredTicks).TotalSeconds <= 15)
+                    return liveParsedRateHz;
                 double primaryRate = SampleRate(
                     primaryInputParsedCount,
                     firstPrimaryInputTicks,
@@ -382,6 +517,44 @@ public sealed class Pro2BleInputSource :
         return found.Select(DescribeCandidate).ToList();
     }
 
+    public async Task<IReadOnlyList<Pro2ManualCandidate>> ScanManualAsync(IProgress<string> progress,
+        IProgress<Pro2ManualCandidate> candidates, CancellationToken cancellationToken)
+    {
+        // This path lists unmatched BLE advertisements too; the automatic path is unchanged.
+        await ReportBluetoothAdapterDiagnosticsAsync(progress);
+        var found = await ScanCandidatesCoreAsync(progress, TimeSpan.FromSeconds(8),
+            BluetoothLEScanningMode.Active, "manual_active", cancellationToken, true, candidates);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!found.Any(c => c.Score >= 30))
+        {
+            var passive = await ScanCandidatesCoreAsync(progress, TimeSpan.FromSeconds(3),
+                BluetoothLEScanningMode.Passive, "manual_passive", cancellationToken, true, candidates);
+            found.AddRange(passive);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return Pro2ManualCandidate.Sort(found.GroupBy(c => (c.Address, c.AddressType))
+            .Select(g => g.OrderByDescending(c => c.Score).ThenByDescending(c => c.Rssi).First())
+            .Select(ToManualCandidate));
+    }
+
+    private static Pro2ManualCandidate ToManualCandidate(BleCandidate candidate) =>
+        new(candidate.Address, candidate.AddressType, candidate.Name, candidate.Rssi,
+            candidate.NintendoManufacturer, candidate.Score);
+
+    public Task StartManualAsync(Pro2ManualCandidate candidate, IReadOnlySet<string> excludedAddresses,
+        Func<string, Pro2StickCalibrationProfile?>? calibrationResolver, IProgress<string> progress,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!candidate.IsValid || excludedAddresses.Contains(candidate.AddressText))
+            throw new InvalidOperationException("此地址无效或已被其他手柄通道占用。");
+        if (IsRunning && (!string.Equals(ConnectedAddress, candidate.AddressText, StringComparison.OrdinalIgnoreCase) ||
+            ConnectedAddressType != candidate.AddressType))
+            throw new InvalidOperationException("请先释放当前 Pro2 连接再尝试另一个地址。");
+        return StartAsync(progress, excludedAddresses, null, false, calibrationResolver,
+            cancellationToken, candidate);
+    }
+
     public Task StartAsync(IProgress<string> progress, CancellationToken cancellationToken)
     {
         return StartAsync(
@@ -421,13 +594,167 @@ public sealed class Pro2BleInputSource :
             cancellationToken);
     }
 
+    public (uint Raw, uint Fd2, uint Parsed, byte Battery, bool Charging, long LastTicks)
+        GetCompactCounters()
+    {
+        lock (gate)
+            return (rawNotifyCount, fd2InputNotifyCount, updates,
+                latest.BatteryPercent, latest.BatteryCharging, lastParsedNotifyTicks);
+    }
+
+    public (GamepadState State, bool Fresh, string Transport, bool HasConnectionLevel, double LevelAgeSeconds,
+        bool RuntimeLevel, bool LevelFresh) GetBatterySnapshot()
+    {
+        lock (gate)
+        {
+            bool fresh = IsRunning && batteryStatusTicks != 0 &&
+                Stopwatch.GetElapsedTime(batteryStatusTicks).TotalSeconds <= 95;
+            var state = latest.Clone();
+            bool hasConnectionLevel = IsRunning && batteryStatus.HasValue && batteryStatus.Value.HasLevel;
+            bool runtimeLevel = hasConnectionLevel && batteryLevelSource == "runtime_notify";
+            double age = batteryStatusTicks == 0 ? double.PositiveInfinity :
+                Stopwatch.GetElapsedTime(batteryStatusTicks).TotalSeconds;
+            bool levelFresh = Pro2RuntimeBatteryPolicy.IsFreshRuntimeLevel(runtimeLevel, age);
+            if (hasConnectionLevel) batteryStatus!.Value.ApplyTo(state);
+            bool chargeFresh = IsRunning && chargeStatusTicks != 0 &&
+                Stopwatch.GetElapsedTime(chargeStatusTicks).TotalSeconds <= 95;
+            if (chargeFresh) chargeStatus!.Value.ApplyTo(state);
+            else if (!fresh) state.BatteryPowerKnown = false;
+            return (state, fresh || chargeFresh,
+                runtimeLevel ? "runtime_primary_notify+passive_fd2_voltage_and_charge" :
+                initialBatterySnapshotTest ? "initial_only_snapshot+passive_fd2_voltage_and_charge" :
+                    "connection_read+passive_fd2_voltage_and_charge",
+                hasConnectionLevel, age, runtimeLevel, levelFresh);
+        }
+    }
+
+    public async Task<Win10BleDiagnosticReport> RunWin10BleDiagnosticAsync(
+        TimeSpan duration,
+        IProgress<string> progress,
+        CancellationToken cancellationToken)
+    {
+        if (duration < TimeSpan.FromSeconds(10) ||
+            duration > TimeSpan.FromSeconds(60))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(duration),
+                "BLE diagnostic duration must be between 10 and 60 seconds.");
+        }
+
+        BluetoothAdapterDiagnosticInfo adapter =
+            await Win10BleDiagnostic.CaptureAdapterAsync();
+        DateTimeOffset startedAtUtc = DateTimeOffset.UtcNow;
+        var capture = new Win10BleDiagnosticCapture(
+            Stopwatch.GetTimestamp(),
+            startedAtUtc);
+        string address;
+        ushort descriptorHandle;
+        string descriptorUuid;
+        string descriptorBefore;
+        string descriptorStatus;
+        string descriptorAfter;
+        lock (gate)
+        {
+            if (!IsRunning || fd2Characteristic == null)
+            {
+                throw new InvalidOperationException(
+                    "真实 Pro2 FD2 Notify 尚未连接，先连接手柄后再运行 BLE Turbo 诊断。");
+            }
+            if (activeBleDiagnosticCapture != null)
+            {
+                throw new InvalidOperationException("已有 BLE Turbo 诊断正在运行。");
+            }
+
+            activeBleDiagnosticCapture = capture;
+            address = connectedAddress;
+            descriptorHandle = fd2ReportRateDescriptorHandle;
+            descriptorUuid = fd2ReportRateDescriptorUuid;
+            descriptorBefore = fd2ReportRateValueBefore;
+            descriptorStatus = fd2ReportRateStatus;
+            descriptorAfter = fd2ReportRateValueAfter;
+        }
+
+        progress.Report(
+            "[BLE_TURBO_TEST] capture_started duration_s=" +
+            duration.TotalSeconds.ToString("F0") +
+            " move_sticks=optional keep_controller_awake=true");
+        try
+        {
+            await Task.Delay(duration, cancellationToken);
+        }
+        catch
+        {
+            lock (gate)
+            {
+                if (ReferenceEquals(activeBleDiagnosticCapture, capture))
+                {
+                    activeBleDiagnosticCapture = null;
+                }
+            }
+            throw;
+        }
+
+        Win10BleDiagnosticSamples samples;
+        DateTimeOffset completedAtUtc = DateTimeOffset.UtcNow;
+        lock (gate)
+        {
+            samples = capture.Snapshot(Stopwatch.GetTimestamp());
+            if (ReferenceEquals(activeBleDiagnosticCapture, capture))
+            {
+                activeBleDiagnosticCapture = null;
+            }
+        }
+
+        Win10BleDiagnosticReport report = Win10BleDiagnostic.BuildReport(
+            samples,
+            startedAtUtc,
+            completedAtUtc,
+            adapter,
+            address,
+            descriptorHandle,
+            descriptorUuid,
+            RequestedFd2ReportRateHz,
+            descriptorBefore,
+            descriptorStatus,
+            descriptorAfter);
+        var battery = GetBatterySnapshot();
+        report = report with
+        {
+            BatteryLevelAtConnection = batteryLevelAtConnection,
+            BatteryLastReadLevel = battery.HasConnectionLevel ? battery.State.BatteryLevel : GamepadState.BatteryUnknown,
+            RuntimeBatteryRefreshEnabled = RuntimeBatteryRefreshEnabled,
+            RuntimeBatteryRefreshStatus = RuntimeBatteryRefreshStatus,
+            RuntimeBatterySuspensionReason = RuntimeBatterySuspensionReason,
+            BatteryLevelAgeSeconds = double.IsFinite(battery.LevelAgeSeconds) ? battery.LevelAgeSeconds : -1,
+            BatteryVoltageMillivolts = battery.State.BatteryVoltageMillivolts,
+            BatteryChargeStateKnown = battery.State.BatteryPowerKnown,
+            BatteryCharging = battery.State.BatteryCharging,
+            BatteryExternalPower = battery.State.BatteryExternalPower,
+            BatteryTransport = battery.Transport,
+            ActualConnectionIntervalUnits = connectionIntervalUnits,
+            ActualConnectionLatency = connectionLatency,
+            ActualLinkTimeoutUnits = connectionLinkTimeout,
+            ConnectionPreferenceStatus = connectionPreferenceStatus,
+            Custom7p5ExperimentEnabled = customConnectionParameterExperiment,
+            Win11ParameterRoute = win11ParameterRouteStatus,
+            BeforeParameters = win11BeforeParameters,
+            AfterCustomParameters = win11AfterCustomParameters
+        };
+        foreach (string line in report.ToLogLines())
+        {
+            progress.Report(line);
+        }
+        return report;
+    }
+
     public async Task StartAsync(
         IProgress<string> progress,
         IReadOnlySet<string> excludedAddresses,
         IReadOnlySet<string>? preferredAddresses,
         bool onlyPreferredAddresses,
         Func<string, Pro2StickCalibrationProfile?>? stickCalibrationResolver,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Pro2ManualCandidate? manualCandidate = null)
     {
         if (IsRunning)
         {
@@ -436,17 +763,54 @@ public sealed class Pro2BleInputSource :
         }
 
         await StopAsync();
+        win11BeforeParameters = null;
+        win11AfterCustomParameters = null;
+        win11ParameterRouteStatus = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+            ? "native_observation" : "not_applicable_win10";
+        rateAccepted = false;
+        SetConnectionPhase(manualCandidate == null ? Pro2ConnectionPhase.Scanning : Pro2ConnectionPhase.Connecting);
         lock (gate)
         {
             lastPerformanceFailure = "";
             lastPerformanceWarning = "";
         }
-        progress.Report("[PRO2_BLE] scanning without Windows HID pairing. Wake the Pro2 and keep it near the PC.");
+        progress.Report(manualCandidate == null
+            ? "[PRO2_BLE] scanning without Windows HID pairing. Wake the Pro2 and keep it near the PC."
+            : "[BLE_MANUAL] connecting selected BLE address/type directly; no rescan or Windows HID pairing.");
         progress.Report("[PRO2_STICK] mode=" + StickProcessingModeLabel(stickProcessingMode) +
                         (stickProcessingMode == StickProcessingMode.RawDirect
                             ? " raw direct, no axis hold/ramp/filter on gameplay path."
                             : " stability guard enabled. " + inputStabilityOptions.Summary));
-        List<BleCandidate> candidates = await ScanCandidatesAsync(progress, TimeSpan.FromSeconds(8), cancellationToken);
+        var preferred = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (preferredAddresses != null)
+        {
+            foreach (string address in preferredAddresses) preferred.Add(address);
+        }
+        TimeSpan scanDuration = TimeSpan.FromSeconds(customConnectionParameterExperiment ? 20 : 8);
+        List<BleCandidate> candidates;
+        if (manualCandidate != null)
+        {
+            // Exactly one selected address/type; do not rescan or fall through to another controller.
+            candidates = [new(manualCandidate.Address, manualCandidate.AddressType, manualCandidate.Name,
+                manualCandidate.Rssi, manualCandidate.NintendoManufacturer, manualCandidate.Score)
+                { IsKnownAddressProbe = true, IsManualSelection = true }];
+            progress.Report("[BLE_MANUAL] selected=" + manualCandidate.AddressDetail +
+                " score=" + manualCandidate.Score + " exclusive=true exact_uuid_gate=true");
+        }
+        else candidates = await ScanCandidatesAsync(progress, scanDuration, cancellationToken);
+        if (customConnectionParameterExperiment && candidates.Count == 0)
+        {
+            foreach (string address in preferred)
+            {
+                if (excludedAddresses.Contains(address) ||
+                    !BleDiagnosticTargetResolver.TryParsePublicAddress(address, out ulong knownAddress)) continue;
+                candidates.Add(new BleCandidate(knownAddress, BluetoothAddressType.Public, "<saved-address-unverified>",
+                    0, false, 0) { IsKnownAddressProbe = true });
+                progress.Report("[BLE_KNOWN_PROBE] no matched advertisement; trying saved public address=" + address +
+                    " discovery_timeout_s=10 identity_verified=false init_requires_exact_pro2_uuids=true");
+                break; // Diagnostic tests one saved target, not every stale slot.
+            }
+        }
         if (candidates.Count == 0)
         {
             Status = "没有扫描到 Pro2 BLE 候选。请长按配对/唤醒手柄，确认未连接到主机、手机或 ESP32。";
@@ -460,14 +824,6 @@ public sealed class Pro2BleInputSource :
             lastCandidates.AddRange(candidates);
         }
 
-        var preferred = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (preferredAddresses != null)
-        {
-            foreach (string address in preferredAddresses)
-            {
-                preferred.Add(address);
-            }
-        }
         if (preferred.Count > 0)
         {
             progress.Report("[PRO2_BLE] preferred addresses=" + string.Join(",", preferred) +
@@ -520,6 +876,7 @@ public sealed class Pro2BleInputSource :
                     lock (gate)
                     {
                         connectedAddress = candidateAddress;
+                        connectedAddressType = candidate.AddressType;
                     }
                     Status = "真实 Pro2 BLE 已连接并 live：" + connectedLabel +
                              " / " + MetricsSummary +
@@ -529,6 +886,11 @@ public sealed class Pro2BleInputSource :
                     IsRunning = true;
                     return;
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                await CloseCurrentAsync("已取消 Pro2 连接。");
+                throw;
             }
             catch (Exception ex)
             {
@@ -596,6 +958,7 @@ public sealed class Pro2BleInputSource :
         {
             int discardedFrames = sequentialInput.Count;
             sequentialInput.Reset();
+            inputSignal.Notify();
             return discardedFrames;
         }
     }
@@ -633,7 +996,7 @@ public sealed class Pro2BleInputSource :
                 return false;
             }
 
-            if (!sequentialInput.TryDequeueNewest(
+            if (!sequentialInput.TryDequeueRealtimeEdges(
                     out state,
                     out long arrivalTicks,
                     out supersededCount))
@@ -644,6 +1007,10 @@ public sealed class Pro2BleInputSource :
 
             long elapsedTicks = Math.Max(0, Stopwatch.GetTimestamp() - arrivalTicks);
             age = TimeSpan.FromSeconds(elapsedTicks / (double)Stopwatch.Frequency);
+            if (sequentialInput.Count > 0)
+            {
+                inputSignal.Notify();
+            }
             return true;
         }
     }
@@ -745,9 +1112,10 @@ public sealed class Pro2BleInputSource :
         CancellationToken cancellationToken)
     {
         ResetLiveState();
-        BluetoothLEDevice? opened = await BluetoothLEDevice.FromBluetoothAddressAsync(
-            candidate.Address,
-            candidate.AddressType);
+        SetConnectionPhase(Pro2ConnectionPhase.Connecting);
+        BluetoothLEDevice? opened = candidate.IsManualSelection
+            ? await BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType).AsTask(cancellationToken)
+            : await BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType);
         if (opened == null)
         {
             progress.Report("[PRO2_BLE] FromBluetoothAddressAsync returned null.");
@@ -756,6 +1124,7 @@ public sealed class Pro2BleInputSource :
 
         device = opened;
         connectionProgress = progress;
+        progress.Report("[BLE_COMPATIBILITY] " + BleCompatibilityInspector.Current.Telemetry);
         opened.ConnectionStatusChanged += OnBluetoothConnectionStatusChanged;
         progress.Report("[PRO2_BLE] opened address=" + FormatAddress(candidate.Address) +
                         " name=" + (opened.Name ?? candidate.Name ?? "<unnamed>"));
@@ -763,20 +1132,48 @@ public sealed class Pro2BleInputSource :
         await ObserveGattSessionAsync(opened, progress);
         ObserveWindowsConnectionParameters(opened, progress);
         await Task.Delay(500, cancellationToken);
-        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        if (!candidate.IsManualSelection && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+            BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters)
         {
             TryRequestWindows11ThroughputPreference(opened, "initial", progress);
         }
 
-        GattDeviceServicesResult services =
-            await opened.GetGattServicesAsync(BluetoothCacheMode.Uncached);
+        GattDeviceServicesResult services;
+        if (candidate.IsKnownAddressProbe)
+        {
+            using var discoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            discoveryDeadline.CancelAfter(TimeSpan.FromSeconds(10));
+            services = await opened.GetGattServicesAsync(BluetoothCacheMode.Uncached).AsTask(discoveryDeadline.Token);
+        }
+        else
+        {
+            services = await opened.GetGattServicesAsync(BluetoothCacheMode.Uncached);
+        }
         if (services.Status != GattCommunicationStatus.Success)
         {
             progress.Report("[PRO2_BLE] service discovery failed status=" + services.Status);
             return false;
         }
 
-        await DiscoverGattChannelsAsync(services.Services, progress);
+        ownedGattServices.AddRange(services.Services);
+        await DiscoverGattChannelsAsync(services.Services, progress,
+            candidate.IsManualSelection ? cancellationToken : CancellationToken.None);
+        if (candidate.IsKnownAddressProbe)
+        {
+            bool exactPro2 = commandCharacteristic?.Uuid == CmdUuid && ackCharacteristic?.Uuid == AckUuid &&
+                fd2Characteristic?.Uuid == NotifyFd2Uuid;
+            if (!BleDiagnosticTargetResolver.CanInitializeUnadvertisedTarget(exactPro2))
+            {
+                progress.Report("[BLE_KNOWN_PROBE] rejected: exact Pro2 cmd/ack/FD2 UUIDs not verified; init_commands_sent=false");
+                return false;
+            }
+            progress.Report("[BLE_KNOWN_PROBE] identity_verified=true via exact Pro2 cmd/ack/FD2 UUIDs; starting normal initialization.");
+        }
+        if (candidate.IsManualSelection && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+            BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters)
+            TryRequestWindows11ThroughputPreference(opened, "initial", progress);
+        transportConnected = true;
+        SetConnectionPhase(Pro2ConnectionPhase.Initializing);
 
         progress.Report("[PRO2_BLE] gatt chars cmd=" + DescribeCharacteristic(commandCharacteristic) +
                         " ack=" + DescribeCharacteristic(ackCharacteristic) +
@@ -796,6 +1193,11 @@ public sealed class Pro2BleInputSource :
             return false;
         }
 
+#if PRO2_WIRELESS_AUDIO_EXPERIMENT
+        // Opt-in, independently compiled diagnostic only. The production build
+        // does not compile this hook or the experimental partial implementing it.
+        await ApplyLegacyServiceBeforeInitializationAsync(progress, cancellationToken);
+#endif
         ackCharacteristic.ValueChanged += OnAckValueChanged;
 
         if (!await SubscribeAsync(ackCharacteristic, "ack", progress))
@@ -841,6 +1243,7 @@ public sealed class Pro2BleInputSource :
 
         if (fd2Characteristic != null)
         {
+            if (!await CaptureInitialBatteryAsync(progress, cancellationToken)) return false;
             await ConfigureFd2ReportRateAsync(
                 fd2Characteristic,
                 progress,
@@ -864,10 +1267,12 @@ public sealed class Pro2BleInputSource :
         progress.Report("[PRO2_FD2_INPUT] exclusive FD2 enabled; waiting for a parsed report with live IMU.");
         if (await WaitForFd2MotionAsync(TimeSpan.FromSeconds(6), cancellationToken))
         {
+            SetConnectionPhase(Pro2ConnectionPhase.Measuring);
             if (!await EnsureUsableBlePerformanceAsync(progress, cancellationToken))
             {
                 return false;
             }
+            if (!transportConnected) return false;
 
             lock (gate)
             {
@@ -879,7 +1284,10 @@ public sealed class Pro2BleInputSource :
                 connectionSequence++;
                 IsRunning = true;
             }
+            SetConnectionPhase(rateAccepted ? Pro2ConnectionPhase.Ready : Pro2ConnectionPhase.RateLimited);
             StartRumbleWriter(progress);
+            StartRuntimeBatteryRefresh(progress);
+            LogBatteryTransport(progress);
             progress.Report("[PRO2_BLE_REPORT_RATE] requested_hz=" + RequestedFd2ReportRateHz +
                             " negotiation=" + fd2ReportRateStatus +
                             " effective_rate_class=" + LinkRateClass +
@@ -909,9 +1317,144 @@ public sealed class Pro2BleInputSource :
         return false;
     }
 
+    private void LogBatteryTransport(IProgress<string> progress)
+    {
+        progress.Report("[PRO2_BATTERY] transport=" + (initialBatterySnapshotTest ? "initial_only_snapshot" : "connection_read") +
+            "+passive_fd2; runtime_refresh=" + RuntimeBatteryRefreshEnabled +
+            "; runtime_interval_s=120; runtime_primary=fresh_first_notify_then_verified_none; voltage_and_charge=FD2.");
+    }
+
+    private async Task<bool> CaptureInitialBatteryAsync(IProgress<string> progress, CancellationToken token)
+    {
+        if (Environment.GetCommandLineArgs().Contains("--battery-snapshot-off-test", StringComparer.OrdinalIgnoreCase))
+        {
+            batteryLevelReadStatus = "disabled";
+            progress.Report("[PRO2_BATTERY] diagnostic_snapshot_disabled=true; no primary subscription.");
+            return true;
+        }
+        if (initialBatterySnapshotTest)
+            return await CaptureInitialBatterySnapshotTestAsync(progress, token);
+        if (legacyCharacteristic == null ||
+            (legacyCharacteristic.CharacteristicProperties & GattCharacteristicProperties.Read) == 0)
+        {
+            batteryLevelReadStatus = "read_unsupported";
+            progress.Report("[PRO2_BATTERY] connection read unsupported; level unknown; no Notify fallback.");
+            return true;
+        }
+
+        // Exactly one read before exclusive FD2. Never select the other report
+        // stream for a battery icon, even when the read fails or is unsupported.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            var result = await legacyCharacteristic.ReadValueAsync(BluetoothCacheMode.Uncached)
+                .AsTask(deadline.Token);
+            batteryLevelReadStatus = result.ProtocolError == 2 ? "read_not_permitted" : "read_" + result.Status;
+            progress.Report("[PRO2_BATTERY] connection_read_status=" + result.Status +
+                " protocol_error=" + result.ProtocolError + "; primary_notify_subscriptions=0.");
+            if (result.Status != GattCommunicationStatus.Success) return true;
+            byte[] payload = ReadBuffer(result.Value);
+            if (payload.Length == 0 || payload.All(value => value == 0) ||
+                !Pro2BatteryStatus.TryDecodePrimary(payload, out var battery) || !battery.HasLevel)
+            {
+                batteryLevelReadStatus = "invalid_report";
+                progress.Report("[PRO2_BATTERY] connection read has no valid level; length=" + payload.Length);
+                return true;
+            }
+            UpdateBatteryStatus(payload, "connection_read", progress);
+            batteryLevelReadStatus = "captured";
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            batteryLevelReadStatus = "read_error_" + ex.GetType().Name;
+            progress.Report("[PRO2_BATTERY] connection read unavailable: " + ex.GetType().Name +
+                " / " + ex.Message + "; keeping FD2 initialization unchanged.");
+        }
+        return true;
+    }
+
+    private async Task<bool> CaptureInitialBatterySnapshotTestAsync(IProgress<string> progress, CancellationToken token)
+    {
+        var characteristic = legacyCharacteristic;
+        if (characteristic == null ||
+            (characteristic.CharacteristicProperties & GattCharacteristicProperties.Notify) == 0)
+        {
+            batteryLevelReadStatus = "snapshot_unsupported";
+            progress.Report("[PRO2_BATTERY_INIT] primary Notify unavailable; level unknown; no runtime fallback.");
+            return true;
+        }
+        var received = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnSnapshot(GattCharacteristic sender, GattValueChangedEventArgs args)
+        {
+            try
+            {
+                byte[] payload = ReadBuffer(args.CharacteristicValue);
+                if (Pro2InitialBatterySnapshot.IsValid(payload)) received.TrySetResult(payload);
+            }
+            catch (Exception) { /* A malformed snapshot cannot stop input initialization. */ }
+        }
+        progress.Report("[PRO2_BATTERY_INIT] enabled=true phase=before_fd2; maximum_seconds=2; runtime_queries=0.");
+        characteristic.ValueChanged += OnSnapshot;
+        try
+        {
+            var result = await Pro2InitialBatterySnapshot.CaptureAsync(
+                async ct => await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
+                    GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask(ct) == GattCommunicationStatus.Success,
+                ct => received.Task.WaitAsync(ct),
+                async ct =>
+                {
+                    var disabled = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
+                        GattClientCharacteristicConfigurationDescriptorValue.None).AsTask(ct);
+                    if (disabled != GattCommunicationStatus.Success) return false;
+                    var verified = await characteristic.ReadClientCharacteristicConfigurationDescriptorAsync().AsTask(ct);
+                    progress.Report("[PRO2_BATTERY_INIT] cleanup_write=" + disabled +
+                        " cleanup_read=" + verified.Status + " cccd=" + verified.ClientCharacteristicConfigurationDescriptor);
+                    return verified.Status == GattCommunicationStatus.Success &&
+                        verified.ClientCharacteristicConfigurationDescriptor == GattClientCharacteristicConfigurationDescriptorValue.None;
+                }, token);
+            progress.Report("[PRO2_BATTERY_INIT] snapshot=" + result.Status + " cleanup=" + result.CleanupStatus);
+            batteryLevelReadStatus = result.Status;
+            if (!result.SubscriptionReleased)
+            {
+                batteryLevelReadStatus = "cleanup_not_verified";
+                // Never start gameplay with an unconfirmed second report stream.
+                progress.Report("[PRO2_BATTERY_INIT] FD2 initialization refused; primary CCCD release not verified.");
+                return false;
+            }
+            if (result.Payload != null) UpdateBatteryStatus(result.Payload, "initial_only_snapshot", progress);
+            return true;
+        }
+        finally { characteristic.ValueChanged -= OnSnapshot; }
+    }
+
+    private bool UpdateBatteryStatus(ReadOnlySpan<byte> payload, string source, IProgress<string> progress)
+    {
+        if (!Pro2BatteryStatus.TryDecodePrimary(payload, out var value)) return false;
+        bool changed;
+        ushort voltage;
+        lock (gate)
+        {
+            changed = !batteryStatus.HasValue || batteryStatus.Value != value;
+            batteryStatus = value;
+            batteryStatusTicks = Stopwatch.GetTimestamp();
+            batteryLevelAtConnection = value.HasLevel ? value.Level : GamepadState.BatteryUnknown;
+            value.ApplyTo(latest);
+            value.ApplyTo(rawState);
+            value.ApplyTo(filteredState);
+            voltage = latest.BatteryVoltageMillivolts;
+        }
+        if (changed)
+            progress.Report("[PRO2_BATTERY] source=" + source + " " + value.Telemetry +
+                " voltage_mv=" + voltage + " len=" + payload.Length);
+        return true;
+    }
+
     private async Task DiscoverGattChannelsAsync(
         IReadOnlyList<GattDeviceService> services,
-        IProgress<string> progress)
+        IProgress<string> progress,
+        CancellationToken cancellationToken = default)
     {
         var serviceSummaries = new List<string>();
         var probes = new List<GattServiceProbe>();
@@ -919,7 +1462,7 @@ public sealed class Pro2BleInputSource :
         foreach (GattDeviceService service in services)
         {
             GattCharacteristicsResult chars =
-                await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached);
+                await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached).AsTask(cancellationToken);
             if (chars.Status != GattCommunicationStatus.Success)
             {
                 serviceSummaries.Add(service.Uuid + ":status=" + chars.Status);
@@ -1055,6 +1598,8 @@ public sealed class Pro2BleInputSource :
                 lock (gate)
                 {
                     fd2ReportRateStatus = "descriptor_discovery_" + result.Status;
+                    fd2ReportRateValueBefore = "not_read";
+                    fd2ReportRateValueAfter = "not_read";
                 }
                 progress.Report("[PRO2_BLE_REPORT_RATE] descriptor discovery failed status=" +
                                 result.Status);
@@ -1089,6 +1634,8 @@ public sealed class Pro2BleInputSource :
                 lock (gate)
                 {
                     fd2ReportRateStatus = "descriptor_not_found";
+                    fd2ReportRateValueBefore = "not_read";
+                    fd2ReportRateValueAfter = "not_read";
                 }
                 progress.Report("[PRO2_BLE_REPORT_RATE] custom report-rate descriptor not found; " +
                                 "continuing with measured Windows BLE rate.");
@@ -1112,6 +1659,8 @@ public sealed class Pro2BleInputSource :
                 fd2ReportRateStatus = writeStatus == GattCommunicationStatus.Success
                     ? "write_success"
                     : "write_" + writeStatus;
+                fd2ReportRateValueBefore = before;
+                fd2ReportRateValueAfter = after;
             }
             progress.Report("[PRO2_BLE_REPORT_RATE] requested_hz=" + RequestedFd2ReportRateHz +
                             " descriptor=0x" + target.AttributeHandle.ToString("X4") +
@@ -1140,6 +1689,7 @@ public sealed class Pro2BleInputSource :
             lock (gate)
             {
                 fd2ReportRateStatus = "error_0x" + ex.HResult.ToString("X8");
+                fd2ReportRateValueAfter = "error_0x" + ex.HResult.ToString("X8");
             }
             progress.Report("[PRO2_BLE_REPORT_RATE] negotiation unavailable; continuing with " +
                             "measured Windows BLE rate. " + ex.GetType().Name + ": " + ex.Message);
@@ -1240,9 +1790,11 @@ public sealed class Pro2BleInputSource :
         TimeSpan duration,
         BluetoothLEScanningMode scanningMode,
         string scanLabel,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeUnmatched = false,
+        IProgress<Pro2ManualCandidate>? manualProgress = null)
     {
-        Dictionary<ulong, BleCandidate> found = new();
+        Dictionary<(ulong Address, BluetoothAddressType Type), BleCandidate> found = new();
         HashSet<ulong> seenAdvertisements = [];
         List<string> rejectedSamples = [];
         int rawAdvertisementCount = 0;
@@ -1283,6 +1835,9 @@ public sealed class Pro2BleInputSource :
             }
 
             BleCandidate? candidate = CandidateFromAdvertisement(args);
+            if (candidate == null && includeUnmatched)
+                candidate = new(args.BluetoothAddress, args.BluetoothAddressType, name,
+                    args.RawSignalStrengthInDBm, nintendo, 0);
             if (candidate == null)
             {
                 lock (found)
@@ -1298,12 +1853,20 @@ public sealed class Pro2BleInputSource :
 
             lock (found)
             {
-                if (!found.TryGetValue(candidate.Address, out BleCandidate? previous) ||
+                var key = (candidate.Address, candidate.AddressType);
+                if (!found.TryGetValue(key, out BleCandidate? previous) ||
                     candidate.Score > previous.Score ||
-                    candidate.Rssi > previous.Rssi)
+                    candidate.Rssi > previous.Rssi || includeUnmatched &&
+                    (!string.IsNullOrWhiteSpace(candidate.Name) && candidate.Name != previous.Name ||
+                     Math.Abs(candidate.Rssi - previous.Rssi) >= 4))
                 {
-                    found[candidate.Address] = candidate;
+                    if (includeUnmatched && previous != null)
+                        candidate = candidate with { Score = Math.Max(previous.Score, candidate.Score),
+                            Name = string.IsNullOrWhiteSpace(candidate.Name) ? previous.Name : candidate.Name,
+                            NintendoManufacturer = candidate.NintendoManufacturer || previous.NintendoManufacturer };
+                    found[key] = candidate;
                     progress.Report("[PRO2_BLE] candidate " + DescribeCandidate(candidate));
+                    manualProgress?.Report(ToManualCandidate(candidate));
                 }
             }
         };
@@ -1391,6 +1954,8 @@ public sealed class Pro2BleInputSource :
     {
         try
         {
+            await ReportAllBluetoothAdaptersAsync(progress);
+
             BluetoothAdapter? adapter = await BluetoothAdapter.GetDefaultAsync();
             if (adapter == null)
             {
@@ -1441,6 +2006,41 @@ public sealed class Pro2BleInputSource :
         catch (Exception ex)
         {
             progress.Report("[BLE_ADAPTER] diagnostics failed: " + ex.GetType().Name + ": " + ex.Message);
+        }
+    }
+
+    private static async Task ReportAllBluetoothAdaptersAsync(IProgress<string> progress)
+    {
+        try
+        {
+            string selector = BluetoothAdapter.GetDeviceSelector();
+            DeviceInformationCollection devices = await DeviceInformation.FindAllAsync(selector);
+            int count = 0;
+
+            foreach (DeviceInformation device in devices)
+            {
+                BluetoothAdapter? adapter = await BluetoothAdapter.FromIdAsync(device.Id);
+                if (adapter == null)
+                {
+                    continue;
+                }
+
+                count++;
+                progress.Report("[BLE_ADAPTER_LIST] adapter[" + count + "] name=\"" + device.Name +
+                                "\" address=" + FormatAddress(adapter.BluetoothAddress) +
+                                " central=" + adapter.IsCentralRoleSupported +
+                                " peripheral=" + adapter.IsPeripheralRoleSupported +
+                                " low_energy=" + adapter.IsLowEnergySupported +
+                                " classic=" + adapter.IsClassicSupported +
+                                " device_id=\"" + SanitizeDeviceId(adapter.DeviceId) + "\"");
+            }
+
+            progress.Report("[BLE_ADAPTER_LIST] total=" + count +
+                            " dual_adapter_candidate=" + (count >= 2));
+        }
+        catch (Exception ex)
+        {
+            progress.Report("[BLE_ADAPTER_LIST] enumeration failed: " + ex.GetType().Name + ": " + ex.Message);
         }
     }
 
@@ -1635,8 +2235,23 @@ public sealed class Pro2BleInputSource :
     private void OnAckValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
     {
         byte[] data = ReadBuffer(args.CharacteristicValue);
+        if (Pro2FirmwareInfo.TryDecode(data, out var firmware))
+        {
+            lock (gate) firmwareInfo = firmware;
+            connectionProgress?.Report("[PRO2_FIRMWARE] controller=" + firmware!.ControllerVersion +
+                " type=" + firmware.ControllerType + " bluetooth_patch=" + firmware.BluetoothPatchVersion +
+                " dsp=" + (firmware.DspVersion ?? "not_reported") + " source=existing_init_ack");
+        }
+        ObserveExperimentalCommandResponse(data);
+        // A delayed battery reply must not satisfy an initialization/flash ACK.
+        if (data.Length >= 8 && data[0] == 0x0b) return;
         ackTcs?.TrySetResult(data);
     }
+
+    // No implementation in the formal app: the compiler removes these calls there.
+    // The standalone audio probe passively captures the EXISTING firmware-info ACK.
+    partial void ObserveExperimentalCommandResponse(byte[] data);
+    partial void ResetExperimentalSession();
 
     public string StartManualGyroCalibration()
     {
@@ -1705,6 +2320,33 @@ public sealed class Pro2BleInputSource :
 
     private void OnNotifyValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
     {
+#if PRO2_OUTPUT_ISOLATION_EXPERIMENT
+        // Not compiled into normal releases. The raw-only branch is a controlled
+        // diagnostic, never a gameplay receiver: it deliberately does not parse
+        // or publish state, change subscriptions, or write anything to the pad.
+        long layerEntryTicks = Stopwatch.GetTimestamp();
+        DateTimeOffset layerEntryUtc = DateTimeOffset.UtcNow;
+        BleNotifyLayerProbe? layerProbe = Volatile.Read(ref notifyLayerProbe);
+        if (layerProbe != null && sender.Uuid != NotifyFd2Uuid) layerProbe = null;
+        int layerSlot = -2;
+        if (layerProbe != null)
+        {
+            long systemTimestamp = 0;
+            uint payloadLength = 0;
+            try
+            {
+                systemTimestamp = args.Timestamp.UtcTicks;
+                payloadLength = args.CharacteristicValue.Length;
+            }
+            catch { layerProbe.RecordMetadataError(); }
+            layerSlot = layerProbe.RecordEntry(layerEntryTicks, layerEntryUtc.UtcTicks,
+                systemTimestamp, payloadLength, Environment.CurrentManagedThreadId,
+                Thread.CurrentThread.GetApartmentState(), Thread.CurrentThread.IsThreadPoolThread,
+                SynchronizationContext.Current is System.Windows.Threading.DispatcherSynchronizationContext);
+        }
+        using var layerBody = new BleNotifyLayerProbe.BodyScope(layerProbe, layerSlot, layerEntryTicks);
+        if (layerProbe?.MinimalReceive == true) return;
+#endif
         using NotifyHandlerScope handlerScope = new(this, Stopwatch.GetTimestamp());
         byte[] data = ReadBuffer(args.CharacteristicValue);
         long nowTicks = Stopwatch.GetTimestamp();
@@ -1728,6 +2370,8 @@ public sealed class Pro2BleInputSource :
                 ? 0
                 : Math.Max(0, (now - latestAt).TotalMilliseconds);
             rawNotifyCount++;
+            activeBleDiagnosticCapture?.RecordRaw(nowTicks, isFd2);
+            runtimeBatteryCapture?.RecordRaw(nowTicks, isFd2);
             parseSeq = rawNotifyCount;
             if (lastRawNotifyTicks != 0)
             {
@@ -1768,6 +2412,8 @@ public sealed class Pro2BleInputSource :
             else if (isFd2)
             {
                 fd2InputNotifyCount++;
+                if (lastFd2InputTicks != 0)
+                    liveNotifyGaps.Record((nowTicks - lastFd2InputTicks) * 1000.0 / Stopwatch.Frequency);
                 fd2InputLastLength = data.Length;
                 NoteSample(
                     nowTicks,
@@ -1875,6 +2521,18 @@ public sealed class Pro2BleInputSource :
 
         lock (gate)
         {
+            if (isFd2 && Pro2ChargeStatus.TryDecodeFd2(data, out var passiveCharge))
+            {
+                chargeStatus = passiveCharge;
+                chargeStatusTicks = nowTicks;
+            }
+            if (batteryStatus.HasValue && batteryStatusTicks != 0 &&
+                Stopwatch.GetElapsedTime(batteryStatusTicks, nowTicks).TotalSeconds <=
+                    (batteryLevelSource == "runtime_notify" ? Pro2RuntimeBatteryPolicy.LevelFreshSeconds : 95))
+                batteryStatus.Value.ApplyTo(state);
+            if (chargeStatus.HasValue && chargeStatusTicks != 0 &&
+                Stopwatch.GetElapsedTime(chargeStatusTicks, nowTicks).TotalSeconds <= 95)
+                chargeStatus.Value.ApplyTo(state);
             if (isPrimary)
             {
                 latestPrimaryControls = state.Clone();
@@ -1918,6 +2576,8 @@ public sealed class Pro2BleInputSource :
 
             updates++;
             stateSeq = updates;
+            activeBleDiagnosticCapture?.RecordParsed(nowTicks, isFd2);
+            runtimeBatteryCapture?.RecordParsed(nowTicks, isFd2);
             NoteSample(
                 nowTicks,
                 ref firstParsedNotifyTicks,
@@ -1936,6 +2596,7 @@ public sealed class Pro2BleInputSource :
             if (IsRunning)
             {
                 sequentialInput.Enqueue(stableState, nowTicks);
+                inputSignal.Notify();
             }
             parsedBleHz = SampleRate(updates, firstParsedNotifyTicks, lastParsedNotifyTicks);
             bleHz = Math.Max(bleHz, parsedBleHz);
@@ -1993,13 +2654,15 @@ public sealed class Pro2BleInputSource :
         BluetoothLEDevice opened,
         IProgress<string> progress)
     {
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ||
+            !BleCompatibilityInspector.Current.Plan.CanReadConnectionParameters)
         {
             lock (gate)
             {
-                connectionPreferenceStatus = "unsupported_pre_win11";
+                connectionPreferenceStatus = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+                    ? "read_api_unavailable" : "unsupported_pre_win11";
             }
-            progress.Report("[PRO2_BLE_LINK] Windows 10 cannot read or request exact BLE connection parameters; the minimum rate will be verified from live notifications.");
+            progress.Report("[PRO2_BLE_LINK] connection parameters cannot be read on this runtime; live FD2 notifications remain the acceptance criterion.");
             return;
         }
 
@@ -2034,9 +2697,16 @@ public sealed class Pro2BleInputSource :
 
             gattSession = session;
             session.SessionStatusChanged += OnGattSessionStatusChanged;
+            if (session.CanMaintainConnection)
+            {
+                // Hold this session while the app owns the input. This is not
+                // a report-rate request and does not bypass FD2 rate validation.
+                session.MaintainConnection = true;
+            }
             progress.Report("[PRO2_BLE_LINK] GATT session observer active status=" +
                             session.SessionStatus +
-                            " can_maintain=" + session.CanMaintainConnection);
+                            " can_maintain=" + session.CanMaintainConnection +
+                            " maintain_connection=" + session.MaintainConnection);
         }
         catch (Exception ex)
         {
@@ -2052,6 +2722,12 @@ public sealed class Pro2BleInputSource :
         try
         {
             BluetoothConnectionStatus status = sender.ConnectionStatus;
+            if (!ReferenceEquals(sender, device)) return;
+            transportConnected = status == BluetoothConnectionStatus.Connected;
+            if (transportConnected && connectionPhase == Pro2ConnectionPhase.Connecting)
+                SetConnectionPhase(Pro2ConnectionPhase.Initializing);
+            else if (!transportConnected)
+                SetConnectionPhase(Pro2ConnectionPhase.Disconnected);
             connectionProgress?.Report(
                 "[PRO2_BLE_LINK] windows_connection_status=" + status);
             if (status == BluetoothConnectionStatus.Disconnected)
@@ -2074,11 +2750,15 @@ public sealed class Pro2BleInputSource :
     {
         try
         {
+            if (!ReferenceEquals(sender, gattSession)) return;
             connectionProgress?.Report(
                 "[PRO2_BLE_LINK] gatt_session_status=" + args.Status +
                 " bluetooth_error=" + args.Error);
             if (args.Status == GattSessionStatus.Closed)
             {
+                transportConnected = false;
+                rateAccepted = false;
+                SetConnectionPhase(Pro2ConnectionPhase.Disconnected);
                 CaptureDisconnectSignal(
                     detector: "gatt_session_closed",
                     bluetoothError: args.Error);
@@ -2197,44 +2877,154 @@ public sealed class Pro2BleInputSource :
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
-        progress.Report("[PRO2_BLE_LINK] allowing native Pro2/Windows parameter negotiation before applying fallback...");
-        await Task.Delay(1800, cancellationToken);
+        if (AutoOptimizeBleEnabled && !customConnectionParameterExperiment)
+        {
+            await RunAdaptiveConnectionOptimizationAsync(progress, cancellationToken, initializing: true);
+            Pro2RateEvidence evidence = GetRateEvidence();
+            // Do not use the lifetime average spanning several slow/fast presets.
+            // A live low-rate connection remains open; 60Hz gameplay acceptance is separate.
+            return transportConnected && ShouldKeepLiveInput(evidence.Fd2Hz, evidence.ParsedHz,
+                evidence.Fd2Count, evidence.ParsedCount);
+        }
+        int nativeObservationMs = WindowsBlePreferencePolicy.NativeObservationMilliseconds(
+            OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000), PureSoftware133Mode.IsEnabled);
+        progress.Report("[PRO2_BLE_LINK] allowing native Pro2/Windows parameter negotiation before evaluating fallback; native_observation_ms=" +
+            nativeObservationMs + "; API request success is not FD2 rate acceptance.");
+        if (customConnectionParameterExperiment || (PureSoftware133Mode.IsEnabled &&
+            OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+            BleCompatibilityInspector.Current.Plan.CanReadConnectionParameters))
+            win11BeforeParameters = await CaptureParameterTrialAsync("BEFORE_NATIVE", nativeObservationMs, progress, cancellationToken);
+        else
+            await Task.Delay(nativeObservationMs, cancellationToken);
 
-        if (device != null && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        if (device != null && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+            BleCompatibilityInspector.Current.Plan.CanReadConnectionParameters)
         {
             TryCaptureWindows11ConnectionParameters(device, "native_settled", progress);
         }
 
         BlePerformanceSnapshot native = GetPerformanceSnapshot();
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            progress.Report("[WIN11_BLE_BASELINE] " + FormatPerformanceSnapshot(native));
         if (MeetsTargetPerformance(native))
         {
+            win11ParameterRouteStatus = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+                ? "native_accepted_without_request" : "not_applicable_win10";
             SetLinkRateClass(native, degraded: false);
             progress.Report("[PRO2_BLE_LINK] native link accepted " + FormatPerformanceSnapshot(native));
             return true;
         }
 
-        if (device != null && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        Win11ParameterRoute parameterRoute = Win11ParameterRoute.UnvalidatedEnvironment;
+        if ((customConnectionParameterExperiment || PureSoftware133Mode.IsEnabled) && device != null &&
+            OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+            BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters &&
+            BleCompatibilityInspector.Current.Plan.CanReadConnectionParameters)
         {
-            progress.Report("[PRO2_BLE_LINK] native link below 66.7 Hz class; applying Windows 15 ms throughput fallback.");
-            if (TryRequestWindows11ThroughputFallback(device, progress))
+            BluetoothAdapterDiagnosticInfo? adapter = null;
+            bool singleAuditedAdapter = false;
+            if (!customConnectionParameterExperiment)
+            {
+                try
+                {
+                    SystemBluetoothSnapshot environment = await SystemBluetoothDiagnostics.CaptureAsync(cancellationToken);
+                    adapter = Win11ValidatedConnectionProfile.SingleAuditedAdapter(environment);
+                    singleAuditedAdapter = adapter != null;
+                    progress.Report("[WIN11_ADAPTER_SCOPE] count=" + environment.Adapters.Count +
+                        " single_audited_adapter=" + singleAuditedAdapter +
+                        " default_radio_is_not_link_ownership_proof=true");
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception ex) { progress.Report("[WIN11_7P5_POLICY] adapter_audit_unavailable=" + ex.GetType().Name); }
+            }
+            parameterRoute = Win11ValidatedConnectionProfile.Select(
+                BleCompatibilityInspector.Current.Facts, adapter, customConnectionParameterExperiment);
+            win11ParameterRouteStatus = parameterRoute.ToString();
+            progress.Report("[WIN11_7P5_POLICY] route=" + parameterRoute +
+                " allow_custom_request=" + Win11ValidatedConnectionProfile.AllowsCustomRequest(parameterRoute) +
+                " profile=" + Win11ValidatedConnectionProfile.ProfileId +
+                " vid=" + (adapter?.Vid ?? "not_probed") + " pid=" + (adapter?.Pid ?? "not_probed") +
+                " driver_version=" + (adapter?.DriverVersion ?? "not_probed") +
+                " system_writes=false unknown_environments_require_isolated_diagnostic=true");
+        }
+        if (Win11ValidatedConnectionProfile.AllowsCustomRequest(parameterRoute) && device != null &&
+            OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        {
+            bool submitted = TryRequestWindows11CustomParameters(device, progress);
+            win11CompatibilityTrialAttempted = true;
+            if (submitted)
             {
                 ResetPerformanceCounters();
-                DateTimeOffset deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-                while (DateTimeOffset.UtcNow < deadline)
+                win11AfterCustomParameters = await CaptureParameterTrialAsync("AFTER_CUSTOM_7P5", 10000, progress, cancellationToken);
+                TryCaptureWindows11ConnectionParameters(device, "custom_7p5_settled", progress);
+                BlePerformanceSnapshot custom = GetPerformanceSnapshot();
+                progress.Report("[WIN11_7P5_ABI] " + (customConnectionParameters?.GetterTelemetry ?? "payload_unavailable"));
+                ReportWindows11FallbackComparison(native, custom, progress);
+                BleMeasuredTrialResult customDecision = BleMeasuredTrialPolicy.Evaluate(
+                    ToMeasuredTrialSample(win11BeforeParameters!, transportConnected),
+                    ToMeasuredTrialSample(win11AfterCustomParameters, transportConnected));
+                progress.Report("[WIN11_REQUEST_RETENTION] kind=custom result=" + customDecision.Code +
+                    " retained=" + customDecision.RetainRequest + " long_term_stability_proven=false");
+                if (customDecision.RetainRequest)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await Task.Delay(150, cancellationToken);
-                    TryCaptureWindows11ConnectionParameters(device, "fallback_poll", progress: null);
-                    BlePerformanceSnapshot current = GetPerformanceSnapshot();
-                    if (MeetsTargetPerformance(current))
-                    {
-                        SetLinkRateClass(current, degraded: false);
-                        progress.Report("[PRO2_BLE_LINK] throughput fallback accepted " +
-                                        FormatPerformanceSnapshot(current));
-                        return true;
-                    }
+                    SetLinkRateClass(custom, degraded: !MeetsTargetPerformance(custom));
+                    progress.Report("[WIN11_7P5_ABI] measured_preflight_passed=" + MeetsTargetPerformance(custom) + " route=" + parameterRoute +
+                        "; request retained for this session, live FD2 monitor remains active; long-term stability not inferred.");
+                    return true;
                 }
+                progress.Report("[WIN11_7P5_ABI] measured_preflight_passed=false; releasing custom request and evaluating known preset fallback.");
             }
+            connectionParametersRequest?.Dispose();
+            connectionParametersRequest = null;
+            customConnectionParameters = null;
+            retainedConnectionPreference = null;
+            if (submitted)
+            {
+                await Task.Delay(1000, cancellationToken);
+                TryCaptureWindows11ConnectionParameters(device, "custom_released", progress);
+            }
+        }
+
+        if (device != null && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+            BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters)
+        {
+            progress.Report("[PRO2_BLE_LINK] untouched native link below target; evaluating Windows preset (not a 133Hz guarantee). target_hz=" +
+                            (PureSoftware133Mode.IsEnabled
+                                ? PureSoftware133Mode.MinimumAcceptedHz
+                                : MinimumTargetNotifyRateHz).ToString("F1"));
+            BleTrialMeasurement presetBefore = await CaptureParameterTrialAsync("BEFORE_PRESET", 10000, progress, cancellationToken);
+            if (presetBefore.Fd2Hz >= 128 && presetBefore.ParsedHz >= 128 && presetBefore.ConnectedAtEnd &&
+                presetBefore.LastInputAgeMs < 500)
+            {
+                SetLinkRateClass(GetPerformanceSnapshot(), degraded: false);
+                progress.Report("[WIN11_REQUEST_RETENTION] native_recovered_before_preset=true request_sent=false");
+                return true;
+            }
+            if (TryRequestWindows11ThroughputFallback(device, progress, presetBefore.Fd2Hz))
+            {
+                BleTrialMeasurement presetAfter = await CaptureParameterTrialAsync("AFTER_PRESET", 10000, progress, cancellationToken);
+                TryCaptureWindows11ConnectionParameters(device, "fallback_settled", progress);
+                BleMeasuredTrialResult decision = BleMeasuredTrialPolicy.Evaluate(
+                    ToMeasuredTrialSample(presetBefore, transportConnected),
+                    ToMeasuredTrialSample(presetAfter, transportConnected));
+                progress.Report("[WIN11_REQUEST_RETENTION] kind=public_preset before_fd2_hz=" + presetBefore.Fd2Hz.ToString("F2") +
+                    " after_fd2_hz=" + presetAfter.Fd2Hz.ToString("F2") + " result=" + decision.Code +
+                    " retained=" + decision.RetainRequest + " no_synthetic_reports=true");
+                if (decision.RetainRequest)
+                {
+                    BlePerformanceSnapshot measured = GetPerformanceSnapshot();
+                    SetLinkRateClass(measured, degraded: !MeetsTargetPerformance(measured));
+                    return true;
+                }
+                connectionParametersRequest?.Dispose();
+                connectionParametersRequest = null;
+                retainedConnectionPreference = null;
+                lock (gate) connectionPreferenceStatus = "preset_released_" + decision.Code;
+                await Task.Delay(1000, cancellationToken);
+                TryCaptureWindows11ConnectionParameters(device, "preset_released", progress);
+            }
+            else if (connectionParametersRequest != null && retainedConnectionPreference == null)
+            { connectionParametersRequest.Dispose(); connectionParametersRequest = null; }
         }
         else
         {
@@ -2250,6 +3040,36 @@ public sealed class Pro2BleInputSource :
         }
 
         BlePerformanceSnapshot failed = GetPerformanceSnapshot();
+        if (PureSoftware133Mode.IsEnabled)
+        {
+            lock (gate)
+            {
+                linkRateClass = "below_133hz_required";
+                lastPerformanceFailure =
+                    "真实 BLE 已连接，但 133Hz 验收未通过；要求 raw/parsed >= " +
+                    PureSoftware133Mode.MinimumAcceptedHz.ToString("F1") +
+                    "Hz，实测 " + FormatPerformanceSnapshot(failed);
+                status = lastPerformanceFailure;
+            }
+            if (HasUsableLivePerformance(failed))
+            {
+                lock (gate)
+                {
+                    lastPerformanceWarning = lastPerformanceFailure;
+                    rateAccepted = false;
+                }
+                progress.Report("[PRO2_BLE_LINK] RATE_LIMITED_KEEP_CONNECTED " + lastPerformanceFailure +
+                    " physical_disconnect=false virtual_output_allowed=" + Pro2GameplayRatePolicy.CanPlay(
+                        true, transportConnected, failed.NotifyRateHz, failed.ParsedRateHz, failed.RawNotifications,
+                        failed.ParsedNotifications, lastParsedNotifyTicks == 0 ? double.PositiveInfinity :
+                        Stopwatch.GetElapsedTime(lastParsedNotifyTicks).TotalMilliseconds) +
+                    " gameplay_min_hz=60 cadence=fresh_source_only");
+                return true;
+            }
+            progress.Report("[PRO2_BLE_LINK] REJECTED " + lastPerformanceFailure);
+            return false;
+        }
+
         if (HasUsableLivePerformance(failed))
         {
             string warning = "BLE 输入保持 live，但没有达到 66.7 Hz 目标；虚拟 USB 将保持用户选择的刷新率并重复 latest_state：" +
@@ -2275,27 +3095,133 @@ public sealed class Pro2BleInputSource :
     }
 
     [SupportedOSPlatform("windows10.0.22000.0")]
+    private bool TryRequestWindows11CustomParameters(BluetoothLEDevice source, IProgress<string> progress)
+    {
+        try
+        {
+            customConnectionParameters = new Win11CustomConnectionParameters();
+            progress.Report("[WIN11_7P5_ABI] mode=" + win11ParameterRouteStatus +
+                " isolated_cli=" + customConnectionParameterExperiment.ToString().ToLowerInvariant() +
+                " min=6 max=6 latency=0 timeout=600 " +
+                "interval_ms=7.50 implementation=own_winrt_abi_object official_constructor=false " +
+                "registry_written=false drivers_changed=false; submitting once, measured FD2 decides success.");
+            connectionParametersRequest?.Dispose();
+            connectionParametersRequest = null;
+            connectionParametersRequest = source.RequestPreferredConnectionParameters(customConnectionParameters.Parameters);
+            retainedConnectionPreference = connectionParametersRequest.Status == BluetoothLEPreferredConnectionParametersRequestStatus.Success
+                ? customConnectionParameters.Parameters : null;
+            lock (gate) connectionPreferenceStatus = "custom_7p5_" + connectionParametersRequest.Status;
+            progress.Report("[WIN11_7P5_ABI] request_status=" + connectionParametersRequest.Status +
+                " " + customConnectionParameters.GetterTelemetry + " rate_accepted=false_until_measurement");
+            return connectionParametersRequest.Status == BluetoothLEPreferredConnectionParametersRequestStatus.Success;
+        }
+        catch (Exception ex)
+        {
+            lock (gate) connectionPreferenceStatus = "custom_7p5_error_0x" + ex.HResult.ToString("X8");
+            progress.Report("[WIN11_7P5_ABI] rejected_hresult=0x" + ex.HResult.ToString("X8") +
+                " exception=" + ex.GetType().Name + " " + ex.Message +
+                " " + (customConnectionParameters?.GetterTelemetry ?? "payload_not_created"));
+            return false;
+        }
+    }
+
+    private async Task<BleTrialMeasurement> CaptureParameterTrialAsync(
+        string phase, int milliseconds, IProgress<string> progress, CancellationToken token)
+    {
+        var capture = new Win10BleDiagnosticCapture(Stopwatch.GetTimestamp(), DateTimeOffset.UtcNow);
+        lock (gate)
+        {
+            if (activeBleDiagnosticCapture != null) throw new InvalidOperationException("BLE capture already active.");
+            activeBleDiagnosticCapture = capture;
+        }
+        Win10BleDiagnosticSamples samples;
+        ushort interval;
+        string preference;
+        BluetoothLEDevice? deviceAtCapture = device;
+        double lastInputAge;
+        bool connectedAtEnd;
+        try
+        {
+            await Task.Delay(milliseconds, token);
+            lock (gate)
+            {
+                samples = capture.Snapshot(Stopwatch.GetTimestamp());
+                interval = connectionIntervalUnits;
+                preference = connectionPreferenceStatus;
+                lastInputAge = lastParsedNotifyTicks == 0 ? double.PositiveInfinity :
+                    Stopwatch.GetElapsedTime(lastParsedNotifyTicks).TotalMilliseconds;
+                connectedAtEnd = transportConnected && ReferenceEquals(device, deviceAtCapture);
+            }
+        }
+        finally
+        {
+            lock (gate)
+            {
+                if (ReferenceEquals(activeBleDiagnosticCapture, capture)) activeBleDiagnosticCapture = null;
+            }
+        }
+        var exactGaps = new NotifyGapWindow();
+        for (int i = 1; i < samples.Fd2Ticks.Length; i++)
+            exactGaps.Record(Stopwatch.GetElapsedTime(samples.Fd2Ticks[i - 1], samples.Fd2Ticks[i]).TotalMilliseconds);
+        exactGaps.SummarizeAndReset(out NotifyGapSummary exactSummary);
+        var trial = new BleTrialMeasurement(phase, samples.DurationSeconds,
+            samples.Fd2Ticks.Length / samples.DurationSeconds, samples.ParsedTicks.Length / samples.DurationSeconds,
+            samples.Fd2Ticks.Length, samples.ParsedTicks.Length, interval, preference,
+            Win10BleDiagnostic.BuildGapStatistics(samples.Fd2Ticks), lastInputAge, connectedAtEnd, exactSummary);
+        progress.Report("[WIN11_PARAMETER_TRIAL] phase=" + phase + " duration_s=" + trial.DurationSeconds.ToString("F2") +
+            " fd2_hz=" + trial.Fd2Hz.ToString("F2") + " parsed_hz=" + trial.ParsedHz.ToString("F2") +
+            " actual_interval_ms=" + (trial.ConnectionIntervalUnits > 0 ? (trial.ConnectionIntervalUnits * 1.25).ToString("F2") : "unavailable") +
+            " p50_gap_ms=" + trial.Gaps.P50Ms.ToString("F2") + " p95_gap_ms=" + trial.Gaps.P95Ms.ToString("F2") +
+            " request_status=" + trial.RequestStatus);
+        return trial;
+    }
+
+    [SupportedOSPlatform("windows10.0.22000.0")]
     private bool TryRequestWindows11ThroughputFallback(
         BluetoothLEDevice source,
-        IProgress<string> progress)
+        IProgress<string> progress, double measuredNativeHz = double.NaN)
     {
-        return TryRequestWindows11ThroughputPreference(source, "fallback", progress);
+        return TryRequestWindows11ThroughputPreference(source, "fallback", progress, measuredNativeHz);
     }
 
     [SupportedOSPlatform("windows10.0.22000.0")]
     private bool TryRequestWindows11ThroughputPreference(
         BluetoothLEDevice source,
         string reason,
-        IProgress<string> progress)
+        IProgress<string> progress, double measuredNativeHz = double.NaN)
     {
+        if (!BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters)
+        {
+            progress.Report("[PRO2_BLE_LINK] public request API unavailable; keeping native connection and measuring FD2.");
+            return false;
+        }
         try
         {
             BluetoothLEPreferredConnectionParameters preferred =
                 BluetoothLEPreferredConnectionParameters.ThroughputOptimized;
+            uint currentInterval;
+            lock (gate) currentInterval = connectionIntervalUnits;
+            WindowsBlePreferenceDecision decision = WindowsBlePreferencePolicy.Decide(
+                PureSoftware133Mode.IsEnabled, reason, currentInterval,
+                preferred.MinConnectionInterval, preferred.MaxConnectionInterval, preferred.ConnectionLatency,
+                double.IsFinite(measuredNativeHz) ? measuredNativeHz : GetPerformanceSnapshot().NotifyRateHz);
+            if (decision != WindowsBlePreferenceDecision.Request &&
+                decision != WindowsBlePreferenceDecision.RequestPartialImprovement)
+            {
+                lock (gate) connectionPreferenceStatus = reason + "_" + decision;
+                progress.Report("[PRO2_BLE_LINK] preference_skipped reason=" + reason +
+                    " decision=" + decision + " current_interval_units=" + currentInterval +
+                    " preset=" + FormatPreferredConnectionParameters(preferred) +
+                    " request_sent=false registry_written=false; retaining native FD2 measurement.");
+                return false;
+            }
             progress.Report("[PRO2_BLE_LINK] requesting " + reason + " " +
-                            FormatPreferredConnectionParameters(preferred));
+                            FormatPreferredConnectionParameters(preferred) + " decision=" + decision +
+                            "; request success alone never enables 133Hz output.");
             connectionParametersRequest?.Dispose();
             connectionParametersRequest = source.RequestPreferredConnectionParameters(preferred);
+            retainedConnectionPreference = connectionParametersRequest.Status == BluetoothLEPreferredConnectionParametersRequestStatus.Success
+                ? preferred : null;
             lock (gate)
             {
                 connectionPreferenceStatus = reason + "_" + connectionParametersRequest.Status;
@@ -2322,6 +3248,7 @@ public sealed class Pro2BleInputSource :
         string reason,
         IProgress<string>? progress)
     {
+        if (!BleCompatibilityInspector.Current.Plan.CanReadConnectionParameters) return;
         try
         {
             CaptureConnectionParameters(source, reason, progress);
@@ -2607,7 +3534,14 @@ public sealed class Pro2BleInputSource :
 
     private async Task CloseCurrentAsync(string nextStatus)
     {
+        try { compatibilityTrialCts?.Cancel(); } catch (ObjectDisposedException) { }
         IsRunning = false;
+        transportConnected = false;
+        rateAccepted = false;
+        liveRateProbeTicks = 0;
+        SetConnectionPhase(Pro2ConnectionPhase.Offline);
+        inputSignal.Notify();
+        await StopRuntimeBatteryRefreshAsync();
         await StopRumbleWriterAsync();
         watcher?.Stop();
         watcher = null;
@@ -2639,7 +3573,8 @@ public sealed class Pro2BleInputSource :
         if (device != null)
         {
             device.ConnectionStatusChanged -= OnBluetoothConnectionStatusChanged;
-            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+                BleCompatibilityInspector.Current.Plan.CanReadConnectionParameters)
             {
                 UnsubscribeWindows11ConnectionEvents(device);
             }
@@ -2647,11 +3582,25 @@ public sealed class Pro2BleInputSource :
         if (gattSession != null)
         {
             gattSession.SessionStatusChanged -= OnGattSessionStatusChanged;
+            try { gattSession.MaintainConnection = false; }
+            catch (Exception ex)
+            {
+                connectionProgress?.Report("[PRO2_BLE_LINK] release session warning: " + ex.Message);
+            }
             gattSession.Dispose();
             gattSession = null;
         }
         connectionParametersRequest?.Dispose();
         connectionParametersRequest = null;
+        customConnectionParameters = null;
+        // Characteristics retain their services. Explicit disposal prevents an
+        // earlier session from retaining its service/CCCD ownership on reconnect.
+        foreach (var service in ownedGattServices)
+        {
+            try { service.Dispose(); }
+            catch (Exception ex) { connectionProgress?.Report("[PRO2_BLE_LINK] service release warning: " + ex.Message); }
+        }
+        ownedGattServices.Clear();
         connectionProgress = null;
         device?.Dispose();
         device = null;
@@ -2662,9 +3611,32 @@ public sealed class Pro2BleInputSource :
 
     private void ResetLiveState()
     {
+        ResetExperimentalSession();
         lock (gate)
         {
+            firmwareInfo = null;
+            rateStability.Reset();
+            win11CompatibilityTrialAttempted = false;
+            compatibilityOptimizationSummary = "";
+            adaptiveOptimizationRunAttempted = false;
+            retainedConnectionPreference = null;
+            liveParsedRateHz = 0;
+            liveFd2RateHz = 0;
+            lastLiveGapSummary = default;
+            liveRateMeasuredTicks = 0;
+            liveRateProbeTicks = 0;
+            liveRateProbeRaw = liveRateProbeParsed = 0;
+            liveNotifyGaps.Reset();
             latest = GamepadState.Neutral();
+            batteryStatus = null;
+            batteryStatusTicks = 0;
+            batteryLevelSource = "connection";
+            batteryLevelAtConnection = GamepadState.BatteryUnknown;
+            runtimeBatteryCapture = null;
+            runtimeBatteryRefreshStatus = "waiting";
+            batteryLevelReadStatus = "not_attempted";
+            chargeStatus = null;
+            chargeStatusTicks = 0;
             latestAt = default;
             rawState = GamepadState.Neutral();
             filteredState = GamepadState.Neutral();
@@ -2728,6 +3700,9 @@ public sealed class Pro2BleInputSource :
             fd2ReportRateStatus = "not_requested";
             fd2ReportRateDescriptorHandle = 0;
             fd2ReportRateDescriptorUuid = "";
+            fd2ReportRateValueBefore = "not_read";
+            fd2ReportRateValueAfter = "not_read";
+            activeBleDiagnosticCapture = null;
             linkRateClass = "unknown";
             lastPerformanceWarning = "";
             disconnectSignalCaptured = false;
@@ -2741,6 +3716,12 @@ public sealed class Pro2BleInputSource :
     {
         lock (gate)
         {
+            liveParsedRateHz = liveFd2RateHz = 0;
+            rateStability.Reset();
+            liveRateMeasuredTicks = liveRateProbeTicks = 0;
+            liveRateProbeRaw = liveRateProbeParsed = 0;
+            lastLiveGapSummary = default;
+            liveNotifyGaps.Reset();
             updates = 0;
             rawNotifyCount = 0;
             primaryInputNotifyCount = 0;
@@ -2788,7 +3769,8 @@ public sealed class Pro2BleInputSource :
             : 800.0 / connectionIntervalUnits;
         int rawFilteredMaxDelta = MaxAxisDelta(rawState, filteredState);
         int filteredLatestMaxDelta = MaxAxisDelta(filteredState, latest);
-        return "ble_raw_hz=" + SampleRate(rawNotifyCount, firstRawNotifyTicks, lastRawNotifyTicks).ToString("F1") +
+        return "rate_scope=connection_average fd2_live_parsed_hz=" + CurrentParsedRateHz.ToString("F1") +
+               " ble_raw_hz=" + SampleRate(rawNotifyCount, firstRawNotifyTicks, lastRawNotifyTicks).ToString("F1") +
                " ble_parsed_hz=" + SampleRate(updates, firstParsedNotifyTicks, lastParsedNotifyTicks).ToString("F1") +
                " primary_input_hz=" + SampleRate(primaryInputNotifyCount, firstPrimaryInputTicks, lastPrimaryInputTicks).ToString("F1") +
                " primary_input_len=" + primaryInputLastLength +
@@ -2927,13 +3909,22 @@ public sealed class Pro2BleInputSource :
 
     private static bool MeetsTargetPerformance(BlePerformanceSnapshot snapshot)
     {
-        bool connectionFastEnough =
-            snapshot.ConnectionIntervalUnits == 0 ||
-            snapshot.ConnectionIntervalUnits <= MinimumAcceptedConnectionIntervalUnits;
-        return connectionFastEnough &&
-               snapshot.RawNotifications >= 20 &&
-               snapshot.NotifyRateHz >= MinimumTargetNotifyRateHz &&
-               snapshot.ParsedRateHz >= MinimumTargetNotifyRateHz * 0.9;
+        double minimumRateHz = PureSoftware133Mode.IsEnabled
+            ? PureSoftware133Mode.MinimumAcceptedHz
+            : MinimumTargetNotifyRateHz;
+        // A connection event may carry multiple reports. Measured FD2/Parsed,
+        // not an assumed one-report-per-event limit, determine acceptance.
+        return snapshot.RawNotifications >= 20 &&
+               snapshot.NotifyRateHz >= minimumRateHz &&
+               snapshot.ParsedRateHz >= minimumRateHz;
+    }
+
+    private static void ReportWindows11FallbackComparison(
+        BlePerformanceSnapshot before, BlePerformanceSnapshot after, IProgress<string> progress)
+    {
+        progress.Report("[WIN11_BLE_COMPARE] before={" + FormatPerformanceSnapshot(before) +
+            "} after={" + FormatPerformanceSnapshot(after) + "} target_accepted=" +
+            MeetsTargetPerformance(after) + "; no synthetic reports counted.");
     }
 
     private static bool HasUsableLivePerformance(BlePerformanceSnapshot snapshot)
@@ -2960,10 +3951,9 @@ public sealed class Pro2BleInputSource :
 
     private void SetLinkRateClass(BlePerformanceSnapshot snapshot, bool degraded)
     {
+        rateAccepted = !degraded;
         string rateClass;
-        if ((snapshot.ConnectionIntervalUnits == 0 ||
-             snapshot.ConnectionIntervalUnits <= FastestLegacyConnectionIntervalUnits) &&
-            snapshot.NotifyRateHz >= FastNotifyRateHz)
+        if (snapshot.NotifyRateHz >= FastNotifyRateHz && snapshot.ParsedRateHz >= FastNotifyRateHz)
         {
             rateClass = "133hz";
         }
@@ -3299,7 +4289,11 @@ public sealed class Pro2BleInputSource :
         string Name,
         short Rssi,
         bool NintendoManufacturer,
-        int Score);
+        int Score)
+    {
+        public bool IsKnownAddressProbe { get; init; }
+        public bool IsManualSelection { get; init; }
+    }
 
     private sealed record GattServiceProbe(
         Guid ServiceUuid,

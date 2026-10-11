@@ -7,14 +7,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>Y700Switch2V60Viiper</AssemblyName>
-    <AssemblyTitle>PRO2 手柄无线接收器控制板 V6.2.32 Test r2</AssemblyTitle>
-    <Product>PRO2 手柄无线接收器控制板</Product>
-    <Description>V6.2.32 test r2 fixes full-range capture lifetime and completion feedback.</Description>
-    <Version>6.2.32</Version>
-    <AssemblyVersion>6.2.32.0</AssemblyVersion>
-    <FileVersion>6.2.32.0</FileVersion>
-    <InformationalVersion>6.2.32-stick-calibration-test-r2</InformationalVersion>
+    <AssemblyName>PRO2ControllerAssistant</AssemblyName>
+    <AssemblyTitle>PRO2 手柄助手</AssemblyTitle>
+    <Product>PRO2 手柄助手</Product>
+    <Description>适用于 Windows 10 / 11 x64 的 Pro2 纯软件手柄助手，支持 Pro2、Pro1、Xbox 与 PS5 兼容模式</Description>
+    <Version>1.3.17</Version>
+    <AssemblyVersion>1.3.17.0</AssemblyVersion>
+    <FileVersion>1.3.17.0</FileVersion>
+    <InformationalVersion>1.3.17-home-ble-controls</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>true</PublishSingleFile>
@@ -22,17 +22,39 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;artifacts\**</DefaultItemExcludes>
-    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\AppIcon-v2.ico</ApplicationIcon>
+    <PureSoftwareRelease Condition="'$(PureSoftwareRelease)' == ''">false</PureSoftwareRelease>
+    <BatteryReadExperiment Condition="'$(BatteryReadExperiment)' == ''">false</BatteryReadExperiment>
+    <OutputIsolationExperiment Condition="'$(OutputIsolationExperiment)' == ''">false</OutputIsolationExperiment>
+    <EmbedUsbipInstaller Condition="'$(EmbedUsbipInstaller)' == ''">true</EmbedUsbipInstaller>
+    <ViiperBinaryPath Condition="'$(ViiperBinaryPath)' == ''">..\..\tools\viiper\haptic-v0.8.0\viiper-haptic-pro1.exe</ViiperBinaryPath>
+    <UsbipInstallerPath Condition="'$(UsbipInstallerPath)' == ''">..\..\tools\usbip-win2\v0.9.7.7\USBip-0.9.7.7-x64.exe</UsbipInstallerPath>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(PureSoftwareRelease)' == 'true'">
+    <DefineConstants>$(DefineConstants);PURE_SOFTWARE_RELEASE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(BatteryReadExperiment)' == 'true'">
+    <DefineConstants>$(DefineConstants);PRO2_BATTERY_READ_EXPERIMENT</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(OutputIsolationExperiment)' == 'true'">
+    <DefineConstants>$(DefineConstants);PRO2_OUTPUT_ISOLATION_EXPERIMENT</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(OutputIsolationExperiment)' != 'true'">
+    <Compile Remove="BleOutputIsolationExperiment.cs;BleNotifyLayerExperiment.cs;BleRateWatchExperiment.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(BatteryReadExperiment)' != 'true'">
+    <!-- Radio experiments remain source-only in the normal release. -->
+    <Compile Remove="Pro2LiveBatteryReadPolicy.cs;Pro2BleInputSource.BatteryReadExperiment.cs;Pro2BleInputSource.BatteryFollowupExperiment.cs" />
+  </ItemGroup>
   <ItemGroup>
-    <Resource Include="Assets\AppIcon.ico" />
-    <Resource Include="Assets\Characters\kratos.png" />
-    <Resource Include="Assets\Characters\mario.png" />
-    <Resource Include="Assets\Characters\master-chief.png" />
-    <EmbeddedResource Include="..\..\tools\viiper\haptic-v0.8.0\viiper-haptic.exe" LogicalName="Embedded.viiper.haptic.exe" />
+    <Resource Include="Assets\AppIcon-v2.ico" />
+    <Resource Include="Assets\AppIcon-v2.png" />
+    <EmbeddedResource Include="$(ViiperBinaryPath)" LogicalName="Embedded.viiper.haptic.exe" />
     <EmbeddedResource Include="..\..\tools\viiper\haptic-v0.8.0\LICENSE.txt" LogicalName="Embedded.viiper.haptic.license" />
-    <EmbeddedResource Include="..\..\tools\usbip-win2\v0.9.7.7\USBip-0.9.7.7-x64.exe" LogicalName="Embedded.usbip.installer" />
-    <EmbeddedResource Include="..\..\tools\usbip-win2\v0.9.7.7\LICENSE.txt" LogicalName="Embedded.usbip.license" />
+    <EmbeddedResource Include="$(UsbipInstallerPath)" LogicalName="Embedded.usbip.installer"
+                      Condition="'$(EmbedUsbipInstaller)' == 'true'" />
+    <EmbeddedResource Include="..\..\tools\usbip-win2\v0.9.7.7\LICENSE.txt" LogicalName="Embedded.usbip.license"
+                      Condition="'$(EmbedUsbipInstaller)' == 'true'" />
   </ItemGroup>
 </Project>
 

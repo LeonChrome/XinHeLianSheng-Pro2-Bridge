@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace Y700Switch2V60Viiper;
 
 // Keeps arrival order for diagnostics, while the real-time output path drains
-// to the newest parsed state so Windows BLE batching cannot be replayed later.
+// to the newest axes within each button/trigger edge group.
 public sealed class Pro2SequentialInputQueue
 {
     private readonly Queue<Entry> frames = new();
@@ -90,6 +90,34 @@ public sealed class Pro2SequentialInputQueue
         DequeuedCount = 0;
         OverflowDropCount = 0;
         RealtimeSupersededCount = 0;
+    }
+
+    // Keep press/release edges even if Windows delivers a batch in one callback
+    // burst. Coalesce axes only when the digital controls remain identical.
+    public bool TryDequeueRealtimeEdges(out GamepadState state, out long arrivalTicks,
+        out int supersededCount)
+    {
+        supersededCount = 0;
+        if (!frames.TryDequeue(out Entry entry))
+        {
+            state = GamepadState.Neutral();
+            arrivalTicks = 0;
+            return false;
+        }
+        DequeuedCount++;
+        while (frames.TryPeek(out Entry next) &&
+               next.State.Buttons == entry.State.Buttons &&
+               (next.State.L2 > 0) == (entry.State.L2 > 0) &&
+               (next.State.R2 > 0) == (entry.State.R2 > 0))
+        {
+            entry = frames.Dequeue();
+            DequeuedCount++;
+            RealtimeSupersededCount++;
+            supersededCount++;
+        }
+        state = entry.State;
+        arrivalTicks = entry.ArrivalTicks;
+        return true;
     }
 
     public void ResetTo(GamepadState state, long arrivalTicks)

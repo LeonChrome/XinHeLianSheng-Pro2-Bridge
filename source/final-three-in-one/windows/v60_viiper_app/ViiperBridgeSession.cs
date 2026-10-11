@@ -11,12 +11,19 @@ namespace Y700Switch2V60Viiper;
 public sealed class ViiperBridgeSession : IAsyncDisposable
 {
     private const ulong PerformanceLogIntervalFrames = 1000;
+    private string feedbackSource = "等待游戏反馈";
+    public string FeedbackSource => Volatile.Read(ref feedbackSource);
+    private long feedbackQueued;
+    public long FeedbackQueued => Interlocked.Read(ref feedbackQueued);
     private readonly ViiperProtocolClient client;
     private readonly ViiperDeviceProfile profile;
     private readonly IProgress<string> progress;
     private readonly IProgress<Exception>? faultProgress;
     private readonly IGamepadInputSource? inputSource;
     private readonly IGamepadOutputSink? outputSink;
+    private readonly RearButtonMapper rearButtonMapper = new();
+    private RearButtonConfiguration rearButtonConfiguration = new();
+    private int rearCancelRequested;
     private readonly IProgress<ProfessionalImuUiSnapshot>? professionalImuUiProgress;
     private readonly CancellationTokenSource cts = new();
     private readonly SemaphoreSlim streamRecoveryGate = new(1, 1);
@@ -58,7 +65,8 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         Ps5OutputImuTuning? ps5OutputImuTuning = null,
         ProfessionalImuOptions? professionalImuOptions = null,
         ProfessionalHidAuditController? professionalHidAuditController = null,
-        IProgress<ProfessionalImuUiSnapshot>? professionalImuUiProgress = null)
+        IProgress<ProfessionalImuUiSnapshot>? professionalImuUiProgress = null,
+        RearButtonConfiguration? rearButtons = null)
     {
         this.client = client;
         this.profile = profile;
@@ -73,7 +81,17 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         this.professionalImuOptions = professionalImuOptions ?? ProfessionalImuOptions.Default;
         this.professionalHidAuditController = professionalHidAuditController ?? new ProfessionalHidAuditController();
         this.professionalImuUiProgress = professionalImuUiProgress;
+        rearButtonConfiguration = (rearButtons ?? new()).Normalize();
     }
+
+    public void SetRearButtons(RearButtonConfiguration configuration)
+    {
+        var next = configuration.Normalize();
+        var previous = Interlocked.Exchange(ref rearButtonConfiguration, next);
+        if (!RearButtonMapper.ProfilesEquivalent(previous.ForMode(profile.Mode), next.ForMode(profile.Mode)))
+            CancelRearButtons();
+    }
+    public void CancelRearButtons() => Interlocked.Or(ref rearCancelRequested, 1);
 
     public ViiperDeviceProfile Profile => profile;
 
@@ -174,6 +192,30 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 " actual=" + device.Type + "/" + device.Vid + ":" + device.Pid +
                 ". Please use 清理残留虚拟设备 and retry.");
         }
+
+        UsbipAttachmentRepairResult singletonResult =
+            await ControllerEnumerationDiagnostics.EnsureSingleUsbipAttachmentAsync(
+                device,
+                client.Host,
+                client.Port,
+                cancellationToken);
+        foreach (string line in singletonResult.Lines)
+        {
+            progress.Report(line);
+        }
+        UsbipDetachCount += (ulong)singletonResult.DetachedPortCount;
+        usbipAttachCount += (ulong)singletonResult.AttachCount;
+        if (singletonResult.DetachedPortCount > 0 || singletonResult.AttachCount > 0)
+        {
+            lastUsbipLifecycleEvent = "singleton_repair";
+        }
+        if (singletonResult.FinalPortCount != 1)
+        {
+            throw new InvalidOperationException(
+                "USBIP virtual-controller attachment validation failed. Expected exactly one port, actual=" +
+                singletonResult.FinalPortCount + ". Please retry after using 清理残留虚拟设备.");
+        }
+
         SetStream(await client.OpenStreamAsync(device.BusId, device.DevId, cancellationToken));
         if (inputSource is IGamepadSessionInputSource sessionInputSource)
         {
@@ -220,6 +262,14 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
 
         await DrainTaskAsync(inputTask);
         await DrainTaskAsync(feedbackTask);
+        rearButtonMapper.Reset();
+        // Stop the physical actuators only after the feedback loop has drained,
+        // so no late game frame can overwrite this neutral during mode switch.
+        if (outputSink?.IsOutputReady == true)
+        {
+            var stop = Pro2OutputPacketMapper.BuildOrdinaryPacket(0, 0, "session-stop");
+            outputSink.TryWriteOutputReport(stop.Report, out _);
+        }
         professionalImuRuntime?.Dispose();
         professionalImuRuntime = null;
 
@@ -281,21 +331,27 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
 
     private async Task InputLoopAsync(CancellationToken cancellationToken)
     {
-        using WindowsTimerResolutionScope timerResolution = WindowsTimerResolutionScope.Begin();
         bool sourceLatestScheduling =
             profile.SourcePaced &&
             inputSource is IGamepadRealtimeInputSource;
+        IGamepadSignaledInputSource? signaledSource = sourceLatestScheduling
+            ? inputSource as IGamepadSignaledInputSource : null;
+        using WindowsTimerResolutionScope timerResolution =
+            WindowsTimerResolutionScope.Begin(signaledSource == null);
         TimeSpan schedulerInterval = sourceLatestScheduling
             ? TimeSpan.FromMilliseconds(1)
             : profile.SendInterval;
-        using var timer = new HighResolutionPeriodicTimer(schedulerInterval);
+        using var timer = signaledSource == null
+            ? new HighResolutionPeriodicTimer(schedulerInterval) : null;
         var rateWatch = Stopwatch.StartNew();
         double pushTargetHz = 1.0 / profile.SendInterval.TotalSeconds;
         double effectivePushTargetHz = pushTargetHz;
         long lastVirtualWriteTicks = 0;
         ulong frames = 0;
         ulong lastRateFrames = 0;
-        uint lastRateUpdates = 0;
+        var inputRateWindow = new InputUpdateRateWindow(
+            inputSource != null && inputSource.TryGetLatest(out var rateBaseline, out _)
+                ? rateBaseline.Updates : 0);
         uint lastSeenUpdates = 0;
         long lastRateTicks = 0;
         long lastLoopTicks = 0;
@@ -315,6 +371,27 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         ulong realtimeFreshWrites = 0;
         bool sourceNeutralPublished = false;
         bool sourceGapHoldLogged = false;
+        GamepadState? pendingRearRelease = null;
+        async Task<bool> FlushRearReleaseAsync(ViiperDeviceStream current)
+        {
+            if (pendingRearRelease == null) return true;
+            try
+            {
+                // An exceptional control-release frame, not a new measured FD2
+                // input. Do not add it to frames/Hz/IMU telemetry counters.
+                await current.WriteAsync(VirtualPadPackets.FromGamepad(profile, pendingRearRelease,
+                    gyroAxisInversion, ps5ImuMapping, ps5OutputImuTuning), cancellationToken).ConfigureAwait(false);
+                pendingRearRelease = null;
+                progress.Report("[REAR_SAFETY_RELEASE] mapped_controls_only=true physical_keys_preserved=true counted_as_fd2=false");
+                return true;
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Retain the release until the reopened stream accepts it.
+                if (await RecoverStreamAsync("rear_release", current, ex, cancellationToken).ConfigureAwait(false)) return false;
+                throw;
+            }
+        }
         var intervalSourceAgeSamples = new List<double>((int)PerformanceLogIntervalFrames);
         var intervalLoopGapSamples = new List<double>((int)PerformanceLogIntervalFrames);
         var intervalWriteSamplesMs = new List<double>((int)PerformanceLogIntervalFrames);
@@ -328,16 +405,20 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         ulong intervalLoopGapOver16Ms = 0;
         double intervalSourceAgeMaxMs = 0;
         string lastSource = "";
+        bool inputRateDegraded = false;
         string lastProfessionalImuTelemetry = "";
         string lastProfessionalHidAuditTelemetry = "";
         long lastProfessionalHidAuditLogTicks = 0;
         var imuTelemetry = new VirtualImuTelemetryStats();
         string timerLine =
-            "[VIIPER_TIMER] requested_ms=1 active=" + timerResolution.IsActive +
+            "[VIIPER_TIMER] requested_ms=" + (signaledSource == null ? "1" : "0") +
+            " active=" + timerResolution.IsActive +
             " result=" + timerResolution.Result +
-            " backend=" + timer.Backend +
-            " scheduler=" + (sourceLatestScheduling ? "source_latest_1ms" : "fixed_latest") +
-            " scheduler_interval_ms=" + schedulerInterval.TotalMilliseconds.ToString("F1") +
+            " backend=" + (timer?.Backend ?? "notify_signal") +
+            " scheduler=" + (signaledSource != null ? "source_notify_edges" :
+                sourceLatestScheduling ? "source_latest_1ms" : "fixed_latest") +
+            " scheduler_interval_ms=" + (signaledSource != null ? "event" :
+                schedulerInterval.TotalMilliseconds.ToString("F1")) +
             " push_target_hz=" + (sourceLatestScheduling ? "ble_source" : pushTargetHz.ToString("F1")) +
             " report_rate_mode=" + professionalImuOptions.OutputReportRateMode +
             " gyro_mode=" + GyroModeLabel(gyroMode) +
@@ -349,7 +430,10 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 " ps5_output_imu=" + ps5OutputImuTuning.TelemetryValue;
         }
         progress.Report(timerLine);
-        while (timer.WaitForNextTick(cancellationToken))
+        while (!cancellationToken.IsCancellationRequested &&
+               (signaledSource != null
+                   ? await WaitForSourceAsync(signaledSource, cancellationToken).ConfigureAwait(false)
+                   : timer!.WaitForNextTick(cancellationToken)))
         {
             long loopTicks = Stopwatch.GetTimestamp();
             if (lastLoopTicks != 0)
@@ -381,8 +465,16 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
             ViiperDeviceStream? current = GetStream();
             if (current == null)
             {
-                return;
+                // The feedback loop may temporarily clear the stream while
+                // reopening it. Do not silently terminate the input consumer.
+                await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+                continue;
             }
+            int rearCancel = Interlocked.Exchange(ref rearCancelRequested, 0);
+            if (rearCancel != 0 &&
+                rearButtonMapper.TryCancelOutput(out var requestedRelease, forceRelease: (rearCancel & 2) != 0))
+                pendingRearRelease = requestedRelease;
+            if (!await FlushRearReleaseAsync(current).ConfigureAwait(false)) continue;
 
             byte[] packet;
             string source;
@@ -411,6 +503,13 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 if (!hasInput && lastVirtualWriteTicks != 0)
                 {
                     bool sourceIsRunning = inputSource?.IsRunning == true;
+                    if (rearButtonMapper.HasPendingAction && (!sourceIsRunning ||
+                        (inputSource!.TryGetLatest(out _, out TimeSpan rearInputAge) && rearInputAge > TimeSpan.FromMilliseconds(100))))
+                    {
+                        if (rearButtonMapper.TryCancelOutput(out var staleRearRelease)) pendingRearRelease = staleRearRelease;
+                        progress.Report("[REAR_SAFETY_CANCEL] reason=input_gap_or_disconnect rearm=release_then_press");
+                        if (!await FlushRearReleaseAsync(current).ConfigureAwait(false)) continue;
+                    }
                     if (!ShouldPublishDisconnectNeutral(
                             sourceIsRunning,
                             sourceNeutralPublished))
@@ -509,6 +608,12 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                     effectivePushTargetHz,
                     ref lastMotionUpdate,
                     ref filteredMotionState);
+                GamepadState physicalControls = continuous;
+                if (inputSource?.IsRunning == true && age <= TimeSpan.FromMilliseconds(100))
+                    continuous = rearButtonMapper.Apply(continuous, profile.Mode,
+                        Volatile.Read(ref rearButtonConfiguration), loopTicks);
+                else
+                    rearButtonMapper.Reset();
                 packetSourceState = continuous;
                 packet = VirtualPadPackets.FromGamepad(
                     profile,
@@ -517,10 +622,12 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                     ps5ImuMapping,
                     ps5OutputImuTuning,
                     professionalFrame.DualSenseRaw,
-                    professionalFrame.XboxState);
+                    ReferenceEquals(physicalControls, continuous) ? professionalFrame.XboxState :
+                        RearButtonMapper.MergeProfessionalControls(continuous, professionalFrame.XboxState));
             }
             else
             {
+                rearButtonMapper.Reset();
                 currentSameStatePushes = 0;
                 packet = VirtualPadPackets.NeutralInput(profile);
                 source = "neutral";
@@ -634,18 +741,31 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                     {
                         telemetrySink.ReportViiperPushRate(actualHz);
                     }
-                    uint updateDelta = lastSeenUpdates >= lastRateUpdates
-                        ? lastSeenUpdates - lastRateUpdates
-                        : lastSeenUpdates;
-                    double bleHz = elapsedSeconds > 0
-                        ? updateDelta / elapsedSeconds
-                        : 0;
+                    double bleHz = inputRateWindow.Measure(lastSeenUpdates, elapsedSeconds);
                     double stateReuseRatio = statePushCount == 0
                         ? 0
                         : stateReuseCount / (double)statePushCount;
+                    if (PureSoftware133Mode.IsEnabled &&
+                        stateReuseRatio > PureSoftware133Mode.MaximumRepeatedStateRatio)
+                    {
+                        throw new InvalidOperationException(
+                            "纯软件真实输入转发校验失败（不允许补帧）：source_hz=" +
+                            sourceRateHz.ToString("F1") +
+                            " output_hz=" + actualHz.ToString("F1") +
+                            " repeated_state_ratio=" + stateReuseRatio.ToString("F3"));
+                    }
+                    bool degraded = PureSoftware133Mode.IsEnabled &&
+                        (bleHz < PureSoftware133Mode.MinimumAcceptedHz ||
+                         actualHz < PureSoftware133Mode.MinimumAcceptedHz);
+                    if (degraded != inputRateDegraded)
+                    {
+                        inputRateDegraded = degraded;
+                        progress.Report(degraded
+                            ? "[VIIPER_RATE_DEGRADED] real input/output below 133Hz target; compatible gameplay keeps fresh-only output alive, no synthetic frames."
+                            : "[VIIPER_RATE_RECOVERED] real input/output returned above acceptance threshold; same virtual device retained.");
+                    }
                     lastRateTicks = nowTicks;
                     lastRateFrames = frames;
-                    lastRateUpdates = lastSeenUpdates;
                     rateSummary +=
                         " actual_hz=" + actualHz.ToString("F1") +
                         " ble_hz=" + bleHz.ToString("F1") +
@@ -966,19 +1086,33 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         return source;
     }
 
+    private static async Task<bool> WaitForSourceAsync(
+        IGamepadSignaledInputSource source, CancellationToken token)
+    {
+        // Idle checks release stalled rear macros. They never create fresh input
+        // or generate a timer-driven repeat stream; active delivery is event driven.
+        await source.WaitForInputAsync(TimeSpan.FromMilliseconds(50), token).ConfigureAwait(false);
+        return !token.IsCancellationRequested;
+    }
+
     private async Task FeedbackLoopAsync(CancellationToken cancellationToken)
     {
         DualSenseHapticRumbleScheduler? dualSenseScheduler =
             profile.UsesDualSenseHaptics
-                ? new DualSenseHapticRumbleScheduler()
+                ? new DualSenseHapticRumbleScheduler(Pro2QualityMode.HapticsEnabled)
                 : null;
         ulong frames = 0;
+        progress.Report("[QUALITY_PIPELINE] gyro_quality=" + Pro2QualityMode.GyroEnabled +
+            " haptics_quality=" + Pro2QualityMode.HapticsEnabled +
+            " native_pcm_supported=" + profile.UsesDualSenseHaptics +
+            " input_rate_path=unchanged rumble_writer=unchanged");
         ulong writes = 0;
         ulong failures = 0;
         Dictionary<byte, string> lastFeedbackSummaryByKind = new();
         Dictionary<byte, ulong> feedbackFramesByKind = new();
         string lastOutputState = "";
         HashSet<string> reportedSkipReasons = new(StringComparer.Ordinal);
+        Task<byte[]>? pendingRead = null;
         while (!cancellationToken.IsCancellationRequested)
         {
             ViiperDeviceStream? current = GetStream();
@@ -990,10 +1124,34 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
             byte[] feedback;
             try
             {
-                feedback = await current.ReadExactAsync(profile.FeedbackSize, cancellationToken);
+                pendingRead ??= current.ReadExactAsync(profile.FeedbackSize, cancellationToken);
+                if (dualSenseScheduler != null)
+                {
+                    try
+                    {
+                        feedback = await pendingRead.WaitAsync(
+                            TimeSpan.FromMilliseconds(120), cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException)
+                    {
+                        // Do not cancel or replace the outstanding read: otherwise
+                        // the next frame could be consumed by an abandoned task.
+                        if (dualSenseScheduler.TryStopIdle(out Pro2OutputPacket stop))
+                        {
+                            Volatile.Write(ref feedbackSource, "触觉音频通道 · 待信号");
+                            if (outputSink?.IsOutputReady == true)
+                                outputSink.TryWriteOutputReport(stop.Report, out _);
+                        }
+                        continue;
+                    }
+                }
+                else
+                    feedback = await pendingRead.ConfigureAwait(false);
+                pendingRead = null;
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
+                pendingRead = null;
                 if (await RecoverStreamAsync("feedback", current, ex, cancellationToken).ConfigureAwait(false))
                 {
                     continue;
@@ -1013,6 +1171,10 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                     out packet,
                     out feedbackSummary,
                     out reason);
+                Volatile.Write(ref feedbackSource,
+                    dualSenseScheduler.CompatibilityMode ? "普通震动 · 游戏反馈" :
+                    dualSenseScheduler.NativeOutputActive ? "原生触觉音频 · 转换中" :
+                    dualSenseScheduler.HasNativeAudio ? "触觉音频通道 · 待信号" : "等待原生触觉音频");
             }
             else
             {
@@ -1022,6 +1184,13 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                     feedback,
                     out packet,
                     out reason);
+                if (mapped)
+                    Volatile.Write(ref feedbackSource, profile.Mode switch
+                    {
+                        ViiperVirtualMode.Pro2 => "Pro2 原始震动反馈",
+                        ViiperVirtualMode.Pro1 => "Pro1 震动 · 转换中",
+                        _ => "普通震动 · 游戏反馈"
+                    });
             }
             byte feedbackKind = dualSenseScheduler != null && feedback.Length > 0
                 ? feedback[0]
@@ -1030,6 +1199,9 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 ? previousKindFrames + 1
                 : 1;
             feedbackFramesByKind[feedbackKind] = kindFrames;
+            if (dualSenseScheduler != null && Pro2QualityMode.HapticsEnabled &&
+                feedbackKind == (byte)DualSenseHapticFrameKind.AudioPcm && kindFrames % 1000 == 0)
+                progress.Report("[HAPTIC_CONVERSION] " + dualSenseScheduler.ConversionTelemetry);
             bool summaryChanged =
                 !lastFeedbackSummaryByKind.TryGetValue(feedbackKind, out string? lastFeedbackSummary) ||
                 feedbackSummary != lastFeedbackSummary;
@@ -1076,6 +1248,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
             if (outputSink.TryWriteOutputReport(packet.Report, out string error))
             {
                 writes++;
+                Interlocked.Increment(ref feedbackQueued);
                 string state = packet.Source + "/" + (packet.Active ? "active" : "neutral");
                 if (state != lastOutputState || writes <= 4 || writes % 100 == 0)
                 {
@@ -1185,6 +1358,9 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                         currentDevice.DevId,
                         cancellationToken).ConfigureAwait(false);
                     SetStream(replacement);
+                    // The last computed frame might not have reached the USB
+                    // device. Force a physical-only release even in a repeat gap.
+                    Interlocked.Or(ref rearCancelRequested, 3);
                     viiperStreamRecoveryCount++;
                     lastUsbipLifecycleEvent = "api_stream_reopened_without_detach";
                     progress.Report("[VIIPER] API stream recovered attempt=" + attempt +
@@ -1386,7 +1562,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
             out MotionSample sample)
         {
             sample = default;
-            if (mode is ViiperVirtualMode.DualSenseLike or ViiperVirtualMode.DualSenseEdge or ViiperVirtualMode.DualSenseProfessionalImuTest)
+            if (mode is ViiperVirtualMode.DualSenseLike or ViiperVirtualMode.DualSenseProfessionalImuTest)
             {
                 if (packet.Length < 33)
                 {
@@ -1403,7 +1579,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 return true;
             }
 
-            if (mode == ViiperVirtualMode.Pro2)
+            if (mode is ViiperVirtualMode.Pro2 or ViiperVirtualMode.Pro1)
             {
                 if (packet.Length < 24)
                 {

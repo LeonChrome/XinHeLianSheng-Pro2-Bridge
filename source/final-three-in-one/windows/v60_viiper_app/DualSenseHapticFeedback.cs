@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Diagnostics;
 
 namespace Y700Switch2V60Viiper;
 
@@ -47,9 +48,29 @@ public readonly record struct DualSenseHapticFrame(
 
 public sealed class DualSenseHapticRumbleScheduler
 {
-    private readonly DualSenseHapticAudioProcessor audioProcessor = new();
+    private readonly DualSenseHapticAudioProcessor audioProcessor;
+    public DualSenseHapticRumbleScheduler() : this(false) { }
+    public DualSenseHapticRumbleScheduler(bool qualityMode) => audioProcessor = new(qualityMode);
+    public string ConversionTelemetry => audioProcessor.ConversionTelemetry;
     private bool compatibilityMode;
     private bool modeKnown;
+    private long lastAudioTicks;
+    private bool nativeOutputActive;
+    public bool CompatibilityMode => compatibilityMode;
+    public bool HasNativeAudio { get; private set; }
+    public bool NativeOutputActive => nativeOutputActive;
+
+    public bool TryStopIdle(out Pro2OutputPacket packet)
+    {
+        packet = default!;
+        if (!nativeOutputActive || lastAudioTicks == 0 ||
+            Stopwatch.GetElapsedTime(lastAudioTicks).TotalMilliseconds < 120)
+            return false;
+        nativeOutputActive = false;
+        audioProcessor.ResetOutputState();
+        packet = Pro2OutputPacketMapper.BuildOrdinaryPacket(0, 0, "dualsense-hd-idle-stop");
+        return true;
+    }
 
     public bool TryProcess(
         ReadOnlySpan<byte> wire,
@@ -60,21 +81,26 @@ public sealed class DualSenseHapticRumbleScheduler
         packet = default!;
         summary = "";
         reason = "";
-        if (!DualSenseHapticFrame.TryParse(
-                wire,
-                out DualSenseHapticFrame frame,
-                out reason))
+        if (wire.Length != DualSenseHapticFrame.WireSize)
         {
+            reason = "DualSense haptic frame size is invalid";
             return false;
         }
-
-        if (frame.Kind == DualSenseHapticFrameKind.HidOutput)
+        int length = BinaryPrimitives.ReadUInt16LittleEndian(wire.Slice(1, 2));
+        if (length > 384)
         {
-            return ProcessHid(frame.Payload.Span, out packet, out summary, out reason);
+            reason = "DualSense haptic payload length is invalid";
+            return false;
         }
-        if (frame.Kind == DualSenseHapticFrameKind.AudioPcm)
+        ReadOnlySpan<byte> payload = wire.Slice(4, length);
+        var kind = (DualSenseHapticFrameKind)wire[0];
+        if (kind == DualSenseHapticFrameKind.HidOutput)
         {
-            summary = "DualSense HD audio: bytes=" + frame.Payload.Length +
+            return ProcessHid(payload, out packet, out summary, out reason);
+        }
+        if (kind == DualSenseHapticFrameKind.AudioPcm)
+        {
+            summary = "DualSense HD audio: bytes=" + payload.Length +
                       " host_mode=" + (compatibilityMode ? "compatibility" : "audio_haptics");
             if (compatibilityMode)
             {
@@ -82,13 +108,17 @@ public sealed class DualSenseHapticRumbleScheduler
                 return false;
             }
 
-            return audioProcessor.TryProcess(
-                frame.Payload.Span,
-                out packet,
-                out reason);
+            if (payload.Length > 0 && payload.Length % 8 == 0)
+            {
+                HasNativeAudio = true;
+                lastAudioTicks = Stopwatch.GetTimestamp();
+            }
+            bool mapped = audioProcessor.TryProcess(payload, out packet, out reason);
+            if (mapped) nativeOutputActive = packet.Active;
+            return mapped;
         }
 
-        summary = "DualSense haptic frame: unknown kind=" + (byte)frame.Kind;
+        summary = "DualSense haptic frame: unknown kind=" + (byte)kind;
         reason = "unknown DualSense haptic frame kind";
         return false;
     }
@@ -121,6 +151,11 @@ public sealed class DualSenseHapticRumbleScheduler
         bool modeChanged = !modeKnown || compatibilityMode != selectedCompatibility;
         compatibilityMode = selectedCompatibility;
         modeKnown = true;
+        if (modeChanged)
+        {
+            audioProcessor.ResetOutputState();
+            nativeOutputActive = false;
+        }
         summary =
             "DualSense HID output: host_mode=" +
             (compatibilityMode ? "compatibility" : "audio_haptics") +
@@ -155,6 +190,10 @@ public sealed class DualSenseHapticRumbleScheduler
 
 public sealed class DualSenseHapticAudioProcessor
 {
+    private readonly Pro2QualityHapticProcessor? qualityProcessor;
+    public DualSenseHapticAudioProcessor() : this(false) { }
+    public DualSenseHapticAudioProcessor(bool qualityMode) => qualityProcessor = qualityMode ? new() : null;
+    public string ConversionTelemetry => qualityProcessor?.Telemetry ?? "processor=legacy_goertzel";
     private const int Channels = 4;
     private const int BytesPerSample = 2;
     private const int FrameBytes = Channels * BytesPerSample;
@@ -168,8 +207,17 @@ public sealed class DualSenseHapticAudioProcessor
     private const int HighBinMax = 13;
     private const int ActivityEnvelopeThreshold = 512;
     private const int ActivityPeakThreshold = 2048;
-    private const int SilencePacketsBeforeStop = 80;
+    private const int SilenceFramesBeforeStop = 48000 * 80 / 1000;
     private const int SafeMaximumAmplitude = 29000;
+    private static readonly double[] Coefficients = BuildCoefficients();
+
+    private static double[] BuildCoefficients()
+    {
+        var values = new double[SpectralWindow];
+        for (int i = 0; i < values.Length; i++)
+            values[i] = 2 * Math.Cos(2 * Math.PI * i / SpectralWindow);
+        return values;
+    }
 
     private readonly short[] spectralLeft = new short[SpectralWindow];
     private readonly short[] spectralRight = new short[SpectralWindow];
@@ -179,13 +227,19 @@ public sealed class DualSenseHapticAudioProcessor
     private int downsampleCount;
     private int envelopeLeft;
     private int envelopeRight;
-    private int silencePackets;
+    private int silenceFrames;
     private bool outputActive;
 
     public void ResetOutputState()
     {
+        qualityProcessor?.Reset();
         outputActive = false;
-        silencePackets = 0;
+        silenceFrames = 0;
+        spectralCount = downsampleCount = 0;
+        downsampleSumLeft = downsampleSumRight = 0;
+        envelopeLeft = envelopeRight = 0;
+        Array.Clear(spectralLeft);
+        Array.Clear(spectralRight);
     }
 
     public bool TryProcess(
@@ -193,10 +247,11 @@ public sealed class DualSenseHapticAudioProcessor
         out Pro2OutputPacket packet,
         out string reason)
     {
+        if (qualityProcessor != null) return qualityProcessor.TryProcess(pcm, out packet, out reason);
         packet = default!;
         reason = "";
         int frames = pcm.Length / FrameBytes;
-        if (frames == 0)
+        if (frames == 0 || pcm.Length % FrameBytes != 0)
         {
             reason = "DualSense HD audio packet has no complete 4-channel PCM frame";
             return false;
@@ -252,23 +307,20 @@ public sealed class DualSenseHapticAudioProcessor
         envelopeLeft = SmoothEnvelope(envelopeLeft, meanLeft);
         envelopeRight = SmoothEnvelope(envelopeRight, meanRight);
         bool activity = HasActivity(envelopeLeft, envelopeRight, peakLeft, peakRight);
+        bool rawActivity = HasActivity(meanLeft, meanRight, peakLeft, peakRight);
+        silenceFrames = rawActivity ? 0 : Math.Min(SilenceFramesBeforeStop, silenceFrames + frames);
+        if (outputActive && silenceFrames >= SilenceFramesBeforeStop)
+        {
+            ResetOutputState();
+            packet = Pro2OutputPacketMapper.BuildOrdinaryPacket(0, 0, "dualsense-hd-silence");
+            return true;
+        }
         if (!activity)
         {
-            silencePackets++;
-            if (outputActive && silencePackets >= SilencePacketsBeforeStop)
-            {
-                outputActive = false;
-                packet = Pro2OutputPacketMapper.BuildOrdinaryPacket(
-                    0,
-                    0,
-                    "dualsense-hd-silence");
-                return true;
-            }
             reason = "DualSense HD audio is silent";
             return false;
         }
 
-        silencePackets = 0;
         if (!spectralReady)
         {
             reason = "DualSense HD spectral window is accumulating";
@@ -326,7 +378,7 @@ public sealed class DualSenseHapticAudioProcessor
         int peakBin = 0;
         for (int bin = minimumBin; bin <= maximumBin; bin++)
         {
-            double coefficient = 2 * Math.Cos(2 * Math.PI * bin / SpectralWindow);
+            double coefficient = Coefficients[bin];
             double first = 0;
             double second = 0;
             for (int i = 0; i < SpectralWindow; i++)

@@ -146,7 +146,7 @@ public sealed record ViiperPushRateOption(
     [
         new(
             ViiperPushRateMode.SourceAdaptive,
-            "跟随真实 Pro2 BLE（推荐）",
+            "真实一帧 → 虚拟一帧（133Hz 推荐）",
             0.0,
             TimeSpan.FromMilliseconds(4),
             true),
@@ -161,7 +161,8 @@ public sealed record ViiperPushRateOption(
     {
         if (string.Equals(label, "125Hz（推荐）", StringComparison.Ordinal) ||
             string.Equals(label, "66Hz / source-paced", StringComparison.Ordinal) ||
-            string.Equals(label, "250Hz（高性能）", StringComparison.Ordinal))
+            string.Equals(label, "250Hz（高性能）", StringComparison.Ordinal) ||
+            string.Equals(label, "跟随真实 Pro2 BLE（推荐）", StringComparison.Ordinal))
         {
             return Default;
         }

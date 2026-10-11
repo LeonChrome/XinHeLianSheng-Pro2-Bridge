@@ -1,11 +1,13 @@
 using System;
 using System.Buffers.Binary;
+using System.Diagnostics;
 
 namespace Y700Switch2V60Viiper;
 
 public sealed class Pro2HidReportParser
 {
     private const int Fd2FullReportMinLength = 60;
+    public const uint Fd2HeadsetPresentMask = 0x10000000u;
     private const ushort Center12 = GamepadState.AxisCenter;
     private const ushort CenterLearnMaxDelta = 256;
     private const ushort AxisDeadzone = 64;
@@ -14,12 +16,20 @@ public sealed class Pro2HidReportParser
     private readonly AxisCalibration standardAxis = new();
     private readonly AxisCalibration legacyAxis = new();
     private readonly MotionCalibration motion = new();
+    private readonly Pro2GyroBiasCalibration? qualityMotion;
+
+    public Pro2HidReportParser() : this(Pro2QualityMode.GyroEnabled) { }
+
+    public Pro2HidReportParser(bool gyroQualityMode)
+    {
+        qualityMotion = gyroQualityMode ? new() : null;
+    }
 
     public string StartManualGyroCalibration()
     {
         lock (gate)
         {
-            return motion.StartManualCalibration();
+            return qualityMotion?.StartManualCalibration() ?? motion.StartManualCalibration();
         }
     }
 
@@ -29,7 +39,7 @@ public sealed class Pro2HidReportParser
         {
             lock (gate)
             {
-                return motion.Summary;
+                return qualityMotion?.Summary ?? motion.Summary;
             }
         }
     }
@@ -206,12 +216,13 @@ public sealed class Pro2HidReportParser
         {
             state = GamepadState.Neutral();
             source = "";
-            if (report.Length < 11 || report[1] != 0x20)
+            if (report.Length < 11)
             {
                 return false;
             }
 
             ApplyPrimaryProButtons(state, report[2], report[3], report[4]);
+            if (Pro2BatteryStatus.TryDecodePrimary(report, out var battery)) battery.ApplyTo(state);
             ApplyAxes(standardAxis,
                 state,
                 Unpack12X(report, 5),
@@ -271,7 +282,13 @@ public sealed class Pro2HidReportParser
 
     private void ParseFd2Payload(ReadOnlySpan<byte> payload, GamepadState state)
     {
+        // FD2 bytes 0..3 are a counter, NOT the primary report's Power Info.
+        // Keep voltage as telemetry; voltage alone does not establish SOC.
+        state.BatteryVoltageMillivolts = BinaryPrimitives.ReadUInt16LittleEndian(payload.Slice(31, 2));
+        if (Pro2ChargeStatus.TryDecodeFd2(payload, out var charging)) charging.ApplyTo(state);
         uint buttons = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(4, 4));
+        state.HeadsetPresenceKnown = true;
+        state.HeadsetPresent = (buttons & Fd2HeadsetPresentMask) != 0;
         ApplyFd2Buttons(state, buttons);
         ApplyAxes(standardAxis,
             state,
@@ -304,7 +321,9 @@ public sealed class Pro2HidReportParser
     private static bool LooksLikeFd2Payload(ReadOnlySpan<byte> payload)
     {
         uint buttons = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(4, 4));
-        return (buttons & 0xFC300020u) == 0;
+        // FD2 button byte 3 bit 4 is the headset-present flag, not a reserved bit.
+        // Keep all other existing Pro2 layout guards; do not broadly accept unknown bits.
+        return (buttons & 0xEC300020u) == 0;
     }
 
     private static bool LooksLikeLegacyPayload(ReadOnlySpan<byte> payload)
@@ -455,7 +474,8 @@ public sealed class Pro2HidReportParser
         state.GyroX = BinaryPrimitives.ReadInt16LittleEndian(sample.Slice(6, 2));
         state.GyroY = BinaryPrimitives.ReadInt16LittleEndian(sample.Slice(8, 2));
         state.GyroZ = BinaryPrimitives.ReadInt16LittleEndian(sample.Slice(10, 2));
-        motion.Apply(state);
+        if (qualityMotion != null) qualityMotion.Apply(state, Stopwatch.GetTimestamp());
+        else motion.Apply(state);
     }
 
     private static void AttachRawImuSamples(

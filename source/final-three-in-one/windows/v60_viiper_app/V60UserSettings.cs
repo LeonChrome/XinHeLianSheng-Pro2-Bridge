@@ -13,13 +13,17 @@ public sealed class V60UserSettings
     public string PushRateLabel { get; set; } = ViiperPushRateOption.Default.Label;
     public string BackendLabel { get; set; } = VirtualBackendOption.Default.Label;
     public string StickProcessingLabel { get; set; } = StickProcessingOption.Default.Label;
-    public string SelectedModeKey { get; set; } = "dualsense";
+    public string SelectedModeKey { get; set; } = "pro2";
+    public RearButtonConfiguration RearButtons { get; set; } = new();
     public bool LaunchAtLoginEnabled { get; set; }
     public bool AutoReconnectOnStartupEnabled { get; set; }
     public string[] LastConnectedPro2Addresses { get; set; } = new string[4];
     public Dictionary<string, Pro2StickCalibrationProfile> Pro2StickCalibrations { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
     public bool AudioEndpointGuardEnabled { get; set; } = true;
+    public bool RuntimeBatteryRefreshEnabled { get; set; } = true;
+    public bool AutoOptimizeBle { get; set; } = true;
+    public string UsbipExecutablePath { get; set; } = "";
     public double Ps5GyroScalePitch { get; set; } = 1.0;
     public double Ps5GyroScaleYaw { get; set; } = 1.0;
     public double Ps5GyroScaleRoll { get; set; } = 1.0;
@@ -55,6 +59,8 @@ public sealed class V60UserSettings
                     StickProcessingOption.FromLabel(loaded.StickProcessingLabel).Label;
                 loaded.SelectedModeKey =
                     NormalizeModeKey(loaded.SelectedModeKey);
+                loaded.RearButtons = (loaded.RearButtons ?? new()).Normalize();
+                loaded.UsbipExecutablePath = UsbipRuntimeLocator.NormalizeExecutablePath(loaded.UsbipExecutablePath);
                 loaded.LastConnectedPro2Addresses =
                     NormalizeAddressSlots(loaded.LastConnectedPro2Addresses);
                 loaded.Pro2StickCalibrations =
@@ -85,6 +91,8 @@ public sealed class V60UserSettings
             BackendLabel = VirtualBackendOption.FromLabel(BackendLabel).Label;
             StickProcessingLabel = StickProcessingOption.FromLabel(StickProcessingLabel).Label;
             SelectedModeKey = NormalizeModeKey(SelectedModeKey);
+            RearButtons = (RearButtons ?? new()).Normalize();
+            UsbipExecutablePath = UsbipRuntimeLocator.NormalizeExecutablePath(UsbipExecutablePath);
             LastConnectedPro2Addresses = NormalizeAddressSlots(LastConnectedPro2Addresses);
             Pro2StickCalibrations = NormalizeStickCalibrations(Pro2StickCalibrations);
             Ps5GyroScalePitch = NormalizePs5GyroScale(Ps5GyroScalePitch);
@@ -122,7 +130,8 @@ public sealed class V60UserSettings
     {
         return (value ?? "").Trim().ToLowerInvariant() switch
         {
-            "dualsenseedge" or "dualsense_edge" or "edge" or "ps5edge" => "dualsenseedge",
+            "dualsenseedge" or "dualsense_edge" or "edge" or "ps5edge" => "dualsense",
+            "pro1" or "nspro" or "switchpro" => "pro1",
             "dualsenseproimu" or "dualsense_professional_imu" or "ps5proimu" or "ps5_professional_imu" => "dualsenseproimu",
             "pro2" or "ns2pro" or "nintendo" => "pro2",
             "xboxproimu" or "xbox_professional_imu" or "xinputproimu" => "xboxproimu",

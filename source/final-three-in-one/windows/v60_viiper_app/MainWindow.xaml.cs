@@ -19,11 +19,36 @@ public partial class MainWindow : Window
     private bool shutdownInProgress;
     private bool shutdownComplete;
     private bool trayTipShown;
+    private async void SelectUsbipPath_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm || !vm.CanManageRuntime) return;
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择已安装的 usbip.exe（不是安装器）",
+            Filter = "USBIP 程序 (usbip.exe)|usbip.exe",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) == true) await vm.SelectUsbipPathAsync(dialog.FileName);
+    }
+    private ManualConnectWindow? manualConnectWindow;
+    private EnvironmentInfoWindow? environmentInfoWindow;
+    private readonly DispatcherTimer presentationTimer = new(DispatcherPriority.Background)
+    { Interval = TimeSpan.FromSeconds(1) };
 
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new MainViewModel();
+        DataContext = new MainViewModel(IsUiSmokeRun());
+        presentationTimer.Tick += (_, _) =>
+        {
+            if (DataContext is MainViewModel vm) vm.RefreshCompactTelemetry();
+        };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible && WindowState != WindowState.Minimized) presentationTimer.Start();
+            else presentationTimer.Stop();
+        };
         if (DataContext is MainViewModel viewModel)
         {
             viewModel.PropertyChanged += MainViewModel_PropertyChanged;
@@ -34,7 +59,7 @@ public partial class MainWindow : Window
         StateChanged += MainWindow_StateChanged;
         Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
-        CreateTrayIcon();
+        if (!IsUiSmokeRun()) CreateTrayIcon();
     }
 
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
@@ -42,7 +67,7 @@ public partial class MainWindow : Window
         try
         {
             IntPtr handle = new WindowInteropHelper(this).Handle;
-            int enabled = 1;
+            int enabled = 0;
             if (DwmSetWindowAttribute(handle, 20, ref enabled, sizeof(int)) != 0)
             {
                 _ = DwmSetWindowAttribute(handle, 19, ref enabled, sizeof(int));
@@ -57,8 +82,8 @@ public partial class MainWindow : Window
     private void CreateTrayIcon()
     {
         trayMenu = new Forms.ContextMenuStrip();
-        trayMenu.Items.Add("切换 新和联胜 / PS5", null, (_, _) => ExecuteTrayCommand(vm => vm.StartDualSenseCommand));
-        trayMenu.Items.Add("切换 PS5 Edge / 背键", null, (_, _) => ExecuteTrayCommand(vm => vm.StartDualSenseEdgeCommand));
+        trayMenu.Items.Add("切换 PS5 模式", null, (_, _) => ExecuteTrayCommand(vm => vm.StartDualSenseCommand));
+        trayMenu.Items.Add("切换 Pro1 / Switch Pro", null, (_, _) => ExecuteTrayCommand(vm => vm.StartPro1Command));
         trayMenu.Items.Add("切换 Pro2 / Nintendo", null, (_, _) => ExecuteTrayCommand(vm => vm.StartPro2Command));
         trayMenu.Items.Add("切换 Xbox / XInput", null, (_, _) => ExecuteTrayCommand(vm => vm.StartXboxCommand));
         trayMenu.Items.Add(new Forms.ToolStripSeparator());
@@ -80,7 +105,7 @@ public partial class MainWindow : Window
         trayIcon = new Forms.NotifyIcon
         {
             Icon = LoadTrayIcon(),
-            Text = "PRO2 控制板 V6.2.32 Test r2",
+            Text = "PRO2 手柄助手 · 纯软件版",
             ContextMenuStrip = trayMenu,
             Visible = true
         };
@@ -89,6 +114,9 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        if (IsVisible && WindowState != WindowState.Minimized) presentationTimer.Start();
+        if (!IsUiSmokeRun()) FitStartupWindow();
+        if (DataContext is MainViewModel initial) initial.RefreshCompactTelemetry();
         if (IsUiSmokeRun())
         {
             return;
@@ -96,12 +124,39 @@ public partial class MainWindow : Window
 
         if (DataContext is MainViewModel viewModel)
         {
-            await viewModel.RunStartupAutomationAsync();
+            if (Array.Exists(Environment.GetCommandLineArgs(), argument =>
+                string.Equals(argument, "--connect-pro2", StringComparison.OrdinalIgnoreCase)))
+            {
+                await viewModel.ConnectForLaunchAsync();
+                if (Environment.GetCommandLineArgs().Contains("--ble-diagnostic-after-connect", StringComparer.OrdinalIgnoreCase))
+                    await viewModel.DiagnoseForLaunchAsync();
+            }
+            else
+                await viewModel.RunStartupAutomationAsync();
+#if PRO2_BATTERY_READ_EXPERIMENT
+            if (Environment.GetCommandLineArgs().Contains("--battery-followup-test", StringComparer.OrdinalIgnoreCase))
+            {
+                Title = "PRO2 手柄助手 v1.3.8 · 电量持续验证";
+                _ = viewModel.TestBatteryFollowupForLaunchAsync();
+            }
+            if (Environment.GetCommandLineArgs().Contains("--battery-live-read-once-test", StringComparer.OrdinalIgnoreCase))
+            {
+                Title = "PRO2 手柄助手 v1.3.8 · 电量只读实验";
+                _ = viewModel.TestLiveBatteryReadForLaunchAsync();
+            }
+#endif
         }
     }
 
     private void MainViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.Win10BleHomePanelExpanded))
+        {
+            // The panel's Auto row and compact hero change in one binding update.
+            // Re-measure after both settle, so Auto does not retain an empty scrollbar.
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded,
+                new Action(() => HomeScrollViewer.InvalidateMeasure()));
+        }
         if (e.PropertyName == nameof(MainViewModel.LaunchAtLoginEnabled) ||
             e.PropertyName == nameof(MainViewModel.AutoReconnectOnStartupEnabled))
         {
@@ -142,6 +197,115 @@ public partial class MainWindow : Window
         if (viewModel.RefreshSteamControllerCacheCommand.CanExecute(null))
         {
             viewModel.RefreshSteamControllerCacheCommand.Execute(null);
+        }
+    }
+
+    private async void TryWin11Compatibility_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm || !vm.CanTryWin11Compatibility) return;
+        MessageBoxResult answer = System.Windows.MessageBox.Show(this,
+            "在当前连接上依次测试有限组蓝牙参数，首页会显示方案进度和真实 FD2 速率。按实测保留较好结果，未达 133Hz 仍可使用可用输入。部分参数对象属于实验兼容路线，驱动可能拒绝或断联；请求成功不等于真实提速。本轮不改注册表、驱动或配对，不重建虚拟手柄。是否开始？",
+            "自动优化蓝牙", MessageBoxButton.YesNo, MessageBoxImage.Information);
+        if (answer == MessageBoxResult.Yes) await vm.TryWin11CompatibilityAsync();
+    }
+
+    private void CopyLowRateDiagnosis_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        try { System.Windows.Clipboard.SetText(vm.EnvironmentReportText); }
+        catch (Exception ex) { System.Windows.MessageBox.Show(this, ex.Message, "复制未完成", MessageBoxButton.OK, MessageBoxImage.Information); }
+    }
+
+    private void EnvironmentInfo_Click(object sender, RoutedEventArgs e)
+    {
+        if (environmentInfoWindow != null) { environmentInfoWindow.Activate(); return; }
+        if (DataContext is not MainViewModel vm) return;
+        var dialog = new EnvironmentInfoWindow(vm) { Owner = this, Width = Math.Min(800, ActualWidth),
+            Height = Math.Min(640, ActualHeight), MinWidth = Math.Min(440, ActualWidth),
+            MinHeight = Math.Min(340, ActualHeight) };
+        environmentInfoWindow = dialog;
+        dialog.Closed += (_, _) => environmentInfoWindow = null;
+        dialog.Show();
+    }
+
+    private async void ManualConnect_Click(object sender, RoutedEventArgs e)
+    {
+        if (manualConnectWindow != null) { manualConnectWindow.Activate(); return; }
+        if (DataContext is not MainViewModel vm || vm.Busy) return;
+        bool success = await vm.RunManualConnectionSessionAsync(async token =>
+        {
+            using var model = new ManualConnectionViewModel(vm.ScanManualCandidatesAsync,
+                vm.ConnectManualCandidateAsync, token);
+            var dialog = new ManualConnectWindow(model) { Owner = this, Width = Math.Min(800, ActualWidth),
+                Height = Math.Min(600, ActualHeight), MinWidth = Math.Min(480, ActualWidth),
+                MinHeight = Math.Min(360, ActualHeight) };
+            manualConnectWindow = dialog;
+            try
+            {
+                dialog.ShowDialog();
+                await model.StopAsync();
+                return dialog.Connected;
+            }
+            finally { manualConnectWindow = null; }
+        });
+        if (success) { MainTabs.SelectedIndex = 0; Activate(); }
+    }
+
+    private void FitStartupWindow()
+    {
+        var screen = Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle);
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+        var area = screen.WorkingArea;
+        Rect bounds = StartupWindowLayout.Fit(new Rect(area.Left / dpi.DpiScaleX,
+            area.Top / dpi.DpiScaleY, area.Width / dpi.DpiScaleX, area.Height / dpi.DpiScaleY));
+        MinWidth = Math.Min(720, bounds.Width); MinHeight = Math.Min(560, bounds.Height);
+        MaxWidth = area.Width / dpi.DpiScaleX; MaxHeight = area.Height / dpi.DpiScaleY;
+        Width = bounds.Width; Height = bounds.Height;
+        Left = bounds.Left; Top = bounds.Top;
+    }
+
+    private void ToggleWin10BleHomePanel_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel) viewModel.ToggleWin10BleHomePanel();
+    }
+
+    private void ConfigureBleTurbo_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel) return;
+        bool experimentalConsent = viewModel.IsWin10BleExperimental;
+        MessageBoxResult answer = System.Windows.MessageBox.Show(
+            this,
+            viewModel.Win10BleConfigurationConfirmation,
+            "应用并测试 Win10 BLE 预设",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        ExecuteConfirmedCommand(answer, vm => vm.ConfigureBleTurboCommand, experimentalConsent);
+    }
+
+    private void RestoreBleTurbo_Click(object sender, RoutedEventArgs e)
+    {
+        MessageBoxResult answer = System.Windows.MessageBox.Show(
+            this,
+            "将恢复首次备份中的四项 BLE 参数。其他蓝牙设备可能暂时断开；无法安全重启蓝牙时，会提示正常重启 Windows。继续？",
+            "恢复蓝牙参数",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        ExecuteConfirmedCommand(answer, vm => vm.RestoreBleTurboCommand);
+    }
+
+    private void ExecuteConfirmedCommand(
+        MessageBoxResult answer,
+        Func<MainViewModel, System.Windows.Input.ICommand> selector,
+        object? commandParameter = null)
+    {
+        if (answer != MessageBoxResult.Yes || DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+        System.Windows.Input.ICommand command = selector(viewModel);
+        if (command.CanExecute(commandParameter))
+        {
+            command.Execute(commandParameter);
         }
     }
 
@@ -211,8 +375,8 @@ public partial class MainWindow : Window
         if (!trayTipShown && trayIcon != null)
         {
             trayTipShown = true;
-            trayIcon.BalloonTipTitle = "PRO2 控制板仍在运行";
-            trayIcon.BalloonTipText = "右键托盘图标可后台切换三模或进入游戏；双击才会打开主界面。";
+            trayIcon.BalloonTipTitle = "PRO2 手柄助手仍在运行";
+            trayIcon.BalloonTipText = "右键托盘图标可后台切换手柄模式或进入游戏；双击可打开主界面。";
             trayIcon.ShowBalloonTip(2500);
         }
     }
@@ -288,6 +452,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
+        presentationTimer.Stop();
         if (DataContext is MainViewModel viewModel)
         {
             viewModel.PropertyChanged -= MainViewModel_PropertyChanged;

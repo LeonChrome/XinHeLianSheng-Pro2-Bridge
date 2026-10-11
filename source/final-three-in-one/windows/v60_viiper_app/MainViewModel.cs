@@ -16,13 +16,19 @@ using System.Windows.Input;
 
 namespace Y700Switch2V60Viiper;
 
-public sealed class MainViewModel : INotifyPropertyChanged
+public sealed partial class MainViewModel : INotifyPropertyChanged
 {
     private const string UsbipPortableInstallHint =
-        "如果使用的是非标准绿色版/便携版，并且它既不写安装注册表、不加入 PATH、也不位于常见 USBIP 目录，程序无法自动发现；建议直接使用本 EXE 内置的正式 USBIP 安装器。";
+        "如果已经安装在其他目录，请到“设置 → USBIP”选择现有 usbip.exe，无需先重复安装。";
     private const int MaxUiLogCharacters = 120000;
     private const int TrimmedUiLogCharacters = 70000;
     private readonly StringBuilder log = new();
+    private readonly object logGate = new();
+    private bool logDirty;
+    private readonly bool previewOnly;
+    private CancellationTokenSource? currentOperationCts;
+    private bool enterGamePending;
+    private int resumeGameQueued;
     private readonly Pro2ControllerSlot[] pro2Slots =
     [
         new(1, true),
@@ -34,8 +40,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private readonly SynchronizationContext? uiContext = SynchronizationContext.Current;
     private readonly Pro2BleInputSource inputSource;
     private readonly ProfessionalHidAuditController professionalHidAuditController = new();
-    private readonly SessionLogWriter sessionLog = new();
-    private readonly V60UserSettings userSettings = V60UserSettings.Load();
+    private readonly SessionLogWriter sessionLog;
+    private readonly V60UserSettings userSettings;
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private readonly SemaphoreSlim bleOperationGate = new(1, 1);
     private readonly CancellationTokenSource lifetimeCts = new();
@@ -46,12 +52,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private ViiperBridgeSession? session;
     private string host = "127.0.0.1";
     private string port = "3242";
-    private string status = "V6.2.32 Test r2 已就绪。完整行程采样与完成提示修复版。";
+    private string status = "PRO2 手柄助手已就绪。";
     private string inputStatus = "真实 Pro2 BLE 输入未连接。";
     private string selectedPushRateLabel = ViiperPushRateOption.Default.Label;
     private string selectedBackendLabel = VirtualBackendOption.Default.Label;
     private string selectedStickProcessingLabel = StickProcessingOption.Default.Label;
     private bool audioEndpointGuardEnabled = true;
+    private bool runtimeBatteryRefreshEnabled = true;
     private bool running;
     private bool busy;
     private bool shuttingDown;
@@ -86,9 +93,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private ViiperVirtualMode? activeMode;
     private const int LostInputTimeoutMilliseconds = 2000;
 
-    public MainViewModel()
+    public MainViewModel(bool previewOnly = false)
     {
+        this.previewOnly = previewOnly;
+        sessionLog = new SessionLogWriter(previewOnly
+            ? Path.Combine(Path.GetTempPath(), "PRO2-ui-smoke-logs") : null);
+        userSettings = previewOnly ? new V60UserSettings() : V60UserSettings.Load();
+        InitializeRearButtonSettings();
         inputSource = pro2Slots[0].InputSource;
+        InitializeBleCompatibilitySettings();
+        inputSource.ConnectionStateChanged += OnInputConnectionStateChanged;
         foreach (Pro2ControllerSlot slot in pro2Slots)
         {
             int slotIndex = slot.Index;
@@ -97,12 +111,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         PingCommand = new RelayCommand(_ => RunExclusiveAsync("Ping VIIPER", PingAsync));
         InstallUsbipCommand = new RelayCommand(_ => RunExclusiveAsync("安装/修复 usbip-win2", InstallUsbipAsync));
+        InitializeUsbipPathCommands();
         StartViiperServerCommand = new RelayCommand(_ => RunExclusiveAsync("启动本地 VIIPER", StartLocalViiperServerAsync));
         ScanPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("扫描 Pro2 BLE", ScanPro2InputAsync));
-        ConnectPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("进入游戏", EnterGameAsync));
+        ConnectPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("进入游戏", token =>
+        {
+            manualReconnectTarget = null;
+            return EnterGameAsync(token);
+        }));
         DisconnectPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("断开 Pro2 BLE", DisconnectPro2InputAsync));
         CalibrateSourceGyroCommand = new RelayCommand(_ => RunExclusiveAsync("校准真实 Pro2 陀螺仪", CalibrateSourceGyroAsync));
         FixAudioDefaultsCommand = new RelayCommand(_ => RunExclusiveAsync("修复音频默认设备", FixAudioDefaultsAsync));
+        RunWin10BleDiagnosticCommand = new RelayCommand(_ => RunExclusiveAsync(
+            "Win10 BLE Turbo 诊断",
+            RunWin10BleDiagnosticAsync));
+        ConfigureBleTurboCommand = new RelayCommand(parameter => RunExclusiveAsync(
+            "应用并实测 Win10 BLE 参数",
+            token => RunBleTurboConfiguratorAsync(restore: false, token,
+                experimentalConsent: parameter is true)));
+        RestoreBleTurboCommand = new RelayCommand(_ => RunExclusiveAsync(
+            "恢复 Win10 BLE 参数",
+            token => RunBleTurboConfiguratorAsync(restore: true, token)));
         DumpControllerEnumerationCommand = new RelayCommand(_ => RunExclusiveAsync("设备枚举诊断", DumpControllerEnumerationAsync));
         CleanupStaleVirtualDevicesCommand = new RelayCommand(_ => RunExclusiveAsync("清理残留虚拟设备", CleanupStaleVirtualDevicesAsync));
         RefreshSteamControllerCacheCommand = new RelayCommand(_ => RunExclusiveAsync("刷新 Steam 控制器缓存", RefreshSteamControllerCacheAsync));
@@ -123,11 +152,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             "校准 Pro2 摇杆完整行程",
             token => CalibrateStickRangeSlotAsync(SlotFromParameter(parameter), token)));
         StartDualSenseCommand = new RelayCommand(_ => RunExclusiveAsync(
-            "切换 新和联胜 / PS5",
+            "切换 PS5 模式",
             token => SwitchModeAsync(ViiperDeviceProfile.DualSenseLike, token)));
-        StartDualSenseEdgeCommand = new RelayCommand(_ => RunExclusiveAsync(
-            "切换 PS5 Edge / 背键",
-            token => SwitchModeAsync(ViiperDeviceProfile.DualSenseEdge, token)));
+        StartPro1Command = new RelayCommand(_ => RunExclusiveAsync(
+            "切换 Pro1 / Switch Pro",
+            token => SwitchModeAsync(ViiperDeviceProfile.Pro1, token)));
         StartDualSenseProfessionalImuCommand = new RelayCommand(_ => RunExclusiveAsync(
             "切换 PS5 Professional IMU Test",
             token => SwitchModeAsync(ViiperDeviceProfile.DualSenseProfessionalImuTest, token)));
@@ -170,12 +199,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
         professionalInvertGyroRoll = userSettings.ProfessionalInvertGyroRoll;
         selectedPushRateLabel =
             ViiperPushRateOption.FromLabel(userSettings.PushRateLabel).Label;
+        if (PureSoftware133Mode.IsEnabled)
+        {
+            selectedPushRateLabel = ViiperPushRateOption.Default.Label;
+        }
         selectedBackendLabel =
             VirtualBackendOption.FromLabel(userSettings.BackendLabel).Label;
         selectedStickProcessingLabel =
             StickProcessingOption.FromLabel(userSettings.StickProcessingLabel).Label;
         audioEndpointGuardEnabled = userSettings.AudioEndpointGuardEnabled;
-        launchAtLoginEnabled = userSettings.LaunchAtLoginEnabled && StartupLaunchRegistration.IsEnabled();
+        runtimeBatteryRefreshEnabled = userSettings.RuntimeBatteryRefreshEnabled;
+        launchAtLoginEnabled = !previewOnly && userSettings.LaunchAtLoginEnabled && StartupLaunchRegistration.IsEnabled();
         autoReconnectOnStartupEnabled = userSettings.AutoReconnectOnStartupEnabled;
         if (userSettings.LaunchAtLoginEnabled != launchAtLoginEnabled)
         {
@@ -186,21 +220,36 @@ public sealed class MainViewModel : INotifyPropertyChanged
         inputSource.SetRumbleGain(rumbleMultiplier);
         inputSource.SetStickProcessingMode(SelectedStickProcessingOption.Mode);
         ApplyPro2SlotRuntimeOptions();
-        RefreshRuntimeReadiness();
-        _ = RefreshRuntimeReadinessAsync();
+        if (!previewOnly)
+        {
+            RefreshRuntimeReadiness();
+            _ = RefreshRuntimeReadinessAsync();
+        }
         AppendLog("[SESSION_LOG] " + sessionLog.FilePath);
         if (!string.IsNullOrWhiteSpace(StartupProcessGuard.LastSummary))
         {
             AppendLog(StartupProcessGuard.LastSummary);
         }
-        AppendLog("V6.2.32 Test r2 说明：修复后台重复加载零位配置会中止完整行程采样的问题；校准期间显示倒计时，结束后明确提示成功、失败原因或离线中断。");
-        AppendLog("[LOG_POLICY] previous v6 logs are cleaned at startup; manager log limit=" +
+        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：Pro2 / Pro1 / Xbox / PS5 · USBIP 自定义路径识别 · 原生电量定时更新。");
+        AppendLog("[FEATURE_POLICY] gyro_quality=" + Pro2QualityMode.GyroEnabled +
+            " haptics_quality=" + Pro2QualityMode.HapticsEnabled +
+            " battery_init_snapshot=" + Pro2InitialBatterySnapshot.IsRequested(Environment.GetCommandLineArgs()) +
+            " runtime_battery_refresh=" + RuntimeBatteryRefreshEnabled + " runtime_battery_interval_s=120");
+        AppendLog("[BLE_COMPATIBILITY] " + BleCompatibilityInspector.Current.Telemetry);
+        AppendLog("[LOG_POLICY] previous logs preserved; async bounded manager log limit=" +
                   (SessionLogWriter.MaxLogBytes / 1024 / 1024) + "MB; VIIPER server log level=info.");
         AppendLog("[RUNTIME] " + RuntimeReadinessText);
         AppendLog("[RUMBLE_GAIN] multiplier=" + rumbleMultiplier.ToString("F1"));
         AppendLog("[STARTUP] launch_at_login=" + launchAtLoginEnabled +
                   " auto_reconnect_on_startup=" + autoReconnectOnStartupEnabled +
                   " selected_mode=" + ModeKey(selectedMode));
+        if (PureSoftware133Mode.IsEnabled)
+        {
+            AppendLog("[PURE_SOFTWARE_133] enabled=true input_min_hz=" +
+                      PureSoftware133Mode.MinimumAcceptedHz.ToString("F1") +
+                      " gameplay_min_hz=60 compatibility_mode=true cadence=source_only repeated_state_limit=" +
+                      PureSoftware133Mode.MaximumRepeatedStateRatio.ToString("F3"));
+        }
         AppendLog("[LINK_TUNING] cadence=" + PushCadenceTelemetry(SelectedPushRateOption) +
                   " gyro_mode=" + ViiperGyroModeOption.Default.Label +
                   " ps5_imu_map=" + Ps5ImuMappingOption.Default.Mapping.TelemetryValue +
@@ -209,6 +258,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                   " stick=" + SelectedStickProcessingOption.Label +
                   " audio_guard=" + audioEndpointGuardEnabled +
                   " backend=" + SelectedBackendOption.Label);
+        InitializeEnvironmentInfo();
     }
 
     public string Host
@@ -246,6 +296,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanStop));
             OnPropertyChanged(nameof(CanManageRuntime));
             OnPropertyChanged(nameof(ModeHeadline));
+            RefreshCompactPresentation();
         }
     }
 
@@ -261,6 +312,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanOperate));
             OnPropertyChanged(nameof(CanManageRuntime));
             OnPropertyChanged(nameof(CanManualBleControl));
+            OnPropertyChanged(nameof(CanTryWin11Compatibility));
+            (ApplyRearButtonsCommand as RelayCommand)?.RefreshCanExecute();
+            OnPropertyChanged(nameof(CompactCanConnect));
         }
     }
 
@@ -341,6 +395,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    public bool RuntimeBatteryRefreshEnabled
+    {
+        get => runtimeBatteryRefreshEnabled;
+        set
+        {
+            if (runtimeBatteryRefreshEnabled == value) return;
+            runtimeBatteryRefreshEnabled = value;
+            userSettings.RuntimeBatteryRefreshEnabled = value;
+            foreach (var slot in pro2Slots) slot.InputSource.SetRuntimeBatteryRefreshEnabled(value);
+            SaveUserSettings("[BATTERY_RUNTIME]");
+            AppendLog("[BATTERY_RUNTIME] user_enabled=" + value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CompactBatteryHint));
+        }
+    }
+
     public string StartupAutomationSummary =>
         LaunchAtLoginEnabled || AutoReconnectOnStartupEnabled
             ? "开机自启=" + (LaunchAtLoginEnabled ? "开" : "关") +
@@ -375,7 +445,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             userSettings.RumbleMultiplier = normalized;
             try
             {
-                userSettings.Save();
+                if (!previewOnly) userSettings.Save();
             }
             catch (Exception ex)
             {
@@ -485,7 +555,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         ", Roll=" + (professionalInvertGyroRoll ? "invert" : "normal");
 
     public IReadOnlyList<string> PushRateChoices =>
-        ViiperPushRateOption.All.Select(o => o.Label).ToArray();
+        PureSoftware133Mode.IsEnabled
+            ? [ViiperPushRateOption.Default.Label]
+            : ViiperPushRateOption.All.Select(o => o.Label).ToArray();
 
     public IReadOnlyList<string> BackendChoices =>
         VirtualBackendOption.All.Select(o => o.Label).ToArray();
@@ -498,7 +570,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         get => selectedPushRateLabel;
         set
         {
-            string normalized = ViiperPushRateOption.FromLabel(value).Label;
+            string normalized = PureSoftware133Mode.IsEnabled
+                ? ViiperPushRateOption.Default.Label
+                : ViiperPushRateOption.FromLabel(value).Label;
             if (selectedPushRateLabel == normalized)
             {
                 return;
@@ -597,13 +671,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public IReadOnlyList<Pro2ControllerSlot> Pro2Slots => pro2Slots;
 
     public bool IsDualSenseSelected => selectedMode == ViiperVirtualMode.DualSenseLike;
-    public bool IsDualSenseEdgeSelected => selectedMode == ViiperVirtualMode.DualSenseEdge;
+    public bool IsPro1Selected => selectedMode == ViiperVirtualMode.Pro1;
     public bool IsDualSenseProfessionalImuSelected => selectedMode == ViiperVirtualMode.DualSenseProfessionalImuTest;
     public bool IsPro2Selected => selectedMode == ViiperVirtualMode.Pro2;
     public bool IsXboxSelected => selectedMode == ViiperVirtualMode.Xbox;
     public bool IsXboxProfessionalImuSelected => selectedMode == ViiperVirtualMode.XboxProfessionalImuTest;
     public bool IsDualSenseActive => Running && activeMode == ViiperVirtualMode.DualSenseLike;
-    public bool IsDualSenseEdgeActive => Running && activeMode == ViiperVirtualMode.DualSenseEdge;
+    public bool IsPro1Active => Running && activeMode == ViiperVirtualMode.Pro1;
     public bool IsDualSenseProfessionalImuActive => Running && activeMode == ViiperVirtualMode.DualSenseProfessionalImuTest;
     public bool IsPro2Active => Running && activeMode == ViiperVirtualMode.Pro2;
     public bool IsXboxActive => Running && activeMode == ViiperVirtualMode.Xbox;
@@ -627,18 +701,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string SelectedModeLabel => SelectedProfile.Label;
     public string SelectedHeroName => selectedMode switch
     {
-        ViiperVirtualMode.DualSenseLike => "KRATOS",
-        ViiperVirtualMode.DualSenseEdge => "KRATOS EDGE",
-        ViiperVirtualMode.DualSenseProfessionalImuTest => "KRATOS · LAB",
-        ViiperVirtualMode.Pro2 => "MARIO",
-        ViiperVirtualMode.Xbox => "MASTER CHIEF",
-        ViiperVirtualMode.XboxProfessionalImuTest => "MASTER CHIEF · LAB",
+        ViiperVirtualMode.DualSenseLike => "DUALSENSE COMPATIBLE",
+        ViiperVirtualMode.Pro1 => "SWITCH PRO COMPATIBLE",
+        ViiperVirtualMode.DualSenseProfessionalImuTest => "DUALSENSE · LAB",
+        ViiperVirtualMode.Pro2 => "PRO2 COMPATIBLE",
+        ViiperVirtualMode.Xbox => "XINPUT COMPATIBLE",
+        ViiperVirtualMode.XboxProfessionalImuTest => "XINPUT · LAB",
         _ => ""
     };
     public string SelectedModeSubtitle => selectedMode switch
     {
-        ViiperVirtualMode.DualSenseLike => "新和联胜 · DUALSENSE IDENTITY · 054C:0CE6",
-        ViiperVirtualMode.DualSenseEdge => "PS5 EDGE · L4/R4 PADDLES · 054C:0DF2",
+        ViiperVirtualMode.DualSenseLike => "PS5 兼容模式 · 054C:0CE6",
+        ViiperVirtualMode.Pro1 => "SWITCH PRO · 软件背键 · 057E:2009",
         ViiperVirtualMode.DualSenseProfessionalImuTest => "PROFESSIONAL IMU TEST · RAW→G/DPS→DS RAW · HD HAPTIC",
         ViiperVirtualMode.Pro2 => "NINTENDO PROTOCOL · HD RUMBLE · 057E:2069",
         ViiperVirtualMode.Xbox => "XINPUT PROTOCOL · 045E:028E",
@@ -751,7 +825,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { professionalHidAuditStatusText = value; OnPropertyChanged(); }
     }
 
-    public string LogText => log.ToString();
+    public string LogText { get { lock (logGate) return log.ToString(); } }
 
     public ICommand PingCommand { get; }
     public ICommand InstallUsbipCommand { get; }
@@ -761,6 +835,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ICommand DisconnectPro2InputCommand { get; }
     public ICommand CalibrateSourceGyroCommand { get; }
     public ICommand FixAudioDefaultsCommand { get; }
+    public ICommand RunWin10BleDiagnosticCommand { get; }
+    public ICommand ConfigureBleTurboCommand { get; }
+    public ICommand RestoreBleTurboCommand { get; }
     public ICommand DumpControllerEnumerationCommand { get; }
     public ICommand CleanupStaleVirtualDevicesCommand { get; }
     public ICommand RefreshSteamControllerCacheCommand { get; }
@@ -771,7 +848,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ICommand CalibrateStickCenterSlotCommand { get; }
     public ICommand CalibrateStickRangeSlotCommand { get; }
     public ICommand StartDualSenseCommand { get; }
-    public ICommand StartDualSenseEdgeCommand { get; }
+    public ICommand StartPro1Command { get; }
     public ICommand StartDualSenseProfessionalImuCommand { get; }
     public ICommand StartPro2Command { get; }
     public ICommand StartXboxCommand { get; }
@@ -842,6 +919,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         foreach (Pro2ControllerSlot slot in pro2Slots)
         {
             slot.InputSource.SetRumbleGain(rumbleMultiplier);
+            slot.InputSource.SetRuntimeBatteryRefreshEnabled(runtimeBatteryRefreshEnabled);
             slot.InputSource.SetStickProcessingMode(SelectedStickProcessingOption.Mode);
             ApplySavedStickCalibration(
                 slot,
@@ -938,7 +1016,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        UsbipRuntime? usbip = UsbipRuntimeLocator.Find();
+        UsbipRuntime? usbip = FindConfiguredUsbip();
         if (usbip == null)
         {
             UsbipInstaller? installer = UsbipRuntimeLocator.FindBundledInstaller();
@@ -1293,7 +1371,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        UsbipRuntime? existing = UsbipRuntimeLocator.Find();
+        UsbipRuntime? existing = FindConfiguredUsbip();
         if (existing != null)
         {
             AppendLog("[USBIP] existing usbip.exe found: " + existing.ExePath);
@@ -1356,7 +1434,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        UsbipRuntime? runtime = UsbipRuntimeLocator.Find();
+        UsbipRuntime? runtime = FindConfiguredUsbip();
         if (runtime != null)
         {
             UsbipProbeResult probe = await UsbipRuntimeLocator.ProbeAsync(
@@ -1389,7 +1467,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             Status = "正在扫描 Pro2 BLE，窗口仍可正常响应，请等待约 8 秒。";
             InputStatus = "正在扫描未配对的 Pro2 BLE 广播...";
-            var progress = new Progress<string>(AppendLog);
+            var progress = new DirectProgress<string>(AppendLog);
             var candidates = await inputSource.ScanAsync(progress, TimeSpan.FromSeconds(8), cancellationToken);
             if (candidates.Count == 0)
             {
@@ -1435,7 +1513,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         AppendLog("[STARTUP_AUTO] begin mode=" + ModeKey(selectedMode) +
                   " label=\"" + SelectedModeLabel + "\" deadline_seconds=300");
         RequestUserNotification(
-            "新和联胜自动启动",
+            "PRO2 手柄助手自动启动",
             "已自动切换至 " + SelectedModeLabel +
             "，并开始检索上次的 Pro2 手柄。若 5 分钟内没有连上，会暂停并等待人工操作。");
 
@@ -1446,14 +1524,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         Status = "正在扫描并连接 Pro2 BLE；将依次验证 GATT、初始化命令和 live 输入。";
         InputStatus = "正在连接 Pro2 BLE...";
-        var progress = new Progress<string>(AppendLog);
+        var progress = new DirectProgress<string>(AppendLog);
         await bleOperationGate.WaitAsync(cancellationToken);
         try
         {
             Pro2ControllerSlot primarySlot = pro2Slots[0];
-            IReadOnlySet<string> preferred = PreferredAddressSetForSlot(primarySlot);
-            bool onlyPreferred = startupAutomationActive && preferred.Count > 0;
-            await inputSource.StartAsync(
+            IReadOnlySet<string> preferred = PrimaryPreferredAddresses(primarySlot);
+            bool onlyPreferred = !string.IsNullOrWhiteSpace(manualReconnectAddress) || startupAutomationActive && preferred.Count > 0;
+            if (manualReconnectTarget != null)
+                await inputSource.StartManualAsync(manualReconnectTarget, ConnectedPro2AddressesExcept(primarySlot),
+                    ResolveStickCalibration, progress, cancellationToken);
+            else await inputSource.StartAsync(
                 progress,
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                 preferred,
@@ -1472,7 +1553,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             RememberConnectedAddress(pro2Slots[0]);
             MarkStartupAutomationConnected("primary");
             Status = inputSource.IsPerformanceDegraded
-                ? "真实 Pro2 BLE 已接入并保持可用，但当前通知速率低于 66.7 Hz 目标；不会再强制断开。"
+                ? "真实 BLE 已连接，但输入速率未达标；保留物理连接，未通过验收时不创建虚拟输出。"
                 : Running
                     ? "真实 Pro2 BLE 已接入，当前虚拟模式将自动切换为 live 输入和 rumble 写回。"
                     : "真实 Pro2 BLE 已连接，可以启动任一虚拟模式。";
@@ -1534,15 +1615,68 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             AppendLog("[PRO2_GYRO_CAL] " + summary);
         }
-        bool complete = summaries.All(summary => summary.Contains("status=calibrated", StringComparison.Ordinal));
+        bool complete = summaries.All(summary => summary.Contains("status=calibrated", StringComparison.Ordinal) &&
+            (!Pro2QualityMode.GyroEnabled || summary.Contains("result=manual_committed_3s", StringComparison.Ordinal)));
         Status = complete
             ? "真实 Pro2 陀螺仪零偏校准完成。未使用死区或滤波。"
             : "陀螺仪校准尚未提交，检测到移动；请保持静置后重试。";
         InputStatus = inputSource.Status + " · " + inputSource.GyroCalibrationSummary;
     }
 
-    private async Task EnterGameAsync(CancellationToken cancellationToken)
+    public Task ConnectForLaunchAsync() =>
+        RunExclusiveAsync("启动连接 Pro2", EnterGameAsync);
+
+    public async Task DiagnoseForLaunchAsync()
     {
+        // The first connection attempt can return before automatic reconnect succeeds.
+        // Do not hold the command gate while waiting for that reconnect to finish.
+        var deadline = DateTime.UtcNow.AddSeconds(90);
+        while ((!inputSource.IsRunning || !inputSource.IsTransportConnected || Busy) && DateTime.UtcNow < deadline)
+            await Task.Delay(250);
+        if (inputSource.IsRunning && inputSource.IsTransportConnected)
+            await RunExclusiveAsync("启动后真实 BLE 诊断", RunWin10BleDiagnosticAsync);
+        else
+            AppendLog("[BLE_TURBO_REPORT] launch_diagnostic_skipped reason=no_ready_input_within_90s");
+    }
+
+    private Task EnterGameAsync(CancellationToken cancellationToken) =>
+        EnterGameAsync(cancellationToken, allowAutomaticConnect: true);
+
+    private async Task EnterGameAsync(CancellationToken cancellationToken, bool allowAutomaticConnect)
+    {
+        if (!allowAutomaticConnect && !inputSource.IsRunning)
+        {
+            Status = "所选地址的连接已中断，请在手动列表重试；不会自动切换到其他地址。";
+            return;
+        }
+        enterGamePending = true;
+        if (PureSoftware133Mode.IsEnabled && !inputSource.IsRunning)
+        {
+            AppendLog("[PURE_SOFTWARE_133] connect_order=physical_ble_before_virtual_device " +
+                      "reason=isolate_win10_connection_interval_from_viiper_scheduler");
+            Status = "先连接并实测真实 Pro2 BLE；达到 60Hz 兼容门槛即可游玩，仍优先优化到 133Hz。";
+            await TryConnectPro2InputOnceAsync(cancellationToken);
+            if (!inputSource.IsRunning || !inputSource.IsGameplayReady)
+            {
+                Status = inputSource.IsRunning
+                    ? "蓝牙已连接，但真实 FD2 尚未达到 60Hz 兼容门槛；保持连接等待，不反复断开手柄。"
+                    : "真实 Pro2 尚未连接，暂不创建虚拟输出；自动重连会继续寻找。";
+                AppendLog("[PURE_SOFTWARE_133] preflight_result=rejected virtual_device_started=false");
+                StartAutoReconnect();
+                return;
+            }
+
+            AppendLog("[PURE_SOFTWARE_133] preflight_result=" + (inputSource.IsHighRateReady ? "high_rate" : "compatible_rate") +
+                " gameplay_allowed=true virtual_device_start=next cadence=fresh_source_only");
+        }
+
+        if (PureSoftware133Mode.IsEnabled && !inputSource.IsGameplayReady)
+        {
+            Status = "手柄已连接，但真实 FD2 尚未达到 60Hz 兼容门槛；连接保持，虚拟输出未启动。";
+            StartAutoReconnect();
+            return;
+        }
+
         if (!Running || activeMode != selectedMode)
         {
             await SwitchModeAsync(SelectedProfile, cancellationToken);
@@ -1553,6 +1687,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Status = "当前虚拟模式启动失败，尚未进入自动连接。请根据上方提示修复 USBIP/VIIPER 后重试。";
             return;
         }
+        enterGamePending = false;
 
         if (activeMode.HasValue && IsMultiSlotMode(activeMode.Value))
         {
@@ -1569,6 +1704,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         CancellationToken cancellationToken)
     {
         SelectMode(profile.Mode);
+        if (!Pro2ConnectionPresentation.CanStartVirtual(
+                PureSoftware133Mode.IsEnabled, inputSource.IsRunning, inputSource.IsHighRateReady, inputSource.IsGameplayReady))
+        {
+            Status = inputSource.IsRunning
+                ? "BLE 已连接，但真实输入尚未达到 60Hz 兼容门槛；请查看首页低速诊断。"
+                : "请先点击连接 Pro2；真实输入验收通过后才创建所选虚拟手柄。";
+            return;
+        }
         if (Running && activeMode == profile.Mode)
         {
             Status = profile.Label + " 已经是当前角色。点击“连接 PRO2 · 进入游戏”接入真实手柄。";
@@ -1615,7 +1758,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (IsLoopbackHost(Host))
         {
-            UsbipRuntime? runtime = UsbipRuntimeLocator.Find();
+            UsbipRuntime? runtime = FindConfiguredUsbip();
             UsbipProbeResult? probe = runtime == null
                 ? null
                 : await UsbipRuntimeLocator.ProbeAsync(runtime, cancellationToken);
@@ -1625,7 +1768,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 AppendLog("[FIRST_RUN] usbip preflight failed: usbip.exe not found" +
                           "; launching embedded installer.");
                 await InstallUsbipAsync(cancellationToken);
-                runtime = UsbipRuntimeLocator.Find();
+                runtime = FindConfiguredUsbip();
                 if (runtime == null)
                 {
                     throw new InvalidOperationException(
@@ -1721,6 +1864,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
                             age <= TimeSpan.FromMilliseconds(LostInputTimeoutMilliseconds);
                 if (live)
                 {
+                    inputSource.RecheckLiveRate();
+                    if (enterGamePending && inputSource.IsGameplayReady)
+                        QueuePendingGameResume();
                     failedAttemptStreak = 0;
                     pro2Slots[0].RefreshFromSource();
                     RememberConnectedAddress(pro2Slots[0]);
@@ -1729,7 +1875,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     {
                         previouslyLive = true;
                         InputStatus = inputSource.Status;
-                        Status = "真实 Pro2 BLE 已连接。自动守护会在意外断联后继续寻找并恢复连接。";
+                        Status = inputSource.IsHighRateReady
+                            ? "真实 Pro2 BLE 已连接，输入验收通过；正在准备所选游戏模式。"
+                            : inputSource.IsGameplayReady ? "真实输入已达到兼容速率，可以游玩；首页显示蓝牙优化建议。"
+                            : "BLE 已连接，输入尚未达到 60Hz 兼容门槛；保留连接等待，不反复断开。";
                         AppendLog("[PRO2_AUTO] live; reconnect guard active.");
                         RaiseConnectionStateChanged();
                     }
@@ -1945,6 +2094,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                             age <= TimeSpan.FromMilliseconds(LostInputTimeoutMilliseconds);
                 if (live)
                 {
+                    slot.InputSource.RecheckLiveRate();
                     failedAttemptStreak = 0;
                     slot.RefreshFromSource();
                     RememberConnectedAddress(slot);
@@ -2069,9 +2219,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         await bleOperationGate.WaitAsync(cancellationToken);
         try
         {
-            IReadOnlySet<string> preferred = PreferredAddressSetForSlot(slot);
-            bool onlyPreferred = startupAutomationActive && preferred.Count > 0;
-            await slot.InputSource.StartAsync(
+            IReadOnlySet<string> preferred = slot.Index == 1 ? PrimaryPreferredAddresses(slot) : PreferredAddressSetForSlot(slot);
+            bool onlyPreferred = slot.Index == 1 && !string.IsNullOrWhiteSpace(manualReconnectAddress) ||
+                startupAutomationActive && preferred.Count > 0;
+            if (slot.Index == 1 && manualReconnectTarget != null)
+                await slot.InputSource.StartManualAsync(manualReconnectTarget, excluded, ResolveStickCalibration,
+                    progress, cancellationToken);
+            else await slot.InputSource.StartAsync(
                 progress,
                 excluded,
                 preferred,
@@ -2333,7 +2487,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             : "未知";
         string battery = signal.LastBatteryPercent == GamepadState.BatteryUnknown
             ? "电量未知"
-            : "最后电量 " + signal.LastBatteryPercent + "%" +
+            : "最后电量约 " + signal.LastBatteryPercent + "%" +
               (signal.LastBatteryCharging ? "（充电中）" : "");
         string followUp = autoReconnectContinues
             ? "程序将继续自动重连。"
@@ -2780,9 +2934,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 AppendDualSenseAudioEndpointHint();
             }
-            else if (runtimeProfile.Mode == ViiperVirtualMode.DualSenseEdge)
+            else if (runtimeProfile.Mode == ViiperVirtualMode.Pro1)
             {
-                AppendLog("[EDGE_IDENTITY] type=dualsenseedge vid=0x054c pid=0x0df2 product=\"DualSense Edge Wireless Controller\" paddles=L4/R4 feedback=ordinary_6byte edge_hd_status=blocked_by_viiper_feedback_contract");
+                AppendLog("[PRO1_IDENTITY] type=nspro vid=0x057e pid=0x2009 product=\"Pro Controller\" paddles=software_mapping feedback=switch1_hd_4byte_per_side source=physical_fd2_only imu=latest_sample_held_in_three_protocol_slots");
             }
             if (runtimeProfile.Mode == ViiperVirtualMode.DualSenseProfessionalImuTest)
             {
@@ -2838,7 +2992,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
 
-            var progress = new Progress<string>(AppendLog);
+            var progress = new DirectProgress<string>(AppendLog);
             ViiperBridgeSession? createdSession = null;
             var faultProgress = new Progress<Exception>(
                 ex =>
@@ -2861,7 +3015,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 ps5OutputImuTuning,
                 professionalImuOptions,
                 professionalHidAuditController,
-                new Progress<ProfessionalImuUiSnapshot>(UpdateProfessionalImuSnapshot));
+                new Progress<ProfessionalImuUiSnapshot>(UpdateProfessionalImuSnapshot),
+                userSettings.RearButtons);
             session = createdSession;
             await createdSession.StartAsync(cancellationToken);
             SetActiveMode(runtimeProfile.Mode);
@@ -2942,7 +3097,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 DeviceSpecificSerialNumber =
                     ViiperDeviceProfile.SlotSerialNumber(runtimeProfile.Mode, slot.Index)
             };
-            var progress = new Progress<string>(
+            var progress = new DirectProgress<string>(
                 line => AppendLog("[SLOT " + slot.Index + "] " + line));
             var faultProgress = new Progress<Exception>(
                 ex =>
@@ -2963,7 +3118,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 SelectedPs5OutputImuTuning,
                 ProfessionalImuOptions.Default,
                 professionalHidAuditController,
-                new Progress<ProfessionalImuUiSnapshot>(UpdateProfessionalImuSnapshot));
+                new Progress<ProfessionalImuUiSnapshot>(UpdateProfessionalImuSnapshot),
+                userSettings.RearButtons);
 
             try
             {
@@ -3035,6 +3191,114 @@ public sealed class MainViewModel : INotifyPropertyChanged
         RunAudioEndpointGuard();
         Status = "已检查 Windows 默认播放/通信/麦克风，DualSense 不会作为默认音频设备。";
         return Task.CompletedTask;
+    }
+
+    private async Task RunWin10BleDiagnosticAsync(CancellationToken cancellationToken)
+    {
+        Pro2ControllerSlot? slot = pro2Slots.FirstOrDefault(
+            candidate => candidate.InputSource.IsRunning);
+        if (slot == null)
+        {
+            throw new InvalidOperationException(
+                "没有已连接的真实 Pro2。先完成 BLE 连接，再运行 15 秒诊断。");
+        }
+
+        Status = "正在采集 Slot " + slot.Index +
+                 " 的真实 FD2 Notify，持续 15 秒；请保持手柄唤醒。";
+        var progress = new Progress<string>(
+            line => AppendLog("[SLOT " + slot.Index + "] " + line));
+        Win10BleDiagnosticReport report =
+            await slot.InputSource.RunWin10BleDiagnosticAsync(
+                TimeSpan.FromSeconds(15),
+                progress,
+                cancellationToken);
+        (string jsonPath, string textPath) =
+            await Win10BleDiagnostic.SaveAsync(report, cancellationToken);
+        AppendLog("[BLE_TURBO_REPORT] json=\"" + jsonPath +
+                  "\" text=\"" + textPath + "\"");
+        Status = "BLE Turbo 诊断完成：FD2=" +
+                 report.Fd2NotifyHz.ToString("F2") + "Hz，P50=" +
+                 report.Fd2NotifyGaps.P50Ms.ToString("F2") + "ms，判定=" +
+                 report.Verdict + "。报告：" + jsonPath;
+    }
+
+    private async Task RunBleTurboConfiguratorAsync(
+        bool restore,
+        CancellationToken cancellationToken,
+        bool experimentalConsent = false)
+    {
+        Win10BlePresetDefinition preset = SelectedWin10BlePreset;
+        if (!restore)
+        {
+            await RefreshEnvironmentInfoAsync();
+        }
+        BleCompatibilityPlan plan = BleCompatibilityInspector.Current.Plan;
+        IReadOnlyList<string> configurationArguments = BleTurboUiPresentation.Arguments(restore, plan, preset, experimentalConsent);
+        // A global trial can be authorized without assigning this BLE link to
+        // a default radio. The elevated tool chooses no restart target unless
+        // it can identify one unique present USB adapter.
+        if (!restore)
+            AppendLog("[BLE_TURBO_CONFIG] route=" + plan.Route + " experimental=" +
+                BleTurboUiPresentation.IsExperimental(plan) + " adapter_count=" +
+                (environmentSnapshot?.Adapters.Count.ToString() ?? "unknown") +
+                " global_write_explicitly_authorized=true link_adapter_ownership_unproven=true");
+        await StopAsync();
+        // This explicit, confirmed operation will restart the adapter. Release
+        // all owned BLE sessions first so stale owners cannot block reconnect.
+        foreach (Pro2ControllerSlot slot in pro2Slots)
+            await slot.InputSource.StopAsync();
+        string executable = Environment.ProcessPath ?? "";
+        if (string.IsNullOrWhiteSpace(executable) || !File.Exists(executable))
+        {
+            throw new InvalidOperationException("无法定位当前程序，不能启动管理员配置进程。 ");
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = true,
+            Verb = "runas",
+            WindowStyle = ProcessWindowStyle.Hidden,
+            WorkingDirectory = AppContext.BaseDirectory
+        };
+        foreach (string argument in configurationArguments) startInfo.ArgumentList.Add(argument);
+
+        AppendLog("[BLE_TURBO_CONFIG] action=" + (restore ? "restore_stack" : "apply_stack_" + preset.Id) +
+                  " elevation=requested");
+        DateTimeOffset configurationRequestedAt = DateTimeOffset.UtcNow;
+        using Process? process = Process.Start(startInfo);
+        if (process == null)
+        {
+            throw new InvalidOperationException("管理员配置进程没有启动。 ");
+        }
+        await process.WaitForExitAsync(cancellationToken);
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                (restore ? "恢复" : "启用") + "操作未完成；管理员工具 exit=" + process.ExitCode + "。 ");
+        }
+
+        AppendLog("[BLE_TURBO_CONFIG] action=" + (restore ? "restore_stack" : "apply_stack_" + preset.Id) +
+                  " result=success");
+        BleCompatibilityInspector.Refresh();
+        OnPropertyChanged(nameof(CompatibilityTitle));
+        OnPropertyChanged(nameof(CompatibilityGuidance));
+        OnPropertyChanged(nameof(CanConfigureWin10Stack));
+        await RefreshEnvironmentInfoAsync();
+        RefreshLowRateDiagnosis();
+        BleConfigurationOperationResult completion = BleConfigurationOperationEvidence.Read(
+            restore ? "restore" : "apply", restore ? "original" : preset.Id, configurationRequestedAt);
+        bool restartPending = !completion.Known || !completion.RestartSucceeded;
+        AppendLog("[BLE_TURBO_CONFIG] completion=" + completion.Code + " known=" + completion.Known +
+            " restart_verified=" + completion.RestartSucceeded + " automatic_retest_allowed=" + (!restartPending));
+        Status = restore ? "蓝牙参数已恢复；如热重启未成功，请正常重启 Windows。"
+            : restartPending ? "Win10 " + preset.Title + " 参数已保存，但适配器重启未完成或结果未核实；请查看日志，正常重启 Windows 后实测。"
+            : "Win10 " + preset.Title + " 参数已保存；正在自动重连并测真实 FD2，达到 60Hz 可游玩。";
+        if (!restore && !restartPending)
+        {
+            AppendLog("[BLE_TURBO_CONFIG] reconnect_and_measure=true preset=" + preset.Id + " write_success_is_not_rate_success=true");
+            await EnterGameAsync(cancellationToken);
+        }
     }
 
     private async Task DumpControllerEnumerationAsync(CancellationToken cancellationToken)
@@ -3227,9 +3491,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Directory.CreateDirectory(directory);
         string path = Path.Combine(
             directory,
-            "diagnostics_v6_2_31_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log");
+            "diagnostics_v" + SystemBluetoothDiagnostics.CurrentAppVersion.Replace('.', '_') + "_" +
+            DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log");
         var builder = new StringBuilder();
-        builder.AppendLine("# V6.2.32 stick-calibration-test diagnostics export");
+        builder.AppendLine("# PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + " Win10 / Win11 input diagnostics export");
+        await RefreshEnvironmentInfoAsync();
+        builder.AppendLine(EnvironmentReportText);
+        builder.AppendLine("firmware=" + CompactFirmware + " headset=" + CompactHeadset + " " + CompactFirmwareHint);
+        builder.AppendLine("[BLE_COMPATIBILITY] " + BleCompatibilityInspector.Current.Telemetry);
+        foreach (string line in await BleEnvironmentDiagnostics.CaptureAsync(cancellationToken))
+        {
+            builder.AppendLine(line);
+            AppendLog(line);
+        }
         builder.AppendLine("# session_log=" + sessionLog.FilePath);
         builder.AppendLine();
         foreach (string line in dump)
@@ -3272,6 +3546,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public async Task StopAsync()
     {
+        enterGamePending = false;
         await StopAutoReconnectAsync();
         await StopSessionAsync(updateStatus: true);
         using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -3395,6 +3670,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public async Task ShutdownAsync()
     {
+        if (previewOnly)
+        {
+            lifetimeCts.Cancel();
+            await sessionLog.DisposeAsync();
+            return;
+        }
         if (shuttingDown)
         {
             return;
@@ -3486,7 +3767,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             "tools",
             "viiper",
             "haptic-v0.8.0",
-            "viiper-haptic.exe");
+            "viiper-haptic-pro1.exe");
         string? cursor = AppContext.BaseDirectory;
         for (int i = 0; i < 8 && !string.IsNullOrWhiteSpace(cursor); i++)
         {
@@ -3514,7 +3795,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "PRO2WirelessReceiverControlBoard",
             "embedded",
-            "v6.2.32-stick-calibration-test-r2",
+            "pro2-assistant-v" + SystemBluetoothDiagnostics.CurrentAppVersion,
             "viiper",
             "haptic-v0.8.0");
         Directory.CreateDirectory(root);
@@ -3598,10 +3879,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 await CancelStartupAutomationForManualOperationAsync(operation);
             }
-            await action(lifetimeCts.Token);
+            using var operationCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
+            currentOperationCts = operationCts;
+            await action(operationCts.Token);
         }
-        catch (OperationCanceledException) when (lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (
+            lifetimeCts.IsCancellationRequested || currentOperationCts?.IsCancellationRequested == true)
         {
+            Status = "已取消当前连接操作。";
             AppendLog("[CANCELLED] operation=" + operation);
         }
         catch (Exception ex)
@@ -3611,6 +3896,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         finally
         {
+            currentOperationCts = null;
             Busy = false;
             operationGate.Release();
         }
@@ -3895,7 +4181,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private static bool IsMultiSlotMode(ViiperVirtualMode mode)
     {
         return mode is ViiperVirtualMode.DualSenseLike
-            or ViiperVirtualMode.DualSenseEdge
+            or ViiperVirtualMode.Pro1
             or ViiperVirtualMode.Pro2
             or ViiperVirtualMode.Xbox;
     }
@@ -3926,7 +4212,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return mode switch
         {
             ViiperVirtualMode.DualSenseLike => ViiperDeviceProfile.DualSenseLike,
-            ViiperVirtualMode.DualSenseEdge => ViiperDeviceProfile.DualSenseEdge,
+            ViiperVirtualMode.Pro1 => ViiperDeviceProfile.Pro1,
             ViiperVirtualMode.Pro2 => ViiperDeviceProfile.Pro2,
             ViiperVirtualMode.Xbox => ViiperDeviceProfile.Xbox,
             _ => throw new ArgumentOutOfRangeException(nameof(mode))
@@ -3937,7 +4223,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         return V60UserSettings.NormalizeModeKey(key) switch
         {
-            "dualsenseedge" => ViiperVirtualMode.DualSenseEdge,
+            "pro1" => ViiperVirtualMode.Pro1,
             "pro2" => ViiperVirtualMode.Pro2,
             "xbox" => ViiperVirtualMode.Xbox,
             _ => ViiperVirtualMode.DualSenseLike
@@ -3948,7 +4234,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         return mode switch
         {
-            ViiperVirtualMode.DualSenseEdge => "dualsenseedge",
+            ViiperVirtualMode.Pro1 => "pro1",
             ViiperVirtualMode.Pro2 => "pro2",
             ViiperVirtualMode.Xbox => "xbox",
             _ => "dualsense"
@@ -3966,7 +4252,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         userSettings.SelectedModeKey = ModeKey(mode);
         SaveUserSettings("[MODE_SELECT]");
         OnPropertyChanged(nameof(IsDualSenseSelected));
-        OnPropertyChanged(nameof(IsDualSenseEdgeSelected));
+        OnPropertyChanged(nameof(IsPro1Selected));
         OnPropertyChanged(nameof(IsDualSenseProfessionalImuSelected));
         OnPropertyChanged(nameof(IsPro2Selected));
         OnPropertyChanged(nameof(IsXboxSelected));
@@ -3981,7 +4267,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         activeMode = mode;
         OnPropertyChanged(nameof(IsDualSenseActive));
-        OnPropertyChanged(nameof(IsDualSenseEdgeActive));
+        OnPropertyChanged(nameof(IsPro1Active));
         OnPropertyChanged(nameof(IsDualSenseProfessionalImuActive));
         OnPropertyChanged(nameof(IsPro2Active));
         OnPropertyChanged(nameof(IsXboxActive));
@@ -3995,11 +4281,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(BleButtonText));
         OnPropertyChanged(nameof(BleStateText));
         OnPropertyChanged(nameof(CanManualBleControl));
+        RefreshCompactPresentation();
     }
 
     private void ClearLog()
     {
-        log.Clear();
+        lock (logGate) log.Clear();
         OnPropertyChanged(nameof(LogText));
     }
 
@@ -4018,16 +4305,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 continue;
             }
             string prefix = "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] ";
-            log.Append(prefix).AppendLine(line);
             persisted.Append(prefix).AppendLine(line);
         }
-        if (log.Length > MaxUiLogCharacters)
+        lock (logGate)
         {
-            log.Remove(0, log.Length - TrimmedUiLogCharacters);
-            log.Insert(0, "[UI LOG TRIMMED]\r\n");
+            log.Append(persisted);
+            if (log.Length > MaxUiLogCharacters)
+            {
+                log.Remove(0, log.Length - TrimmedUiLogCharacters);
+                log.Insert(0, "[UI LOG TRIMMED]\r\n");
+            }
+            logDirty = true;
         }
         sessionLog.Write(persisted.ToString());
-        OnPropertyChanged(nameof(LogText));
     }
 
     private static string FirstLine(string text)
@@ -4039,7 +4329,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         try
         {
-            userSettings.Save();
+            if (!previewOnly) userSettings.Save();
         }
         catch (Exception ex)
         {
@@ -4074,7 +4364,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void RefreshRuntimeReadiness()
     {
-        UsbipRuntime? usbip = UsbipRuntimeLocator.Find();
+        UsbipRuntime? usbip = FindConfiguredUsbip();
+        UpdateUsbipLocation(usbip);
         if (usbip != null)
         {
             RuntimeReadinessText = "USBIP 程序已发现，启动角色时会自动检查内核驱动；VIIPER 已内置，无需另行安装。";
@@ -4083,22 +4374,24 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         UsbipInstaller? installer = UsbipRuntimeLocator.FindBundledInstaller();
         RuntimeReadinessText = installer != null
-            ? "首次使用：需要安装 USBIP 内核驱动。直接选择角色即可自动打开内置安装向导，VIIPER 无需另行安装。"
-            : "发布包不完整：未安装 USBIP，且没有找到内置安装器。请重新获取完整 EXE。";
+            ? "未找到 USBIP 程序。已安装可在设置中选择 usbip.exe；首次使用可运行内置安装器。"
+            : "未找到 USBIP 程序及内置安装器。已安装可手动选择 usbip.exe，否则请获取完整 EXE。";
     }
 
     private async Task RefreshRuntimeReadinessAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            UsbipRuntime? usbip = UsbipRuntimeLocator.Find();
+            UsbipRuntime? usbip = FindConfiguredUsbip();
+            UpdateUsbipLocation(usbip);
             if (usbip == null)
             {
                 UsbipInstaller? installer = UsbipRuntimeLocator.FindBundledInstaller();
                 RuntimeReadinessText = installer != null
-                    ? "VIIPER 已内置；未发现可用的 USBIP。直接选择角色或点击“安装/修复 USBIP”会打开 EXE 内置的正式安装器。" + UsbipPortableInstallHint
-                    : "发布包不完整：VIIPER 可用，但没有找到 USBIP 内核驱动或内置安装器。";
-                AppendLog("[RUNTIME_DIAG] viiper=embedded usbip=not_installed installer=" + (installer != null ? "embedded" : "missing"));
+                    ? "VIIPER 已内置；未找到 usbip.exe。已安装可在此选择文件；未安装可使用内置安装器。"
+                    : "VIIPER 已内置；未找到 usbip.exe 或内置安装器。已安装可在此选择文件。";
+                AppendLog("[RUNTIME_DIAG] viiper=embedded usbip=executable_not_found installation_state=unknown configured_exe=\"" +
+                    userSettings.UsbipExecutablePath + "\" installer=" + (installer != null ? "embedded" : "missing"));
                 return;
             }
 
@@ -4107,12 +4400,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (probe.Ready)
             {
                 RuntimeReadinessText = "运行环境已就绪：VIIPER 已内置，USBIP 内核驱动可用。无需额外下载或安装 VIIPER。";
-                AppendLog("[RUNTIME_DIAG] viiper=embedded usbip=ready exe=" + usbip.ExePath);
+                AppendLog("[RUNTIME_DIAG] viiper=embedded usbip=ready source=" + usbip.Source + " exe=\"" + usbip.ExePath + "\"");
                 return;
             }
 
-            RuntimeReadinessText = "已找到 USBIP 程序，但内核驱动尚未就绪。若刚安装，请先重启 Windows；重启后仍失败再点“安装/修复 USBIP”。VIIPER 本体已内置。";
-            AppendLog("[RUNTIME_DIAG] viiper=embedded usbip=installed_driver_not_ready detail=" + probe.Detail);
+            RuntimeReadinessText = "已找到 USBIP 程序，但运行 / 驱动检测未通过。请查看日志；若安装器提示需要重启，请先重启 Windows。";
+            AppendLog("[RUNTIME_DIAG] viiper=embedded usbip=executable_found_probe_failed source=" + usbip.Source +
+                " exe=\"" + usbip.ExePath + "\" detail=" + probe.Detail);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

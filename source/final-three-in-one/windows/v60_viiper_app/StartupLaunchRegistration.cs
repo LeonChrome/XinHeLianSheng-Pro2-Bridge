@@ -7,14 +7,16 @@ namespace Y700Switch2V60Viiper;
 public static class StartupLaunchRegistration
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ValueName = "XinHeLianShengV6Viiper";
+    private const string ValueName = "PRO2ControllerAssistant";
+    private const string LegacyValueName = "XinHeLianShengV6Viiper";
 
     public static bool IsEnabled()
     {
         try
         {
             using RegistryKey? key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
-            string? value = key?.GetValue(ValueName) as string;
+            string? value = key?.GetValue(ValueName) as string
+                ?? key?.GetValue(LegacyValueName) as string;
             return !string.IsNullOrWhiteSpace(value);
         }
         catch
@@ -30,6 +32,7 @@ public static class StartupLaunchRegistration
         if (!enabled)
         {
             key.DeleteValue(ValueName, throwOnMissingValue: false);
+            key.DeleteValue(LegacyValueName, throwOnMissingValue: false);
             return;
         }
 
@@ -44,6 +47,7 @@ public static class StartupLaunchRegistration
         }
 
         key.SetValue(ValueName, Quote(executable), RegistryValueKind.String);
+        key.DeleteValue(LegacyValueName, throwOnMissingValue: false);
     }
 
     private static string Quote(string path)

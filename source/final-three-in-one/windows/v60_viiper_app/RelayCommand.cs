@@ -48,4 +48,5 @@ public sealed class RelayCommand : ICommand
     }
 
     public event EventHandler? CanExecuteChanged;
+    public void RefreshCanExecute() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }

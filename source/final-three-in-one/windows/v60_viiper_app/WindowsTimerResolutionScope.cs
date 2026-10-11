@@ -18,9 +18,9 @@ public sealed class WindowsTimerResolutionScope : IDisposable
     public bool IsActive { get; }
     public uint Result { get; }
 
-    public static WindowsTimerResolutionScope Begin()
+    public static WindowsTimerResolutionScope Begin(bool enabled = true)
     {
-        if (!OperatingSystem.IsWindows())
+        if (!enabled || !OperatingSystem.IsWindows())
         {
             return new WindowsTimerResolutionScope(active: false, result: uint.MaxValue);
         }

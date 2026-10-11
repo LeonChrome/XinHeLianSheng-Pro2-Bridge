@@ -1,1359 +1,492 @@
 <Window x:Class="Y700Switch2V60Viiper.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
-        Title="PRO2 手柄无线接收器控制板 V6.2.32 Test r2 · 四人三模大厅"
-        Icon="Assets/AppIcon.ico"
-        Width="1440"
-        Height="940"
-        MinWidth="1160"
-        MinHeight="760"
-        WindowStartupLocation="CenterScreen"
-        Background="#050713"
-        FontFamily="Microsoft YaHei UI"
-        Foreground="#F8FAFC"
-        UseLayoutRounding="True"
-        SnapsToDevicePixels="True">
+        xmlns:local="clr-namespace:Y700Switch2V60Viiper"
+        Title="PRO2 手柄助手" Width="1040" Height="820" MinWidth="720" MinHeight="560"
+        WindowStartupLocation="CenterScreen" Background="#F5F7F6"
+        Foreground="#192824" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="14"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
     <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
-
-        <LinearGradientBrush x:Key="WindowBackground" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#050713" Offset="0"/>
-            <GradientStop Color="#10142A" Offset="0.5"/>
-            <GradientStop Color="#080A16" Offset="1"/>
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="ConsoleBackground" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#E60A1020" Offset="0"/>
-            <GradientStop Color="#E612172A" Offset="1"/>
-        </LinearGradientBrush>
-
-        <Style x:Key="SectionLabel" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Foreground" Value="#7783A7"/>
+        <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
+        <local:RearKeyColumnsConverter x:Key="RearColumns"/>
+        <SolidColorBrush x:Key="Muted" Color="#667870"/>
+        <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="FontWeight" Value="Normal"/></Style>
+        <Style x:Key="MutedText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="FontSize" Value="12"/>
         </Style>
-
-        <Style x:Key="HeroButton" TargetType="Button">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#F8FAFC"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="0"/>
-            <Setter Property="Margin" Value="10,0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <ContentPresenter/>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="HeroCard" TargetType="Border">
-            <Setter Property="CornerRadius" Value="26"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush" Value="#33415F"/>
-            <Setter Property="Opacity" Value="0.78"/>
-            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
-            <Setter Property="RenderTransform">
-                <Setter.Value>
-                    <ScaleTransform ScaleX="1" ScaleY="1"/>
-                </Setter.Value>
-            </Setter>
-            <Setter Property="Effect">
-                <Setter.Value>
-                    <DropShadowEffect BlurRadius="20" ShadowDepth="8" Opacity="0.35" Color="#000000"/>
-                </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Opacity" Value="0.96"/>
-                    <Setter Property="RenderTransform">
-                        <Setter.Value>
-                            <ScaleTransform ScaleX="1" ScaleY="1"/>
-                        </Setter.Value>
-                    </Setter>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="HeroImage" TargetType="Image">
-            <Setter Property="Stretch" Value="Uniform"/>
-            <Setter Property="RenderOptions.BitmapScalingMode" Value="HighQuality"/>
-            <Setter Property="RenderTransformOrigin" Value="0.5,0.62"/>
-            <Setter Property="RenderTransform">
-                <Setter.Value>
-                    <TransformGroup>
-                        <ScaleTransform ScaleX="1" ScaleY="1"/>
-                        <TranslateTransform Y="0"/>
-                    </TransformGroup>
-                </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-                <EventTrigger RoutedEvent="MouseEnter">
-                    <BeginStoryboard>
-                        <Storyboard>
-                            <DoubleAnimation Duration="0:0:0.22"
-                                             To="1"
-                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)"/>
-                            <DoubleAnimation Duration="0:0:0.22"
-                                             To="1"
-                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)"/>
-                            <DoubleAnimation Duration="0:0:0.22"
-                                             To="0"
-                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[1].(TranslateTransform.Y)"/>
-                        </Storyboard>
-                    </BeginStoryboard>
-                </EventTrigger>
-                <EventTrigger RoutedEvent="MouseLeave">
-                    <BeginStoryboard>
-                        <Storyboard>
-                            <DoubleAnimation Duration="0:0:0.28"
-                                             To="1"
-                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)"/>
-                            <DoubleAnimation Duration="0:0:0.28"
-                                             To="1"
-                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)"/>
-                            <DoubleAnimation Duration="0:0:0.28"
-                                             To="0"
-                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[1].(TranslateTransform.Y)"/>
-                        </Storyboard>
-                    </BeginStoryboard>
-                </EventTrigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="ConsoleButton" TargetType="Button">
-            <Setter Property="Foreground" Value="#EAF2FF"/>
-            <Setter Property="Background" Value="#1C2643"/>
-            <Setter Property="BorderBrush" Value="#425071"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="13,8"/>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="16,10"/>
             <Setter Property="Margin" Value="0,0,8,8"/>
-            <Setter Property="MinWidth" Value="116"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#DFE7E2"/>
+            <Setter Property="Foreground" Value="#253C32"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Chrome"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="9"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chrome" Property="Background" Value="#2A385E"/>
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#6A80B8"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Chrome" Property="Opacity" Value="0.72"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Chrome" Property="Opacity" Value="0.38"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="DarkTextBox" TargetType="TextBox">
-            <Setter Property="Foreground" Value="#E6EEFF"/>
-            <Setter Property="Background" Value="#0A0F20"/>
-            <Setter Property="BorderBrush" Value="#33415F"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="9,7"/>
-            <Setter Property="CaretBrush" Value="#58E1FF"/>
-        </Style>
-
-        <Style x:Key="DarkComboBoxItem" TargetType="{x:Type ComboBoxItem}">
-            <Setter Property="Foreground" Value="#E6EEFF"/>
-            <Setter Property="Background" Value="#10172A"/>
-            <Setter Property="Padding" Value="10,7"/>
-            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type ComboBoxItem}">
-                        <Border x:Name="ItemChrome"
-                                Background="{TemplateBinding Background}"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="ItemChrome" Property="Background" Value="#243452"/>
-                                <Setter Property="Foreground" Value="#FFFFFF"/>
-                            </Trigger>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="ItemChrome" Property="Background" Value="#175B78"/>
-                                <Setter Property="Foreground" Value="#FFFFFF"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.46"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="DarkComboBox" TargetType="{x:Type ComboBox}">
-            <Setter Property="Foreground" Value="#E6EEFF"/>
-            <Setter Property="Background" Value="#0A0F20"/>
-            <Setter Property="BorderBrush" Value="#33415F"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="10,6"/>
-            <Setter Property="MinHeight" Value="34"/>
-            <Setter Property="TextElement.Foreground" Value="#E6EEFF"/>
-            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItem}"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type ComboBox}">
-                        <Grid>
-                            <Border x:Name="Chrome"
-                                    Grid.ColumnSpan="2"
-                                    CornerRadius="8"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"/>
-                            <ContentPresenter x:Name="ContentSite"
-                                              Margin="{TemplateBinding Padding}"
-                                              VerticalAlignment="Center"
-                                              HorizontalAlignment="Left"
-                                              IsHitTestVisible="False"
-                                              Content="{TemplateBinding SelectionBoxItem}"
-                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
-                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
-                            <Path HorizontalAlignment="Right"
-                                  VerticalAlignment="Center"
-                                  Margin="0,0,11,0"
-                                  Fill="#B9C8E8"
-                                  Data="M 0 0 L 5 5 L 10 0 Z"/>
-                            <ToggleButton Focusable="False"
-                                          Background="Transparent"
-                                          BorderThickness="0"
-                                          Opacity="0"
-                                          ClickMode="Press"
-                                          IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"/>
-                            <Popup x:Name="PART_Popup"
-                                   AllowsTransparency="True"
-                                   Focusable="False"
-                                   IsOpen="{TemplateBinding IsDropDownOpen}"
-                                   Placement="Bottom"
-                                   PopupAnimation="Fade">
-                                <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
-                                        MaxHeight="{TemplateBinding MaxDropDownHeight}"
-                                        CornerRadius="9"
-                                        Background="#10172A"
-                                        BorderBrush="#405071"
-                                        BorderThickness="1">
-                                    <ScrollViewer Margin="0"
-                                                  SnapsToDevicePixels="True"
-                                                  VerticalScrollBarVisibility="Auto">
-                                        <ItemsPresenter/>
-                                    </ScrollViewer>
-                                </Border>
-                            </Popup>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#6A80B8"/>
-                            </Trigger>
-                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#58E1FF"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.48"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="AxisCheckBox" TargetType="{x:Type CheckBox}">
-            <Setter Property="Foreground" Value="#D9ECFF"/>
-            <Setter Property="Margin" Value="0,0,10,0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type CheckBox}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="18"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Border x:Name="Box"
-                                    Width="16"
-                                    Height="16"
-                                    CornerRadius="4"
-                                    Background="#0A0F20"
-                                    BorderBrush="#52678F"
-                                    BorderThickness="1"/>
-                            <Border x:Name="Dot"
-                                    Width="8"
-                                    Height="8"
-                                    CornerRadius="4"
-                                    Background="#58E1FF"
-                                    Visibility="Collapsed"/>
-                            <ContentPresenter Grid.Column="1"
-                                              Margin="6,0,0,0"
-                                              VerticalAlignment="Center"/>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Box" Property="BorderBrush" Value="#58E1FF"/>
-                                <Setter TargetName="Box" Property="Background" Value="#123B52"/>
-                                <Setter TargetName="Dot" Property="Visibility" Value="Visible"/>
-                                <Setter Property="Foreground" Value="#FFFFFF"/>
-                            </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Box" Property="BorderBrush" Value="#9DEEFF"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.46"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style TargetType="ToolTip">
-            <Setter Property="Foreground" Value="#EDF4FF"/>
-            <Setter Property="Background" Value="#F0121829"/>
-            <Setter Property="BorderBrush" Value="#516181"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="10,7"/>
-        </Style>
-
-        <Style x:Key="EnterButton" TargetType="Button">
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="FontSize" Value="17"/>
-            <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Padding" Value="30,17"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Grid>
-                            <Border x:Name="Glow"
-                                    CornerRadius="18"
-                                    Background="#7A00D7FF"
-                                    Opacity="0.36"
-                                    Margin="-5">
-                                <Border.Effect>
-                                    <BlurEffect Radius="18"/>
-                                </Border.Effect>
-                            </Border>
-                            <Border x:Name="ButtonSurface"
-                                    CornerRadius="15"
-                                    BorderThickness="1"
-                                    BorderBrush="#9DEEFF">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                        <GradientStop Color="#007AA8" Offset="0"/>
-                                        <GradientStop Color="#6D28D9" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
-                                <ContentPresenter HorizontalAlignment="Center"
-                                                  VerticalAlignment="Center"
-                                                  Margin="{TemplateBinding Padding}"/>
-                            </Border>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Glow" Property="Opacity" Value="0.72"/>
-                                <Setter TargetName="ButtonSurface" Property="BorderBrush" Value="White"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="ButtonSurface" Property="Opacity" Value="0.72"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="ButtonSurface" Property="Opacity" Value="0.42"/>
-                                <Setter TargetName="Glow" Property="Opacity" Value="0.12"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-    </Window.Resources>
-
-    <Grid Background="{StaticResource WindowBackground}">
-        <Ellipse Width="720" Height="720" HorizontalAlignment="Left" VerticalAlignment="Top"
-                 Margin="-360,-380,0,0" Fill="#27195AD6" IsHitTestVisible="False">
-            <Ellipse.Effect>
-                <BlurEffect Radius="120"/>
-            </Ellipse.Effect>
-        </Ellipse>
-        <Ellipse Width="680" Height="680" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                 Margin="0,0,-360,-410" Fill="#2435C8D4" IsHitTestVisible="False">
-            <Ellipse.Effect>
-                <BlurEffect Radius="130"/>
-            </Ellipse.Effect>
-        </Ellipse>
-
-        <ScrollViewer VerticalScrollBarVisibility="Visible" HorizontalScrollBarVisibility="Disabled">
-            <Grid Margin="30,22,30,28" MaxWidth="1500" HorizontalAlignment="Center">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource SectionLabel}" Text="VIIPER ARENA · WINDOWS EXCLUSIVE"/>
-                        <TextBlock Margin="0,5,0,0" FontSize="30" FontWeight="Black" Text="选择你的无线身份"/>
-                        <TextBlock Margin="0,5,0,0" Foreground="#9AA8C7" FontSize="13"
-                                   Text="点击角色即可部署或直接切换模式。连接真实 Pro2 BLE 后，当前角色将从 neutral 切换为 live 输入。"/>
-                        <Border Margin="0,12,0,0" Padding="12,9" CornerRadius="10"
-                                Background="#18243C" BorderBrush="#3A527B" BorderThickness="1">
-                            <TextBlock Foreground="#BDD5FF" FontSize="12" FontWeight="SemiBold"
-                                       Text="{Binding RuntimeReadinessText}" TextWrapping="Wrap"/>
-                        </Border>
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                        <Border Background="#1BFFFFFF" BorderBrush="#3AFFFFFF" BorderThickness="1"
-                                CornerRadius="14" Padding="14,9">
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="8" Height="8" Fill="#5EF2A5" Margin="0,0,8,0">
-                                    <Ellipse.Effect>
-                                        <DropShadowEffect Color="#5EF2A5" BlurRadius="12" ShadowDepth="0"/>
-                                    </Ellipse.Effect>
-                                </Ellipse>
-                                <TextBlock FontWeight="Bold" Foreground="#C9FCE0" Text="V6.2.32 Test r2 · 双摇杆校准"/>
-                            </StackPanel>
-                        </Border>
-                        <Button Margin="0,9,0,0" HorizontalAlignment="Right"
-                                Style="{StaticResource ConsoleButton}"
-                                Content="停止当前角色"
-                                automation:AutomationProperties.Name="停止虚拟设备"
-                                Command="{Binding StopCommand}"
-                                IsEnabled="{Binding CanStop}"/>
-                        <Border Margin="0,10,0,0" Padding="12,10" CornerRadius="12"
-                                Background="#151F36" BorderBrush="#2F4266" BorderThickness="1">
-                            <StackPanel>
-                                <CheckBox Style="{StaticResource AxisCheckBox}"
-                                          Content="开机自启动"
-                                          IsChecked="{Binding LaunchAtLoginEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                <CheckBox Margin="0,7,0,0"
-                                          Style="{StaticResource AxisCheckBox}"
-                                          Content="启动后自动进入上次模式"
-                                          IsChecked="{Binding AutoReconnectOnStartupEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                <TextBlock Margin="0,7,0,0" Foreground="#7F90B0" FontSize="10"
-                                           TextWrapping="Wrap" Width="220"
-                                           Text="{Binding StartupAutomationSummary}"/>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </Grid>
-
-                <Grid Grid.Row="1" Margin="0,24,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource SectionLabel}" Text="CHARACTER SELECT"/>
-                        <TextBlock Margin="0,4,0,0" FontSize="16" FontWeight="Bold" Text="{Binding ModeHeadline}"/>
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                        <TextBlock HorizontalAlignment="Right" FontSize="12" Foreground="#8390AE"
-                                   Text="{Binding SelectedHeroName}"/>
-                        <TextBlock HorizontalAlignment="Right" Margin="0,3,0,0" FontSize="11"
-                                   Foreground="#5EE7FF" Text="{Binding SelectedModeSubtitle}"/>
-                    </StackPanel>
-                </Grid>
-
-                <Grid Grid.Row="2" Height="485">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-
-                    <Button Grid.Column="0"
-                            Style="{StaticResource HeroButton}"
-                            Command="{Binding StartDualSenseCommand}"
-                            IsEnabled="{Binding CanOperate}"
-                            automation:AutomationProperties.Name="启动 新和联胜 / PS5"
-                            ToolTip="部署新和联胜 / PS5 模式">
-                        <Border>
-                            <Border.Style>
-                                <Style TargetType="Border" BasedOn="{StaticResource HeroCard}">
-                                    <Setter Property="Background">
-                                        <Setter.Value>
-                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                                <GradientStop Color="#561D0C18" Offset="0"/>
-                                                <GradientStop Color="#DD160A14" Offset="0.58"/>
-                                                <GradientStop Color="#F2070A12" Offset="1"/>
-                                            </LinearGradientBrush>
-                                        </Setter.Value>
-                                    </Setter>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsDualSenseSelected}" Value="True">
-                                            <Setter Property="Opacity" Value="1"/>
-                                            <Setter Property="BorderBrush" Value="#FF5B49"/>
-                                            <Setter Property="BorderThickness" Value="2"/>
-                                            <Setter Property="RenderTransform">
-                                                <Setter.Value>
-                                                    <ScaleTransform ScaleX="1" ScaleY="1"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                            <Setter Property="Effect">
-                                                <Setter.Value>
-                                                    <DropShadowEffect Color="#FF321F" BlurRadius="34" ShadowDepth="0" Opacity="0.55"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <Ellipse Width="300" Height="300" VerticalAlignment="Center" Fill="#24FF3C28">
-                                    <Ellipse.Style>
-                                        <Style TargetType="Ellipse">
-                                            <Setter Property="Opacity" Value="0"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsDualSenseSelected}" Value="True">
-                                                    <Setter Property="Opacity" Value="0.42"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Ellipse.Style>
-                                    <Ellipse.Effect>
-                                        <BlurEffect Radius="54"/>
-                                    </Ellipse.Effect>
-                                </Ellipse>
-                                <TextBlock Margin="20,16" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                           FontSize="11" FontWeight="Bold" Foreground="#FF8A7C" Text="01 · GOD OF WAR"/>
-                                <Border Margin="0,14,16,0" Padding="9,5" HorizontalAlignment="Right"
-                                        VerticalAlignment="Top" CornerRadius="10" Background="#C9FF3B30">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Opacity" Value="0"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsDualSenseActive}" Value="True">
-                                                    <Setter Property="Opacity" Value="1"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <TextBlock FontSize="10" FontWeight="Black" Text="LIVE"/>
-                                </Border>
-                                <Image Grid.Row="0" Margin="42,34,42,-8" Style="{StaticResource HeroImage}"
-                                       Source="/Assets/Characters/kratos.png"/>
-                                <Border Grid.Row="1" Background="#D90B0D16" Padding="20,15" CornerRadius="0,0,24,24">
-                                    <StackPanel>
-                                        <TextBlock FontSize="22" FontWeight="Black" Text="新和联胜"/>
-                                        <TextBlock Margin="0,2,0,0" FontSize="12" FontWeight="Bold" Foreground="#FF7365"
-                                                   Text="PS5 · DUALSENSE"/>
-                                        <TextBlock Margin="0,8,0,0" FontSize="11" Foreground="#AEB7CC"
-                                                   Text="4CH HD 音频 + 普通震动调度 · 054C:0CE6"/>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </Border>
-                    </Button>
-
-                    <Button Grid.Column="1"
-                            Style="{StaticResource HeroButton}"
-                            Command="{Binding StartPro2Command}"
-                            IsEnabled="{Binding CanOperate}"
-                            automation:AutomationProperties.Name="启动 Pro2 / Nintendo"
-                            ToolTip="部署 Pro2 / Nintendo 模式">
-                        <Border>
-                            <Border.Style>
-                                <Style TargetType="Border" BasedOn="{StaticResource HeroCard}">
-                                    <Setter Property="Background">
-                                        <Setter.Value>
-                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                                <GradientStop Color="#402E0A18" Offset="0"/>
-                                                <GradientStop Color="#C1091730" Offset="0.58"/>
-                                                <GradientStop Color="#F2070A16" Offset="1"/>
-                                            </LinearGradientBrush>
-                                        </Setter.Value>
-                                    </Setter>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsPro2Selected}" Value="True">
-                                            <Setter Property="Opacity" Value="1"/>
-                                            <Setter Property="BorderBrush" Value="#43A7FF"/>
-                                            <Setter Property="BorderThickness" Value="2"/>
-                                            <Setter Property="RenderTransform">
-                                                <Setter.Value>
-                                                    <ScaleTransform ScaleX="1" ScaleY="1"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                            <Setter Property="Effect">
-                                                <Setter.Value>
-                                                    <DropShadowEffect Color="#167DFF" BlurRadius="34" ShadowDepth="0" Opacity="0.58"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <Ellipse Width="300" Height="300" VerticalAlignment="Center" Fill="#284A9CFF">
-                                    <Ellipse.Style>
-                                        <Style TargetType="Ellipse">
-                                            <Setter Property="Opacity" Value="0"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsPro2Selected}" Value="True">
-                                                    <Setter Property="Opacity" Value="0.42"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Ellipse.Style>
-                                    <Ellipse.Effect>
-                                        <BlurEffect Radius="54"/>
-                                    </Ellipse.Effect>
-                                </Ellipse>
-                                <TextBlock Margin="20,16" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                           FontSize="11" FontWeight="Bold" Foreground="#70BCFF" Text="02 · MUSHROOM LINK"/>
-                                <Border Margin="0,14,16,0" Padding="9,5" HorizontalAlignment="Right"
-                                        VerticalAlignment="Top" CornerRadius="10" Background="#D3288AFF">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Opacity" Value="0"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsPro2Active}" Value="True">
-                                                    <Setter Property="Opacity" Value="1"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <TextBlock FontSize="10" FontWeight="Black" Text="LIVE"/>
-                                </Border>
-                                <Image Grid.Row="0" Margin="48,36,48,-12" Style="{StaticResource HeroImage}"
-                                       Source="/Assets/Characters/mario.png"/>
-                                <Border Grid.Row="1" Background="#D90B0D16" Padding="20,15" CornerRadius="0,0,24,24">
-                                    <StackPanel>
-                                        <TextBlock FontSize="22" FontWeight="Black" Text="PRO2"/>
-                                        <TextBlock Margin="0,2,0,0" FontSize="12" FontWeight="Bold" Foreground="#58B4FF"
-                                                   Text="NINTENDO · HD RUMBLE"/>
-                                        <TextBlock Margin="0,8,0,0" FontSize="11" Foreground="#AEB7CC"
-                                                   Text="原生震动块 · 057E:2069"/>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </Border>
-                    </Button>
-
-                    <Button Grid.Column="2"
-                            Style="{StaticResource HeroButton}"
-                            Command="{Binding StartXboxCommand}"
-                            IsEnabled="{Binding CanOperate}"
-                            automation:AutomationProperties.Name="启动 Xbox / XInput"
-                            ToolTip="部署 Xbox / XInput 模式">
-                        <Border>
-                            <Border.Style>
-                                <Style TargetType="Border" BasedOn="{StaticResource HeroCard}">
-                                    <Setter Property="Background">
-                                        <Setter.Value>
-                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                                <GradientStop Color="#3C16301B" Offset="0"/>
-                                                <GradientStop Color="#C00A2015" Offset="0.58"/>
-                                                <GradientStop Color="#F2070B12" Offset="1"/>
-                                            </LinearGradientBrush>
-                                        </Setter.Value>
-                                    </Setter>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsXboxSelected}" Value="True">
-                                            <Setter Property="Opacity" Value="1"/>
-                                            <Setter Property="BorderBrush" Value="#71E151"/>
-                                            <Setter Property="BorderThickness" Value="2"/>
-                                            <Setter Property="RenderTransform">
-                                                <Setter.Value>
-                                                    <ScaleTransform ScaleX="1" ScaleY="1"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                            <Setter Property="Effect">
-                                                <Setter.Value>
-                                                    <DropShadowEffect Color="#46D337" BlurRadius="34" ShadowDepth="0" Opacity="0.58"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <Ellipse Width="300" Height="300" VerticalAlignment="Center" Fill="#2856E64C">
-                                    <Ellipse.Style>
-                                        <Style TargetType="Ellipse">
-                                            <Setter Property="Opacity" Value="0"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsXboxSelected}" Value="True">
-                                                    <Setter Property="Opacity" Value="0.42"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Ellipse.Style>
-                                    <Ellipse.Effect>
-                                        <BlurEffect Radius="54"/>
-                                    </Ellipse.Effect>
-                                </Ellipse>
-                                <TextBlock Margin="20,16" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                           FontSize="11" FontWeight="Bold" Foreground="#84E46D" Text="03 · SPARTAN LINK"/>
-                                <Border Margin="0,14,16,0" Padding="9,5" HorizontalAlignment="Right"
-                                        VerticalAlignment="Top" CornerRadius="10" Background="#D247C73A">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Opacity" Value="0"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsXboxActive}" Value="True">
-                                                    <Setter Property="Opacity" Value="1"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <TextBlock FontSize="10" FontWeight="Black" Text="LIVE"/>
-                                </Border>
-                                <Image Grid.Row="0" Margin="50,38,50,-8" Style="{StaticResource HeroImage}"
-                                       Source="/Assets/Characters/master-chief.png"/>
-                                <Border Grid.Row="1" Background="#D90B0D16" Padding="20,15" CornerRadius="0,0,24,24">
-                                    <StackPanel>
-                                        <TextBlock FontSize="22" FontWeight="Black" Text="XBOX"/>
-                                        <TextBlock Margin="0,2,0,0" FontSize="12" FontWeight="Bold" Foreground="#77E15B"
-                                                   Text="XINPUT · SPARTAN"/>
-                                        <TextBlock Margin="0,8,0,0" FontSize="11" Foreground="#AEB7CC"
-                                                   Text="双马达映射 · 045E:028E"/>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </Border>
-                    </Button>
-
-                    <Button Grid.Column="3"
-                            Style="{StaticResource HeroButton}"
-                            Command="{Binding StartDualSenseEdgeCommand}"
-                            IsEnabled="{Binding CanOperate}"
-                            automation:AutomationProperties.Name="启动 PS5 Edge / 背键"
-                            ToolTip="部署 PS5 Edge 模式，映射 Pro2 背键为 Edge L4/R4">
-                        <Border>
-                            <Border.Style>
-                                <Style TargetType="Border" BasedOn="{StaticResource HeroCard}">
-                                    <Setter Property="Background">
-                                        <Setter.Value>
-                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                                <GradientStop Color="#3F27103A" Offset="0"/>
-                                                <GradientStop Color="#C41B1036" Offset="0.58"/>
-                                                <GradientStop Color="#F2080918" Offset="1"/>
-                                            </LinearGradientBrush>
-                                        </Setter.Value>
-                                    </Setter>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsDualSenseEdgeSelected}" Value="True">
-                                            <Setter Property="Opacity" Value="1"/>
-                                            <Setter Property="BorderBrush" Value="#C084FC"/>
-                                            <Setter Property="BorderThickness" Value="2"/>
-                                            <Setter Property="RenderTransform">
-                                                <Setter.Value>
-                                                    <ScaleTransform ScaleX="1" ScaleY="1"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                            <Setter Property="Effect">
-                                                <Setter.Value>
-                                                    <DropShadowEffect Color="#A855F7" BlurRadius="34" ShadowDepth="0" Opacity="0.58"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <Ellipse Width="300" Height="300" VerticalAlignment="Center" Fill="#2CC084FC">
-                                    <Ellipse.Style>
-                                        <Style TargetType="Ellipse">
-                                            <Setter Property="Opacity" Value="0"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsDualSenseEdgeSelected}" Value="True">
-                                                    <Setter Property="Opacity" Value="0.42"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Ellipse.Style>
-                                    <Ellipse.Effect>
-                                        <BlurEffect Radius="54"/>
-                                    </Ellipse.Effect>
-                                </Ellipse>
-                                <TextBlock Margin="20,16" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                           FontSize="11" FontWeight="Bold" Foreground="#D8B4FE" Text="04 · EDGE PADDLES"/>
-                                <Border Margin="0,14,16,0" Padding="9,5" HorizontalAlignment="Right"
-                                        VerticalAlignment="Top" CornerRadius="10" Background="#D3A855F7">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Opacity" Value="0"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsDualSenseEdgeActive}" Value="True">
-                                                    <Setter Property="Opacity" Value="1"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <TextBlock FontSize="10" FontWeight="Black" Text="LIVE"/>
-                                </Border>
-                                <Image Grid.Row="0" Margin="40,34,40,-8" Style="{StaticResource HeroImage}"
-                                       Source="/Assets/Characters/kratos.png"/>
-                                <Border Grid.Row="1" Background="#D90B0D16" Padding="20,15" CornerRadius="0,0,24,24">
-                                    <StackPanel>
-                                        <TextBlock FontSize="22" FontWeight="Black" Text="PS5 EDGE"/>
-                                        <TextBlock Margin="0,2,0,0" FontSize="12" FontWeight="Bold" Foreground="#C084FC"
-                                                   Text="DUALSENSE EDGE · L4/R4"/>
-                                        <TextBlock Margin="0,8,0,0" FontSize="11" Foreground="#AEB7CC"
-                                                   Text="背键直通 · 054C:0DF2 · 普通反馈"/>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </Border>
-                    </Button>
-                </Grid>
-
-                <Border Grid.Row="3" Margin="10,25,10,18" Padding="24,17" CornerRadius="22"
-                        Background="#B90B1021" BorderBrush="#334562" BorderThickness="1">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock Style="{StaticResource SectionLabel}" Text="PLAYER LINK"/>
-                            <TextBlock Margin="0,5,0,0" FontSize="15" FontWeight="Bold" Text="{Binding BleStateText}"/>
-                            <TextBlock Margin="0,4,0,0" Height="17" FontSize="11" Foreground="#8390AE" Text="{Binding InputStatus}"
-                                       TextTrimming="CharacterEllipsis"/>
-                            <StackPanel Margin="0,10,0,0" Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock VerticalAlignment="Center" Style="{StaticResource SectionLabel}"
-                                           Text="震动倍率"/>
-                                <Slider Width="150" Margin="12,0,10,0"
-                                        Minimum="0" Maximum="3"
-                                        TickFrequency="0.1"
-                                        IsSnapToTickEnabled="True"
-                                        automation:AutomationProperties.Name="震动倍率"
-                                        Value="{Binding RumbleMultiplier, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                        ToolTip="三种模式统一倍率。超过 Pro2 最大振幅时自动按最大值输出。"/>
-                                <Border MinWidth="48" Padding="8,4" CornerRadius="8"
-                                        Background="#243452" BorderBrush="#4D6A98" BorderThickness="1">
-                                    <TextBlock HorizontalAlignment="Center" FontWeight="Bold"
-                                               Foreground="#D9ECFF" Text="{Binding RumbleMultiplierText}"/>
-                                </Border>
-                            </StackPanel>
-                            <StackPanel Margin="0,8,0,0" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
-                                <TextBlock VerticalAlignment="Center" Style="{StaticResource SectionLabel}"
-                                           Text="PS5 Gyro倍率"/>
-                                <Slider Width="150" Margin="12,0,10,0"
-                                        Minimum="0.1" Maximum="4"
-                                        TickFrequency="0.1"
-                                        IsSnapToTickEnabled="True"
-                                        automation:AutomationProperties.Name="PS5 陀螺仪倍率"
-                                        Value="{Binding Ps5GyroScale, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                        ToolTip="只影响 PS5 / DualSense 输出。默认 1.0；若 90° 积分只有 45° 可试 2.0，若约 180° 可试 0.5。"/>
-                                <Border MinWidth="48" Padding="8,4" CornerRadius="8"
-                                        Background="#243452" BorderBrush="#4D6A98" BorderThickness="1">
-                                    <TextBlock HorizontalAlignment="Center" FontWeight="Bold"
-                                               Foreground="#D9ECFF" Text="{Binding Ps5GyroScaleText}"/>
-                                </Border>
-                            </StackPanel>
-                            <Grid Margin="0,10,0,0" MaxWidth="520">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="150"/>
-                                    <ColumnDefinition Width="18"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="220"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" VerticalAlignment="Center" Style="{StaticResource SectionLabel}"
-                                           Text="Push Hz"/>
-                                <ComboBox Grid.Column="1" Margin="10,0,0,0"
-                                          Style="{StaticResource DarkComboBox}"
-                                          ItemsSource="{Binding PushRateChoices}"
-                                          SelectedItem="{Binding SelectedPushRate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                          IsEnabled="{Binding CanOperate}"
-                                          ToolTip="默认跟随真实 Pro2 BLE 通知节奏。固定 66/125/250Hz 仅用于诊断，不建议日常使用。"/>
-                                <TextBlock Grid.Column="3" VerticalAlignment="Center" Style="{StaticResource SectionLabel}"
-                                           Text="Stick"/>
-                                <ComboBox Grid.Column="4" Margin="10,0,0,0"
-                                          Style="{StaticResource DarkComboBox}"
-                                          ItemsSource="{Binding StickProcessingChoices}"
-                                          SelectedItem="{Binding SelectedStickProcessing, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                          IsEnabled="{Binding CanOperate}"
-                                          ToolTip="Raw Direct 推荐：摇杆原始值直通。Stability Guard 只用于怀疑坏轴时诊断。"/>
-                             </Grid>
-                            <TextBlock Margin="0,5,0,0"
-                                       MaxWidth="760"
-                                       Foreground="#89A7CF"
-                                       FontSize="11"
-                                       Text="V6.2.32 Test r2：修复完整行程采样被后台配置刷新中止的问题；增加倒计时和明确完成提示。"/>
-                            <StackPanel Margin="0,8,0,0"
-                                        Orientation="Horizontal"
-                                        VerticalAlignment="Center"
-                                        Visibility="Collapsed">
-                                <TextBlock VerticalAlignment="Center" Style="{StaticResource SectionLabel}"
-                                           Text="IMU Lab"/>
-                                <Button Margin="12,0,0,0"
-                                        MinWidth="166"
-                                        Padding="10,5"
-                                        Style="{StaticResource ConsoleButton}"
-                                        Content="PS5 专业IMU测试"
-                                        Command="{Binding StartDualSenseProfessionalImuCommand}"
-                                        IsEnabled="{Binding CanOperate}"
-                                        ToolTip="启动 DualSense haptic identity，使用 raw/g/dps/DualSense raw 专业 IMU 管线并导出 CSV。"/>
-                                <Button Margin="10,0,0,0"
-                                        MinWidth="172"
-                                        Padding="10,5"
-                                        Style="{StaticResource ConsoleButton}"
-                                        Content="Xbox 专业IMU诊断"
-                                        Command="{Binding StartXboxProfessionalImuCommand}"
-                                        IsEnabled="{Binding CanOperate}"
-                                        ToolTip="启动 XInput 测试 profile；默认不把 gyro 注入右摇杆，只记录专业 IMU CSV/日志。"/>
-                            </StackPanel>
-                            <Border Margin="0,8,0,0"
-                                    Padding="10,8"
-                                    MaxWidth="760"
-                                    CornerRadius="12"
-                                    Background="#162033"
-                                    BorderBrush="#31415F"
-                                    BorderThickness="1"
-                                    Visibility="Collapsed">
-                                <StackPanel>
-                                    <TextBlock FontSize="11" FontWeight="Bold" Foreground="#FBBF24"
-                                               Text="{Binding ProfessionalBiasStatusText}"/>
-                                    <TextBlock Margin="0,6,0,0" FontSize="10" FontWeight="Bold" Foreground="#94A3B8"
-                                               Text="原始陀螺仪 raw"/>
-                                    <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="#C7D2FE"
-                                               Text="{Binding ProfessionalRawGyroText}"/>
-                                    <TextBlock Margin="0,6,0,0" FontSize="10" FontWeight="Bold" Foreground="#94A3B8"
-                                               Text="校正后角速度 °/s · Preview"/>
-                                    <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#BAE6FD"
-                                               Text="{Binding ProfessionalCorrectedGyroText}"/>
-                                    <TextBlock Margin="0,6,0,0" FontSize="10" FontWeight="Bold" Foreground="#94A3B8"
-                                               Text="输出陀螺仪 °/s"/>
-                                    <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#FDE68A"
-                                               Text="{Binding ProfessionalOutputGyroText}"/>
-                                    <StackPanel Margin="0,6,0,0" Orientation="Horizontal">
-                                        <TextBlock VerticalAlignment="Center" FontSize="10" FontWeight="Bold" Foreground="#94A3B8"
-                                                   Text="输出方向反向"/>
-                                        <CheckBox Margin="10,0,0,0"
-                                                  Style="{StaticResource AxisCheckBox}"
-                                                  Content="Pitch / 俯仰"
-                                                  IsChecked="{Binding ProfessionalInvertGyroPitch, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  ToolTip="只影响 Professional IMU 输出层的临时反向；默认底层 ProjectGyro=+X,+Z,-Y。"/>
-                                        <CheckBox Style="{StaticResource AxisCheckBox}"
-                                                  Content="Yaw / 偏航"
-                                                  IsChecked="{Binding ProfessionalInvertGyroYaw, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  ToolTip="r7 默认开启：偏航方向反向输出。"/>
-                                        <CheckBox Style="{StaticResource AxisCheckBox}"
-                                                  Content="Roll / 横滚"
-                                                  IsChecked="{Binding ProfessionalInvertGyroRoll, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  ToolTip="r7 默认开启：横滚方向反向输出。"/>
-                                    </StackPanel>
-                                    <TextBlock Margin="0,2,0,0" FontSize="10" Foreground="#9CA3AF"
-                                               Text="{Binding ProfessionalGyroInversionSummary}"/>
-                                    <TextBlock Margin="0,6,0,0" FontSize="10" FontWeight="Bold" Foreground="#94A3B8"
-                                               Text="90°测试积分角度 °"/>
-                                    <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#C4B5FD"
-                                               Text="{Binding ProfessionalIntegratedAngleText}"/>
-                                    <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#A7F3D0"
-                                               Text="{Binding ProfessionalNinetyDegreeTestText}"/>
-                                    <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
-                                        <Button MinWidth="154"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Calibrate Gyro Bias 3s"
-                                                Command="{Binding CalibrateGyroBiasCommand}"
-                                                ToolTip="手柄静止 3 秒后提交固定 gyro raw bias；失败不会覆盖旧 bias。"/>
-                                        <Button Margin="8,0,0,0"
-                                                MinWidth="112"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Reset Bias"
-                                                Command="{Binding ResetGyroBiasCommand}"/>
-                                        <Button Margin="8,0,0,0"
-                                                MinWidth="112"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Reset Integral"
-                                                Command="{Binding ResetIntegralCommand}"/>
-                                    </StackPanel>
-                                    <StackPanel Margin="0,7,0,0" Orientation="Horizontal">
-                                        <Button MinWidth="128"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Start Pitch 90°"
-                                                Command="{Binding StartPitch90TestCommand}"/>
-                                        <Button Margin="8,0,0,0"
-                                                MinWidth="128"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Start Yaw 90°"
-                                                Command="{Binding StartYaw90TestCommand}"/>
-                                        <Button Margin="8,0,0,0"
-                                                MinWidth="128"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Start Roll 90°"
-                                                Command="{Binding StartRoll90TestCommand}"/>
-                                        <Button Margin="8,0,0,0"
-                                                MinWidth="112"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Stop 90° Test"
-                                                Command="{Binding Stop90TestCommand}"/>
-                                    </StackPanel>
-                                    <TextBlock Margin="0,10,0,0" FontSize="10" FontWeight="Bold" Foreground="#94A3B8"
-                                               Text="Final HID Report Audit"/>
-                                    <StackPanel Margin="0,5,0,0" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <ComboBox Width="214"
-                                                  ItemsSource="{Binding ProfessionalHidAuditModeChoices}"
-                                                  SelectedItem="{Binding SelectedProfessionalHidAuditMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                        <Button Margin="8,0,0,0"
-                                                MinWidth="136"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Pulse Gyro X +8192"
-                                                Command="{Binding PulseGyroXCommand}"/>
-                                        <Button Margin="8,0,0,0"
-                                                MinWidth="136"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Pulse Gyro Y +8192"
-                                                Command="{Binding PulseGyroYCommand}"/>
-                                        <Button Margin="8,0,0,0"
-                                                MinWidth="136"
-                                                Padding="8,5"
-                                                Style="{StaticResource ConsoleButton}"
-                                                Content="Pulse Gyro Z +8192"
-                                                Command="{Binding PulseGyroZCommand}"/>
-                                    </StackPanel>
-                                    <StackPanel Margin="0,6,0,0" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock VerticalAlignment="Center" FontSize="11" Foreground="#CBD5E1"
-                                                   Text="Static raw X"/>
-                                        <TextBox Margin="6,0,0,0" Width="70"
-                                                 Text="{Binding ProfessionalStaticGyroXRaw, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                        <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="11" Foreground="#CBD5E1"
-                                                   Text="Y"/>
-                                        <TextBox Margin="6,0,0,0" Width="70"
-                                                 Text="{Binding ProfessionalStaticGyroYRaw, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                        <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="11" Foreground="#CBD5E1"
-                                                   Text="Z"/>
-                                        <TextBox Margin="6,0,0,0" Width="70"
-                                                 Text="{Binding ProfessionalStaticGyroZRaw, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                    </StackPanel>
-                                    <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="#F9A8D4"
-                                               Text="{Binding ProfessionalHidAuditStatusText}"/>
-                                </StackPanel>
-                            </Border>
-                            <Grid Margin="0,8,0,0" MaxWidth="560">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="420"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" VerticalAlignment="Center" Style="{StaticResource SectionLabel}"
-                                           Text="Backend"/>
-                                <ComboBox Grid.Column="1" Margin="10,0,0,0"
-                                          Style="{StaticResource DarkComboBox}"
-                                          ItemsSource="{Binding BackendChoices}"
-                                          SelectedItem="{Binding SelectedBackend, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                          IsEnabled="{Binding CanOperate}"
-                                          ToolTip="V6.2 后端路线。默认 VIIPER server；libVIIPER/Embedded USBIP 是短链路实验档。"/>
-                            </Grid>
-                            <StackPanel Margin="0,8,0,0"
-                                        Orientation="Horizontal"
-                                        VerticalAlignment="Center">
-                                <CheckBox Style="{StaticResource AxisCheckBox}"
-                                          Content="PS5 音频保护"
-                                          IsChecked="{Binding AudioEndpointGuardEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                          ToolTip="开启后，PS5 模式会自动阻止 DualSense 成为默认播放、默认通信、默认麦克风。"/>
-                                <Button Margin="12,0,0,0"
-                                        MinWidth="128"
-                                        Padding="10,5"
-                                        Style="{StaticResource ConsoleButton}"
-                                        Content="修复音频默认"
-                                        Command="{Binding FixAudioDefaultsCommand}"
-                                        IsEnabled="{Binding CanOperate}"
-                                        ToolTip="立即检查 Windows 默认播放/通信/麦克风，并把 DualSense 默认项切回真实音频设备。"/>
-                            </StackPanel>
-                            <TextBlock Margin="0,4,0,0"
-                                       MaxWidth="760"
-                                       Foreground="#89A7CF"
-                                       FontSize="11"
-                                       Text="{Binding AudioEndpointGuardText}"/>
-                            <TextBlock Margin="0,6,0,0"
-                                       FontSize="10"
-                                       Foreground="#6F80A2"
-                                       Text="{Binding LinkTuningSummary}"/>
-                        </StackPanel>
-
-                        <Button Grid.Column="1" Margin="26,0"
-                                MinWidth="320"
-                                Style="{StaticResource EnterButton}"
-                                Command="{Binding ConnectPro2InputCommand}"
-                                IsEnabled="{Binding CanOperate}"
-                                automation:AutomationProperties.Name="连接 Pro2 BLE"
-                                Content="{Binding BleButtonText}"/>
-
-                        <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <TextBlock HorizontalAlignment="Right" Style="{StaticResource SectionLabel}" Text="MISSION STATUS"/>
-                            <TextBlock HorizontalAlignment="Right" Margin="0,5,0,0" FontSize="13" FontWeight="Bold"
-                                       Foreground="#E4EAFE" Text="{Binding SelectedModeLabel}"/>
-                            <TextBlock HorizontalAlignment="Right" Margin="0,4,0,0" Width="430" Height="42" FontSize="11"
-                                       Foreground="#8390AE" Text="{Binding Status}" TextWrapping="Wrap"
-                                       TextTrimming="CharacterEllipsis"/>
-                        </StackPanel>
-                    </Grid>
-                </Border>
-
-                <Expander Grid.Row="4"
-                          automation:AutomationProperties.Name="系统控制台"
-                          IsExpanded="False"
-                          Foreground="#E9EEFF">
-                    <Expander.Header>
-                        <Border Padding="15,10" CornerRadius="11" Background="#141C31" BorderBrush="#33415F" BorderThickness="1">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock FontWeight="Bold" Text="系统控制台"/>
-                                <TextBlock Margin="12,0,0,0" Foreground="#71809F"
-                                           Text="VIIPER · USBIP · BLE SCAN · DIAGNOSTICS"/>
-                            </StackPanel>
-                        </Border>
-                    </Expander.Header>
-                    <Border Margin="0,10,0,0" Padding="18" CornerRadius="16"
-                            Background="{StaticResource ConsoleBackground}"
-                            BorderBrush="#2B3855" BorderThickness="1">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="310"/>
-                                <ColumnDefinition Width="18"/>
-                                <ColumnDefinition Width="350"/>
-                                <ColumnDefinition Width="18"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource SectionLabel}" Text="VIIPER SERVER"/>
-                                <TextBlock Margin="0,9,0,3" Foreground="#A7B3CE" Text="Host"/>
-                                <TextBox Style="{StaticResource DarkTextBox}"
-                                         automation:AutomationProperties.Name="VIIPER Host"
-                                         Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}"
-                                         IsEnabled="{Binding CanManageRuntime}"/>
-                                <TextBlock Margin="0,9,0,3" Foreground="#A7B3CE" Text="Port"/>
-                                <TextBox Style="{StaticResource DarkTextBox}"
-                                         automation:AutomationProperties.Name="VIIPER Port"
-                                         Text="{Binding Port, UpdateSourceTrigger=PropertyChanged}"
-                                         IsEnabled="{Binding CanManageRuntime}"/>
-                                <WrapPanel Margin="0,12,0,0">
-                                    <Button Style="{StaticResource ConsoleButton}"
-                                            Content="安装/修复 USBIP"
-                                            Command="{Binding InstallUsbipCommand}"
-                                            IsEnabled="{Binding CanManageRuntime}"/>
-                                    <Button Style="{StaticResource ConsoleButton}"
-                                            Content="启动本地 VIIPER"
-                                            automation:AutomationProperties.Name="启动本地 VIIPER"
-                                            Command="{Binding StartViiperServerCommand}"
-                                            IsEnabled="{Binding CanManageRuntime}"/>
-                                    <Button Style="{StaticResource ConsoleButton}"
-                                            Content="Ping VIIPER"
-                                            automation:AutomationProperties.Name="Ping VIIPER"
-                                            Command="{Binding PingCommand}"
-                                            IsEnabled="{Binding CanOperate}"/>
-                                </WrapPanel>
-                            </StackPanel>
-
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Style="{StaticResource SectionLabel}" Text="PRO2 BLE CONTROL"/>
-                                <TextBlock Margin="0,9,0,12" Foreground="#A7B3CE" Text="{Binding InputStatus}" TextWrapping="Wrap"/>
-                                <WrapPanel>
-                                    <Button Style="{StaticResource ConsoleButton}"
-                                            Content="扫描 Pro2 BLE"
-                                            automation:AutomationProperties.Name="扫描 Pro2 BLE"
-                                            Command="{Binding ScanPro2InputCommand}"
-                                            IsEnabled="{Binding CanManualBleControl}"/>
-                                    <Button Style="{StaticResource ConsoleButton}"
-                                            Content="启动自动连接"
-                                            Command="{Binding ConnectPro2InputCommand}"
-                                            IsEnabled="{Binding CanOperate}"/>
-                                    <Button Style="{StaticResource ConsoleButton}"
-                                            Content="停止自动重连并断开"
-                                            automation:AutomationProperties.Name="停止自动重连并断开"
-                                            Command="{Binding DisconnectPro2InputCommand}"
-                                            IsEnabled="{Binding CanOperate}"/>
-                                    <Button Style="{StaticResource ConsoleButton}"
-                                            Content="陀螺仪静置校准 3 秒"
-                                            automation:AutomationProperties.Name="校准真实 Pro2 陀螺仪零偏"
-                                            Command="{Binding CalibrateSourceGyroCommand}"
-                                            IsEnabled="{Binding CanOperate}"
-                                            ToolTip="手柄放在稳定平面后点击。只减去实测零偏，不使用死区或滤波。"/>
-                                </WrapPanel>
-                                <Border Margin="0,12,0,0" Padding="12" CornerRadius="10" Background="#111A2E" BorderBrush="#263655" BorderThickness="1">
-                                    <StackPanel>
-                                        <TextBlock Style="{StaticResource SectionLabel}" Text="4 PLAYER SLOT"/>
-                                        <TextBlock Margin="0,6,0,9"
-                                                   Foreground="#7D8DAD"
-                                                   FontSize="10"
-                                                   TextWrapping="Wrap"
-                                                   Text="四个正式模式均生效：新和联胜 PS5、PS5 Edge、Pro2 / Nintendo、Xbox。每个 Slot 独立连接、独立震动，并按真实手柄 BLE 地址保存摇杆校准。建议先做零位，再做完整行程。"/>
-                                        <ItemsControl ItemsSource="{Binding Pro2Slots}">
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Border Margin="0,0,0,8" Padding="10" CornerRadius="9" Background="#17213A">
-                                                        <StackPanel>
-                                                            <DockPanel>
-                                                                <CheckBox DockPanel.Dock="Left"
-                                                                          Foreground="#E4EAFE"
-                                                                          IsChecked="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                          Content="{Binding Headline}"/>
-                                                            </DockPanel>
-                                                            <TextBlock Margin="0,6,0,8"
-                                                                       Foreground="#8EA0C0"
-                                                                       FontSize="10"
-                                                                       TextWrapping="Wrap"
-                                                                       Text="{Binding Status}"/>
-                                                            <TextBlock Margin="0,0,0,8"
-                                                                       Foreground="#72D7B0"
-                                                                       FontSize="10"
-                                                                       TextWrapping="Wrap"
-                                                                       Text="{Binding StickCalibrationStatus}"/>
-                                                            <WrapPanel>
-                                                                <Button Style="{StaticResource ConsoleButton}"
-                                                                        MinWidth="58"
-                                                                        Padding="7,3"
-                                                                        Content="扫描"
-                                                                        Command="{Binding DataContext.ScanPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                        CommandParameter="{Binding}"
-                                                                        IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}"/>
-                                                                <Button Style="{StaticResource ConsoleButton}"
-                                                                        MinWidth="58"
-                                                                        Padding="7,3"
-                                                                        Content="连接"
-                                                                        Command="{Binding DataContext.ConnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                        CommandParameter="{Binding}"
-                                                                        IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}"/>
-                                                                <Button Style="{StaticResource ConsoleButton}"
-                                                                        MinWidth="58"
-                                                                        Padding="7,3"
-                                                                        Content="断开"
-                                                                        Command="{Binding DataContext.DisconnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                        CommandParameter="{Binding}"
-                                                                        IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}"/>
-                                                                <Button Style="{StaticResource ConsoleButton}"
-                                                                        MinWidth="82"
-                                                                        Padding="7,3"
-                                                                        Content="零位 2 秒"
-                                                                        ToolTip="完全松开左右摇杆并保持两秒。只校准中心，不修改端点。"
-                                                                        Command="{Binding DataContext.CalibrateStickCenterSlotCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                        CommandParameter="{Binding}"
-                                                                        IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}"/>
-                                                                <Button Style="{StaticResource ConsoleButton}"
-                                                                        MinWidth="108"
-                                                                        Padding="7,3"
-                                                                        Content="完整行程 8 秒"
-                                                                        ToolTip="先完成零位校准，再把左右摇杆贴着外圈各转满至少三圈。四轴八方向独立保存。"
-                                                                        Command="{Binding DataContext.CalibrateStickRangeSlotCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                        CommandParameter="{Binding}"
-                                                                        IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}"/>
-                                                            </WrapPanel>
-                                                        </StackPanel>
-                                                    </Border>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </StackPanel>
-                                </Border>
-                                <Border Margin="0,12,0,0" Padding="12" CornerRadius="10" Background="#171F35">
-                                    <StackPanel>
-                                        <TextBlock Foreground="#93A1BF" Text="{Binding Status}" TextWrapping="Wrap"/>
-                                        <TextBlock Margin="0,7,0,0" Foreground="#6F80A2" FontSize="10"
-                                                   Text="正常使用无需操作本区域。进入游戏后会持续扫描、自动连接，并在断联后自动恢复。"/>
-                                    </StackPanel>
-                                </Border>
-                            </StackPanel>
-
-                            <Grid Grid.Column="4">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="220"/>
-                                </Grid.RowDefinitions>
-                                <DockPanel>
-                                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource SectionLabel}" Text="LIVE DIAGNOSTICS"/>
-                                    <WrapPanel DockPanel.Dock="Right">
-                                        <Button Style="{StaticResource ConsoleButton}"
-                                                MinWidth="108" Padding="8,4"
-                                                Content="设备枚举"
-                                                Command="{Binding DumpControllerEnumerationCommand}"
-                                                IsEnabled="{Binding CanOperate}"
-                                                ToolTip="Dump VIIPER bus、usbip port 和 Windows PnP/HID 字段。"/>
-                                        <Button Style="{StaticResource ConsoleButton}"
-                                                MinWidth="128" Padding="8,4"
-                                                Content="清理残留虚拟"
-                                                Command="{Binding CleanupStaleVirtualDevicesCommand}"
-                                                IsEnabled="{Binding CanOperate}"
-                                                ToolTip="停止当前会话，先正常 detach USBIP，再清理本地 VIIPER device/bus。"/>
-                                        <Button Style="{StaticResource ConsoleButton}"
-                                                MinWidth="128" Padding="8,4"
-                                                Content="刷新 Steam 缓存"
-                                                Click="RefreshSteamControllerCache_Click"
-                                                IsEnabled="{Binding CanOperate}"
-                                                ToolTip="会先正常拔出虚拟手柄，再请求 Steam 正常退出并重新打开；不会强制结束 Steam。"/>
-                                        <Button Style="{StaticResource ConsoleButton}"
-                                                MinWidth="96" Padding="8,4"
-                                                Content="导出诊断"
-                                                Command="{Binding ExportDiagnosticsLogCommand}"
-                                                IsEnabled="{Binding CanOperate}"/>
-                                        <Button Style="{StaticResource ConsoleButton}"
-                                                MinWidth="70" Padding="8,4"
-                                                Content="清空"
-                                                Command="{Binding ClearLogCommand}"/>
-                                    </WrapPanel>
-                                </DockPanel>
-                                <TextBox Grid.Row="1"
-                                         Margin="0,9,0,0"
-                                         Style="{StaticResource DarkTextBox}"
-                                         automation:AutomationProperties.Name="实时日志"
-                                         Text="{Binding LogText, Mode=OneWay}"
-                                         FontFamily="Consolas"
-                                         FontSize="11"
-                                         IsReadOnly="True"
-                                         IsUndoEnabled="False"
-                                         TextWrapping="NoWrap"
-                                         VerticalScrollBarVisibility="Auto"
-                                         HorizontalScrollBarVisibility="Auto"/>
-                            </Grid>
-                        </Grid>
+                <Setter.Value><ControlTemplate TargetType="Button">
+                    <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="10"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
-                </Expander>
-            </Grid>
-        </ScrollViewer>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonBorder" Property="Opacity" Value="0.82"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#468872"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonBorder" Property="Opacity" Value="0.38"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#183D31"/>
+            <Setter Property="BorderBrush" Value="#183D31"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#E2E9E4"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="16"/>
+            <Setter Property="Padding" Value="24"/>
+            <Setter Property="Margin" Value="0,0,0,16"/>
+        </Style>
+        <Style x:Key="ModeCard" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="18,20"/>
+            <Setter Property="VerticalContentAlignment" Value="Top"/>
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Padding" Value="20,10"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Foreground" Value="#667870"/>
+            <Setter Property="Template">
+                <Setter.Value><ControlTemplate TargetType="TabItem">
+                    <Border x:Name="TabBorder" CornerRadius="8" Padding="{TemplateBinding Padding}" Background="Transparent">
+                        <ContentPresenter ContentSource="Header"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Foreground" Value="#183D31"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                            <Setter TargetName="TabBorder" Property="Background" Value="#E7EDE8"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="TabBorder" Property="BorderBrush" Value="#468872"/><Setter TargetName="TabBorder" Property="BorderThickness" Value="1"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,10,0,10"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="ComboBox"><Setter Property="Padding" Value="8"/><Setter Property="Margin" Value="0,6,0,12"/></Style>
+        <Style x:Key="NumberInput" TargetType="TextBox">
+            <Setter Property="Padding" Value="9,7"/><Setter Property="Margin" Value="0,7,12,0"/>
+            <Setter Property="BorderBrush" Value="#DFE7E2"/><Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="RearChoice" TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,0,8,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+                <Border x:Name="KeyBorder" CornerRadius="8" Background="#F6F8F7" BorderBrush="#DFE7E2" BorderThickness="1" Padding="8,9">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsChecked" Value="True"><Setter TargetName="KeyBorder" Property="Background" Value="#E4F0E8"/><Setter TargetName="KeyBorder" Property="BorderBrush" Value="#699980"/><Setter Property="Foreground" Value="#183D31"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="KeyBorder" Property="BorderBrush" Value="#699980"/></Trigger>
+                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="KeyBorder" Property="BorderBrush" Value="#183D31"/><Setter TargetName="KeyBorder" Property="BorderThickness" Value="2"/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+        <DataTemplate DataType="{x:Type local:RearButtonEditor}">
+            <Border Style="{StaticResource Card}" Padding="20" Margin="0">
+                <StackPanel>
+                    <DockPanel>
+                        <CheckBox Content="启用映射" IsChecked="{Binding Enabled}" DockPanel.Dock="Right" Margin="12,0,0,0"/>
+                        <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold"/>
+                    </DockPanel>
+                    <StackPanel Margin="0,16,0,0">
+                        <DockPanel>
+                            <ComboBox ItemsSource="{x:Static local:RearButtonEditor.Actions}" SelectedItem="{Binding Action}" Width="160" DockPanel.Dock="Right" Margin="12,0,0,12"/>
+                            <StackPanel VerticalAlignment="Center"><TextBlock Text="输出按键" FontWeight="SemiBold"/><TextBlock Text="{Binding MappingSummary}" Style="{StaticResource MutedText}" Margin="0,4,0,10"/></StackPanel>
+                        </DockPanel>
+                        <ItemsControl ItemsSource="{Binding Buttons}">
+                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="{Binding ActualWidth, RelativeSource={RelativeSource Self}, Converter={StaticResource RearColumns}}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate><DataTemplate>
+                                <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected}" Style="{StaticResource RearChoice}"/>
+                            </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <UniformGrid Columns="4" Margin="0,12,0,0">
+                            <StackPanel><TextBlock Text="延迟（ms）" Style="{StaticResource MutedText}"/>
+                                <TextBox Text="{Binding Delay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" ToolTip="0–30000ms"/></StackPanel>
+                            <StackPanel Visibility="{Binding IsTimed, Converter={StaticResource BoolVisibility}}"><TextBlock Text="按下时长（ms）" Style="{StaticResource MutedText}"/>
+                                <TextBox Text="{Binding Duration, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" ToolTip="30–30000ms"/></StackPanel>
+                            <StackPanel Visibility="{Binding IsRepeat, Converter={StaticResource BoolVisibility}}"><TextBlock Text="松开间隔（ms）" Style="{StaticResource MutedText}"/>
+                                <TextBox Text="{Binding Gap, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" ToolTip="30–30000ms"/></StackPanel>
+                            <StackPanel Visibility="{Binding IsRepeat, Converter={StaticResource BoolVisibility}}"><TextBlock Text="次数（0=按住）" Style="{StaticResource MutedText}"/>
+                                <TextBox Text="{Binding Count, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" ToolTip="0=按住持续连发；1–1000=最多次数"/></StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="{Binding BehaviorHint}" Style="{StaticResource MutedText}" Margin="0,10,0,0"/>
+                        <StackPanel Visibility="{Binding IsSequence, Converter={StaticResource BoolVisibility}}" Margin="0,18,0,0">
+                            <TextBlock Text="后续按键" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="90"/><ColumnDefinition Width="90"/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="按键 1" Style="{StaticResource MutedText}"/>
+                                <TextBlock Grid.Column="1" Text="组合按键 2" Style="{StaticResource MutedText}"/>
+                                <TextBlock Grid.Column="2" Text="延迟 ms" Style="{StaticResource MutedText}"/>
+                                <TextBlock Grid.Column="3" Text="时长 ms" Style="{StaticResource MutedText}"/>
+                            </Grid>
+                            <ItemsControl ItemsSource="{Binding Steps}">
+                                <ItemsControl.ItemTemplate><DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="90"/><ColumnDefinition Width="90"/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions>
+                                        <ComboBox ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedValuePath="Key" SelectedValue="{Binding First}" Margin="0,7,10,7"/>
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedValuePath="Key" SelectedValue="{Binding Second}" Margin="0,7,10,7"/>
+                                        <TextBox Grid.Column="2" Text="{Binding Delay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" Margin="0,7,10,7"/>
+                                        <TextBox Grid.Column="3" Text="{Binding Duration, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" Margin="0,7,10,7"/>
+                                        <Button Grid.Column="4" Content="×" Command="{Binding RemoveCommand}" Padding="9,4" Margin="0,7,0,7" ToolTip="删除"/>
+                                    </Grid>
+                                </DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Button Content="+ 添加按键" Command="{Binding AddStepCommand}" HorizontalAlignment="Left" Margin="0,10,0,0" ToolTip="最多16个后续按键"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+    <Grid Margin="28,22,28,16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid Margin="0,0,0,20">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Background="#183D31" CornerRadius="10" Width="36" Height="36" Margin="0,0,12,0">
+                    <TextBlock Text="P" Foreground="White" FontWeight="Bold" FontSize="21" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock Text="PRO2 手柄助手" FontWeight="SemiBold" FontSize="19" VerticalAlignment="Center"/>
+            </StackPanel>
+            <Border Grid.Column="1" CornerRadius="16" Background="#E7EDE8" Padding="13,7" VerticalAlignment="Center">
+                <TextBlock Text="{Binding CompactStateText}" FontSize="12" Foreground="#315847"/>
+            </Border>
+        </Grid>
+        <TabControl x:Name="MainTabs" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="0,18,0,0">
+            <TabItem Header="手柄" AutomationProperties.Name="手柄">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <ScrollViewer x:Name="HomeScrollViewer" Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,0,4,0">
+                        <Border>
+                            <Border.Style><Style TargetType="Border" BasedOn="{StaticResource Card}"><Style.Triggers>
+                                <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Padding" Value="16"/><Setter Property="Margin" Value="0,0,0,12"/></DataTrigger>
+                                <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Padding" Value="16"/><Setter Property="Margin" Value="0,0,0,12"/></DataTrigger>
+                            </Style.Triggers></Style></Border.Style>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
+                                    <TextBlock Text="PURE SOFTWARE / 纯软件连接" FontSize="10" Foreground="#789180" Margin="0,0,0,10">
+                                        <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                            <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                        </Style.Triggers></Style></TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock x:Name="BleConnectionTitleText" Text="{Binding BleConnectionTitle}" FontSize="25" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="BleConnectionHintText" Text="{Binding BleConnectionHint}" Foreground="{StaticResource Muted}" Margin="0,12,0,0" LineHeight="21"/>
+                                </StackPanel>
+                                <local:Pro2Illustration Grid.Column="1" Width="160" VerticalAlignment="Center">
+                                    <local:Pro2Illustration.Style><Style TargetType="local:Pro2Illustration"><Setter Property="Height" Value="112"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Height" Value="64"/></DataTrigger>
+                                            <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Height" Value="64"/></DataTrigger>
+                                        </Style.Triggers>
+                                    </Style></local:Pro2Illustration.Style>
+                                </local:Pro2Illustration>
+                            </Grid>
+                        </Border>
+                        <Grid Margin="0,0,0,18">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="真实 FD2 输入" Style="{StaticResource MutedText}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,5,0,0"><TextBlock Text="{Binding CompactInputRate}" FontSize="26" FontWeight="SemiBold"/><TextBlock Text=" Hz" Foreground="{StaticResource Muted}" VerticalAlignment="Bottom" Margin="0,0,0,4"/></StackPanel>
+                                <TextBlock Text="{Binding BleStabilitySummary}" ToolTip="{Binding BleOptimizationSummary}" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,3,8,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" ToolTip="{Binding CompactBatteryHint}" Margin="0,0,12,0">
+                                <TextBlock Text="手柄电量" Style="{StaticResource MutedText}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,9,0,0" VerticalAlignment="Center">
+                                    <Border BorderBrush="#90A99A" BorderThickness="1.2" CornerRadius="4" Padding="3" VerticalAlignment="Center">
+                                        <ItemsControl ItemsSource="{Binding CompactBatteryVisual.Segments}" AutomationProperties.Name="九格电量（连接时读取）">
+                                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate><DataTemplate><Border Width="6" Height="15" CornerRadius="1.5" Background="{Binding Fill}" Margin="0,0,2,0"/></DataTemplate></ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Border>
+                                    <Border Width="3" Height="9" CornerRadius="0,2,2,0" Background="#90A99A" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Text="{Binding CompactBatteryVisual.Level}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding CompactBatteryVisual.Caption}" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,6,0,0"/>
+                                <TextBlock Text="{Binding CompactBatteryVisual.Charge}" FontSize="11" Foreground="#40866A"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="手柄信息" Style="{StaticResource MutedText}"/>
+                                <DockPanel Margin="0,8,0,0" ToolTip="{Binding CompactFirmwareHint}"><TextBlock Text="固件" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/><TextBlock Text="{Binding CompactFirmware}" FontWeight="SemiBold"/></DockPanel>
+                                <DockPanel Margin="0,6,0,0" ToolTip="仅显示实体耳机孔的插入状态，音频传输尚未启用"><TextBlock Text="耳机孔" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/><TextBlock Text="{Binding CompactHeadset}" FontWeight="SemiBold"/></DockPanel>
+                            </StackPanel>
+                        </Grid>
+                        <Border x:Name="LowRateNotice" Visibility="{Binding HasLowRateWarning, Converter={StaticResource BoolVisibility}}"
+                                Background="#FFF9ED" BorderBrush="#E9D7AF" BorderThickness="1" CornerRadius="12" Padding="10" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="{Binding LowRateTitle}" Foreground="#765C24" FontSize="13" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="BleOptimizationSummaryText" Text="{Binding BleOptimizationSummary}" Visibility="{Binding ShowBleOptimizationSummary, Converter={StaticResource BoolVisibility}}"
+                                           Foreground="#765C24" FontSize="12" Margin="0,4,0,0"/>
+                                <TextBlock Text="{Binding LowRateMeasuredSummary}" Foreground="#765C24" FontSize="12" Margin="0,4,0,0"/>
+                                <TextBlock Text="{Binding LowRateEnvironmentSummary}" Foreground="#806C43" FontSize="11" Margin="0,3,0,0"
+                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding EnvironmentHomeSummaryHint}"/>
+                                <TextBlock Text="{Binding LowRateSummary}" Foreground="#806C43" FontSize="12" Margin="0,5,0,0"/>
+                                <Expander Header="原因待定位 · 依据、建议与导出" FontSize="12" Foreground="#806C43" Margin="0,6,0,0">
+                                    <StackPanel Margin="0,8,0,0">
+                                        <TextBlock Text="{Binding LowRateAdvice}" Foreground="#806C43" FontSize="12"/>
+                                        <WrapPanel Margin="0,8,0,0">
+                                            <Button Content="复制诊断" Click="CopyLowRateDiagnosis_Click" Padding="10,5" Margin="0,0,8,4" FontSize="12"/>
+                                            <Button Content="信息 / 导出…" Click="EnvironmentInfo_Click" Padding="10,5" Margin="0,0,8,4" FontSize="12"/>
+                                            <Button x:Name="BleAutoOptimizeButton" Content="自动优化蓝牙…" Click="TryWin11Compatibility_Click" Padding="10,5" Margin="0,0,8,4" FontSize="12"
+                                                    IsEnabled="{Binding CanTryWin11Compatibility}" Visibility="{Binding ShowWin11CompatibilityAction, Converter={StaticResource BoolVisibility}}"/>
+                                        </WrapPanel>
+                                        <TextBox Text="{Binding LowRateEvidence, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Height="140"
+                                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,8,0,0"
+                                                 BorderThickness="0" Background="Transparent" FontSize="11"/>
+                                    </StackPanel>
+                                </Expander>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="以哪种手柄身份游玩？" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                        <Grid IsEnabled="{Binding CanOperate}">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <Button Command="{Binding SelectCompactModeCommand}" CommandParameter="Pro2" AutomationProperties.Name="Steam / Pro2 模式">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsPro2Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                <StackPanel><TextBlock Text="Steam / Pro2" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="Steam Input · 陀螺仪" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
+                            </Button>
+                            <Button Grid.Column="1" Command="{Binding SelectCompactModeCommand}" CommandParameter="Pro1" AutomationProperties.Name="Pro1 模式">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsPro1Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                <StackPanel><TextBlock Text="Pro1" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="经典兼容 · 软件背键" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
+                            </Button>
+                            <Button Grid.Column="2" Command="{Binding SelectCompactModeCommand}" CommandParameter="Xbox" AutomationProperties.Name="Xbox 模式">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsXboxSelected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                <StackPanel><TextBlock Text="Xbox" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="广泛兼容 · 普通震动" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
+                            </Button>
+                            <Button Grid.Column="3" Command="{Binding SelectCompactModeCommand}" CommandParameter="PS5" Margin="0,0,0,8" AutomationProperties.Name="PS5 模式">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding CompactPs5Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                <StackPanel><TextBlock Text="PS5" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="触觉转换 · 陀螺仪" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+                        <StackPanel Grid.Row="1" Margin="0,14,0,0">
+                        <WrapPanel>
+                            <Button Content="{Binding CompactConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding CompactCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
+                            <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}"/>
+                            <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding CompactCanStop}"/>
+                            <Button x:Name="Win10BleOptimizeButton" Content="优化蓝牙 · Win10" Click="ToggleWin10BleHomePanel_Click"
+                                    IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10BleHomeAction, Converter={StaticResource BoolVisibility}}"
+                                    ToolTip="选择 7.5ms 参数并授权测试"/>
+                            <Button Content="取消操作" Command="{Binding CancelConnectionCommand}" Visibility="{Binding Busy, Converter={StaticResource BoolVisibility}}"/>
+                        </WrapPanel>
+                        <Border x:Name="Win10BleHomePanel" Visibility="{Binding ShowWin10BleHomePanel, Converter={StaticResource BoolVisibility}}"
+                                Background="White" BorderBrush="#DFE7E2" BorderThickness="1" CornerRadius="10" Padding="14,12" Margin="0,4,4,0">
+                            <StackPanel IsEnabled="{Binding CanOperate}">
+                                <TextBlock Text="Win10 蓝牙优化" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                <TextBlock Text="{Binding Win10BleHomeHint}" Style="{StaticResource MutedText}" Margin="0,0,0,8"/>
+                                <WrapPanel>
+                                    <ComboBox x:Name="Win10BlePresetComboBox" Width="145" ItemsSource="{Binding Win10BlePresetOptions}" SelectedItem="{Binding SelectedWin10BlePreset}"
+                                              DisplayMemberPath="Title" Margin="0,0,8,0" IsEnabled="{Binding CanConfigureWin10Stack}"
+                                              ToolTip="固定 7.5ms 优先；其他两组用于兼容尝试"/>
+                                    <Button x:Name="Win10BleConfigureButton" Content="授权并测试" Click="ConfigureBleTurbo_Click" Margin="0,0,8,0" Padding="14,7"
+                                            IsEnabled="{Binding CanConfigureWin10Stack}" ToolTip="{Binding Win10BlePresetSafetyNote}"/>
+                                    <Button x:Name="BleRestoreParametersButton" Content="恢复原参数" Click="RestoreBleTurbo_Click" Margin="0" Padding="14,7"/>
+                                </WrapPanel>
+                                <TextBlock Text="效果以真实输入为准；未提速时，可换预设或恢复原参数。" Style="{StaticResource MutedText}" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        </StackPanel>
+                        <TextBlock Grid.Row="2" Text="{Binding Status}" Style="{StaticResource MutedText}" Margin="0,5,0,8"/>
+                </Grid>
+            </TabItem>
+            <TabItem Header="震动" AutomationProperties.Name="震动">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,0,4,0">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <DockPanel><TextBlock Text="{Binding RumblePercentText}" DockPanel.Dock="Right" FontWeight="SemiBold"/><TextBlock Text="震动强度" FontSize="23" FontWeight="SemiBold"/></DockPanel>
+                                <Slider Minimum="0" Maximum="300" TickFrequency="10" IsSnapToTickEnabled="True"
+                                        Value="{Binding RumblePercent}" Margin="0,18,0,10" AutomationProperties.Name="震动强度"/>
+                                <TextBlock Text="当前反馈" Style="{StaticResource MutedText}" Margin="0,16,0,0"/>
+                                <TextBlock Text="{Binding CompactHapticSource}" FontSize="15" Margin="0,7,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <Button Content="修复默认音频设备" Command="{Binding FixAudioDefaultsCommand}" IsEnabled="{Binding CanOperate}" HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="背键 / C 键" AutomationProperties.Name="背键与 C 键设置">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <StackPanel Margin="0,0,0,16">
+                        <DockPanel>
+                            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                                <Button Content="停止动作" Command="{Binding CancelRearButtonsCommand}" Margin="12,0,0,0" ToolTip="停止背键与 C 键动作；松开后重新按下可再次使用"/>
+                                <Button Content="重置" Command="{Binding ResetRearButtonsCommand}" Margin="12,0,8,0"/>
+                                <Button Content="保存并应用" Style="{StaticResource Primary}" Command="{Binding ApplyRearButtonsCommand}" IsEnabled="{Binding CanOperate}" Margin="0" ToolTip="只保存当前配置；修改正在使用的映射会取消当前背键动作"/>
+                            </StackPanel>
+                            <ComboBox ItemsSource="{Binding RearModes}" SelectedItem="{Binding RearEditingMode}"
+                                      DockPanel.Dock="Right" Width="130" Margin="12,0,0,0" AutomationProperties.Name="背键配置模式" ToolTip="选择要编辑的配置；不会切换正在使用的手柄模式"/>
+                            <TextBlock Text="背键 / C 键" FontSize="23" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBlock Text="{Binding RearDraftStatus}" Style="{StaticResource MutedText}" Margin="0,0,16,0"/>
+                            <TextBlock Text="{Binding RearSettingsStatus}" Foreground="#183D31"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <ScrollViewer x:Name="RearSelectorsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel>
+                            <TextBlock Text="选择按键" Style="{StaticResource MutedText}" Margin="0,0,0,12"/>
+                            <ItemsControl x:Name="RearKeyList" ItemsSource="{Binding RearEditors}">
+                                <ItemsControl.ItemTemplate><DataTemplate>
+                                    <Button Command="{Binding DataContext.SelectRearButtonCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Padding="14,18" Margin="0,0,0,10">
+                                        <Button.Style><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Style.Triggers><DataTrigger Binding="{Binding IsSelected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers>
+                                        </Style></Button.Style>
+                                    <StackPanel>
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding MappingSummary}" Style="{StaticResource MutedText}" Margin="0,8,0,6"/>
+                                    <TextBlock Text="{Binding EnabledCaption}" Style="{StaticResource MutedText}"/>
+                                    </StackPanel></Button>
+                                </DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="无需连接即可配置" Style="{StaticResource MutedText}" Margin="4,6,0,0"/>
+                        </StackPanel>
+                        </ScrollViewer>
+                        <ScrollViewer x:Name="RearEditorScroll" Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <ContentControl Content="{Binding SelectedRearEditor}" HorizontalContentAlignment="Stretch" Margin="0,0,4,0"/>
+                        </ScrollViewer>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem Header="设置" AutomationProperties.Name="设置">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,0,4,0">
+                        <Border Style="{StaticResource Card}" Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="USBIP" FontWeight="SemiBold" FontSize="17" Margin="0,0,0,6"/>
+                                <TextBlock Text="{Binding UsbipLocationText}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding RuntimeReadinessText}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,4"/>
+                                <WrapPanel IsEnabled="{Binding CanManageRuntime}">
+                                    <Button x:Name="SelectUsbipPathButton" Content="选择 usbip.exe…" Click="SelectUsbipPath_Click"/>
+                                    <Button x:Name="ResetUsbipPathButton" Content="自动查找" Command="{Binding ResetUsbipPathCommand}"/>
+                                    <Button Content="安装 / 修复驱动" Command="{Binding InstallUsbipCommand}"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Padding="16">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,12">
+                                    <Button x:Name="SettingsEnvironmentInfoButton" Content="系统与蓝牙信息…" Click="EnvironmentInfo_Click" DockPanel.Dock="Right" Padding="12,6" Margin="0"/>
+                                    <TextBlock Text="设置" FontSize="23" FontWeight="SemiBold"/>
+                                </DockPanel>
+                                <WrapPanel>
+                                    <CheckBox Content="登录 Windows 时自动启动" IsChecked="{Binding LaunchAtLoginEnabled}" Margin="0,0,28,12"/>
+                                    <CheckBox Content="启动后自动进入上次使用的模式" IsChecked="{Binding AutoReconnectOnStartupEnabled}"/>
+                                </WrapPanel>
+                                <WrapPanel>
+                                    <CheckBox Content="保护电脑默认音频设备" IsChecked="{Binding AudioEndpointGuardEnabled}" Margin="0,0,28,0"/>
+                                    <CheckBox Content="定时更新电量" IsChecked="{Binding RuntimeBatteryRefreshEnabled}"
+                                              Margin="0,0,28,0" ToolTip="约每 2 分钟读取原生档位；异常时自动暂停更新以保护输入。"/>
+                                    <CheckBox x:Name="AutoOptimizeBleCheckBox" Content="低速时自动优化蓝牙" IsChecked="{Binding AutoOptimizeBle}" IsEnabled="{Binding CanChangeBleOptimizationSettings}"
+                                              ToolTip="Win11 在当前连接内自动尝试有限预设，跨适配器型号和驱动版本开放；Win10 全局参数必须单独确认和管理员授权，不会静默轮换。"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Padding="16">
+                            <StackPanel IsEnabled="{Binding CanOperate}">
+                                <TextBlock Text="校准与连接" FontWeight="SemiBold" FontSize="17" Margin="0,0,0,8"/>
+                                <WrapPanel>
+                                    <Button Content="摇杆零位校准" Command="{Binding CalibrateStickCenterSlotCommand}" CommandParameter="1"/>
+                                    <Button Content="摇杆行程校准" Command="{Binding CalibrateStickRangeSlotCommand}" CommandParameter="1"/>
+                                    <Button Content="陀螺仪校准" Command="{Binding CalibrateSourceGyroCommand}"/>
+                                    <Button Content="断开真实手柄" Command="{Binding DisconnectPro2InputCommand}"/>
+                                </WrapPanel>
+                                <TextBlock Text="零位：松开摇杆2秒 · 行程：沿外圈转动8秒 · 陀螺仪：静置3秒" Style="{StaticResource MutedText}"/>
+                                <Expander Header="更多手柄 · Steam / Xbox" Margin="0,16,0,0">
+                                    <ItemsControl ItemsSource="{Binding Pro2Slots}">
+                                        <ItemsControl.ItemTemplate><DataTemplate>
+                                            <StackPanel Margin="0,12,0,8">
+                                                <DockPanel>
+                                                    <CheckBox Content="{Binding Name}" IsChecked="{Binding Enabled}" DockPanel.Dock="Left" Margin="0,0,16,0"/>
+                                                    <TextBlock Text="{Binding Status}" Style="{StaticResource MutedText}"/>
+                                                </DockPanel>
+                                                <WrapPanel Margin="0,6,0,0">
+                                                    <Button Content="连接" Command="{Binding DataContext.ConnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Index}"/>
+                                                    <Button Content="断开" Command="{Binding DataContext.DisconnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Index}"/>
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </DataTemplate></ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Expander>
+                            </StackPanel>
+                        </Border>
+                        <Expander Header="高级设置与诊断" IsExpanded="{Binding ShowDiagnostics}" Padding="0,4">
+                            <StackPanel>
+                                <Border Style="{StaticResource Card}" Margin="0,12,0,12">
+                                    <StackPanel>
+                                        <TextBlock Text="连接信息" FontWeight="SemiBold" FontSize="17" Margin="0,0,0,14"/>
+                                        <TextBlock Text="{Binding CompatibilityTitle}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding CompatibilityGuidance}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,12"/>
+                                        <TextBlock Text="最小化后仍在托盘运行；窗口刷新不会影响手柄输入。" Style="{StaticResource MutedText}" Margin="0,0,0,12"/>
+                                        <TextBlock Text="{Binding CompactActualMode}"/>
+                                        <TextBlock Text="{Binding InputStatus}" Style="{StaticResource MutedText}" Margin="0,8,0,8"/>
+                                        <WrapPanel>
+                                            <TextBlock Text="Raw: " Foreground="{StaticResource Muted}"/><TextBlock Text="{Binding CompactRawRate}" Margin="0,0,20,0"/>
+                                            <TextBlock Text="Parsed: " Foreground="{StaticResource Muted}"/><TextBlock Text="{Binding CompactParsedRate}" Margin="0,0,20,0"/>
+                                            <TextBlock Text="最新输入年龄: " Foreground="{StaticResource Muted}"/><TextBlock Text="{Binding CompactInputAge}"/>
+                                        </WrapPanel>
+                                        <TextBlock Text="摇杆处理" Margin="0,18,0,0"/>
+                                        <ComboBox ItemsSource="{Binding StickProcessingChoices}" SelectedItem="{Binding SelectedStickProcessing}" IsEnabled="{Binding CanOperate}"/>
+                                        <TextBlock Text="PS5 陀螺仪倍率"/>
+                                        <Slider Minimum="0.1" Maximum="3" Value="{Binding Ps5GyroScale}" Margin="0,12,0,8"/>
+                                        <TextBlock Text="{Binding Ps5GyroScaleText}" Style="{StaticResource MutedText}"/>
+                                        <WrapPanel IsEnabled="{Binding CanOperate}">
+                                            <Button Content="导出诊断包" Command="{Binding ExportDiagnosticsLogCommand}"/>
+                                            <Button Content="BLE 实测 15 秒" Command="{Binding RunWin10BleDiagnosticCommand}"/>
+                                            <Button Content="清理残留虚拟设备" Command="{Binding CleanupStaleVirtualDevicesCommand}"/>
+                                            <Button Content="修复 USBIP 驱动" Command="{Binding InstallUsbipCommand}"/>
+                                            <Button Content="刷新 Steam 缓存" Click="RefreshSteamControllerCache_Click"/>
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <DockPanel><Button Content="清空显示" DockPanel.Dock="Right" Command="{Binding ClearLogCommand}"/><TextBlock Text="会话日志" FontWeight="SemiBold" VerticalAlignment="Center"/></DockPanel>
+                                        <TextBox Text="{Binding LogText, Mode=OneWay}" IsReadOnly="True" Height="180" FontFamily="Consolas" FontSize="11"
+                                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#F5F7F6" BorderThickness="0" Padding="12"/>
+                                        <TextBlock Text="界面日志每秒最多刷新一次；文件日志在后台异步保存。" Style="{StaticResource MutedText}" Margin="0,10,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+        <DockPanel Grid.Row="2" Margin="0,18,0,0">
+            <Button x:Name="FooterEnvironmentInfoButton" DockPanel.Dock="Right" Click="EnvironmentInfo_Click" Padding="5,2" Margin="0"
+                    Background="Transparent" BorderBrush="Transparent" FontSize="12" Foreground="{StaticResource Muted}"
+                    ToolTip="点击查看系统版本、蓝牙适配器、驱动和当前输入状态">
+                <TextBlock Text="{Binding CompactSystemText}"/>
+            </Button>
+            <TextBlock Text="纯软件 · 无需外置接收器" Style="{StaticResource MutedText}"/>
+        </DockPanel>
     </Grid>
 </Window>
-
-

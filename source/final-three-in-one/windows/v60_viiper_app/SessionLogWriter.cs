@@ -1,119 +1,98 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace Y700Switch2V60Viiper;
 
+// Non-blocking producers, one bounded file worker. Never deletes previous logs.
 public sealed class SessionLogWriter : IAsyncDisposable
 {
     private const long MaxPersistentLogBytes = 8L * 1024L * 1024L;
-    private readonly object sync = new();
-    private long bytesWritten;
-    private bool limitNoticeWritten;
+    private readonly Channel<string> pending;
+    private readonly Task worker;
+    private long dropped;
+    private string? lastError;
 
-    public SessionLogWriter()
+    public SessionLogWriter(string? directory = null, int capacity = 2048)
     {
-        string directory = Path.Combine(
+        directory ??= Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "PRO2WirelessReceiverControlBoard",
-            "v6_logs");
+            "PRO2WirelessReceiverControlBoard", "v6_logs");
         Directory.CreateDirectory(directory);
-        CleanupPreviousLogs(directory);
-        FilePath = Path.Combine(
-            directory,
-            "manager_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log");
-        using FileStream file = new(
-            FilePath,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.ReadWrite);
+        FilePath = Path.Combine(directory,
+            "manager_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + "_" +
+            Guid.NewGuid().ToString("N")[..8] + ".log");
+        pending = Channel.CreateBounded<string>(new BoundedChannelOptions(capacity)
+        {
+            SingleReader = true, SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait,
+            AllowSynchronousContinuations = false
+        });
+        worker = Task.Run(WriteLoopAsync);
     }
 
     public string FilePath { get; }
-
     public static long MaxLogBytes => MaxPersistentLogBytes;
+    public long DroppedCount => Interlocked.Read(ref dropped);
+    public string? LastError => Volatile.Read(ref lastError);
 
     public void Write(string text)
     {
-        if (string.IsNullOrEmpty(text))
-        {
-            return;
-        }
-
-        lock (sync)
-        {
-            if (bytesWritten >= MaxPersistentLogBytes)
-            {
-                WriteLimitNoticeIfNeeded();
-                return;
-            }
-
-            byte[] bytes = Encoding.UTF8.GetBytes(text);
-            if (bytesWritten + bytes.Length > MaxPersistentLogBytes)
-            {
-                WriteLimitNoticeIfNeeded();
-                bytesWritten = MaxPersistentLogBytes;
-                return;
-            }
-
-            File.AppendAllText(
-                FilePath,
-                text,
-                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            bytesWritten += bytes.Length;
-        }
+        if (!string.IsNullOrEmpty(text) && !pending.Writer.TryWrite(text))
+            Interlocked.Increment(ref dropped);
     }
 
     public async ValueTask DisposeAsync()
     {
-        await Task.CompletedTask;
+        pending.Writer.TryComplete();
+        await worker.ConfigureAwait(false);
     }
 
-    private void WriteLimitNoticeIfNeeded()
+    private async Task WriteLoopAsync()
     {
-        if (limitNoticeWritten)
+        try
         {
-            return;
-        }
-
-        limitNoticeWritten = true;
-        string notice =
-            Environment.NewLine +
-            "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] " +
-            "[LOG_LIMIT] persistent session log reached " +
-            MaxPersistentLogBytes / 1024 / 1024 +
-            " MB; further file logging is muted for this run. Use 导出诊断 only when needed." +
-            Environment.NewLine;
-        File.AppendAllText(
-            FilePath,
-            notice,
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-    }
-
-    private static void CleanupPreviousLogs(string directory)
-    {
-        string[] patterns =
-        [
-            "manager_*.log",
-            "viiper_server_*.log",
-            "startup_guard_*.log",
-            "diagnostics_v6*.log",
-            "professional_imu_*.csv"
-        ];
-        foreach (string pattern in patterns)
-        {
-            foreach (string path in Directory.EnumerateFiles(directory, pattern))
+            await using var file = new FileStream(FilePath, FileMode.CreateNew,
+                FileAccess.Write, FileShare.ReadWrite, 65536, useAsync: true);
+            await using var writer = new StreamWriter(file, new UTF8Encoding(false), 16384);
+            long bytesWritten = 0;
+            bool limitWritten = false;
+            long notedDrops = 0;
+            await foreach (string text in pending.Reader.ReadAllAsync().ConfigureAwait(false))
             {
-                try
+                if (bytesWritten + Encoding.UTF8.GetByteCount(text) + 128 > MaxPersistentLogBytes)
                 {
-                    File.Delete(path);
+                    if (!limitWritten)
+                    {
+                        await writer.WriteLineAsync("[LOG_LIMIT] 8 MB limit reached; further logging muted.");
+                        limitWritten = true;
+                    }
+                    continue;
                 }
-                catch
+                if (limitWritten) continue;
+                await writer.WriteAsync(text);
+                bytesWritten += Encoding.UTF8.GetByteCount(text);
+                long count = DroppedCount;
+                if (count > notedDrops)
                 {
-                    // Best effort: a stale VIIPER process may still hold its log.
+                    string notice = "[LOG_DROPPED] bounded queue overflow count=" + count;
+                    await writer.WriteLineAsync(notice);
+                    bytesWritten += Encoding.UTF8.GetByteCount(notice + Environment.NewLine);
+                    notedDrops = count;
                 }
+                if (pending.Reader.Count == 0)
+                    await writer.FlushAsync();
             }
+            if (DroppedCount > notedDrops)
+                await writer.WriteLineAsync("[LOG_DROPPED] bounded queue overflow count=" + DroppedCount);
+        }
+        catch (Exception ex)
+        {
+            Volatile.Write(ref lastError, ex.Message);
+            pending.Writer.TryComplete(ex);
         }
     }
 }

@@ -80,7 +80,10 @@ public static class StartupProcessGuard
 
     private static bool IsConflictingManager(string processName)
     {
-        if (processName.Equals("Y700Switch2V60Viiper", StringComparison.OrdinalIgnoreCase))
+        if (processName.Equals("Y700Switch2V60Viiper", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("XinHeLianShengPro2Bridge", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("PRO2ControllerAssistant", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("PRO2手柄助手", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }

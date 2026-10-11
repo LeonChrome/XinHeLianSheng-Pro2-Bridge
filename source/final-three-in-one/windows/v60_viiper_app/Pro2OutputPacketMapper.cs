@@ -29,6 +29,8 @@ public static class Pro2OutputPacketMapper
         {
             case ViiperVirtualMode.Pro2:
                 return TryMapNs2Pro(feedback, out packet, out reason);
+            case ViiperVirtualMode.Pro1:
+                return Switch1RumbleConverter.TryMap(feedback, out packet, out reason);
             case ViiperVirtualMode.Xbox:
             case ViiperVirtualMode.XboxProfessionalImuTest:
                 if (feedback.Length < 2)
@@ -46,14 +48,6 @@ public static class Pro2OutputPacketMapper
                     return false;
                 }
                 packet = BuildOrdinaryPacket(feedback[0], feedback[1], "dualsense-ordinary");
-                return true;
-            case ViiperVirtualMode.DualSenseEdge:
-                if (feedback.Length < 2)
-                {
-                    reason = "dualsense edge feedback too short";
-                    return false;
-                }
-                packet = BuildOrdinaryPacket(feedback[0], feedback[1], "dualsense-edge-ordinary");
                 return true;
             default:
                 reason = "unsupported profile";

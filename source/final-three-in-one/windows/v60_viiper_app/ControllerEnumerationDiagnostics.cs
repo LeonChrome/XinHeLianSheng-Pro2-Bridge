@@ -11,6 +11,12 @@ using System.Threading.Tasks;
 
 namespace Y700Switch2V60Viiper;
 
+public sealed record UsbipAttachmentRepairResult(
+    IReadOnlyList<string> Lines,
+    int DetachedPortCount,
+    int AttachCount,
+    int FinalPortCount);
+
 public static class ControllerEnumerationDiagnostics
 {
     private static readonly Regex PortRegex =
@@ -24,7 +30,7 @@ public static class ControllerEnumerationDiagnostics
 
     private static readonly string[] TargetTokens =
     [
-        "054c", "0ce6", "0df2", "057e", "2069", "045e", "028e",
+        "054c", "0ce6", "0df2", "057e", "2069", "2009", "045e", "028e",
         "dualsense", "wireless controller", "nintendo", "xbox", "if_hid"
     ];
 
@@ -35,7 +41,7 @@ public static class ControllerEnumerationDiagnostics
     {
         var lines = new List<string>
         {
-            "[DIAG] kind=controller_enumeration version=6.2.32-stick-calibration-test-r2 session_log=\"" + sessionLogPath + "\""
+            "[DIAG] kind=controller_enumeration version=pro2-controller-assistant-v1.1.0 session_log=\"" + sessionLogPath + "\""
         };
         await AppendViiperDumpAsync(client, lines, cancellationToken);
         await AppendUsbipPortDumpAsync(lines, cancellationToken);
@@ -184,6 +190,118 @@ public static class ControllerEnumerationDiagnostics
                   " remote_bus_dev=" + device.BusId + "/" + device.DevId +
                   " policy=detach_client_before_remove_server_device");
         return lines;
+    }
+
+    public static async Task<UsbipAttachmentRepairResult> EnsureSingleUsbipAttachmentAsync(
+        ViiperDevice device,
+        string host,
+        int apiPort,
+        CancellationToken cancellationToken)
+    {
+        var lines = new List<string>();
+        if (!IsLoopbackHost(host))
+        {
+            lines.Add("[USBIP_SINGLETON] skipped=remote_host host=" + OneLine(host));
+            return new UsbipAttachmentRepairResult(lines, 0, 0, -1);
+        }
+
+        UsbipRuntime? runtime = UsbipRuntimeLocator.Find();
+        if (runtime == null)
+        {
+            lines.Add("[USBIP_SINGLETON] failed=usbip.exe_not_found");
+            return new UsbipAttachmentRepairResult(lines, 0, 0, 0);
+        }
+
+        int usbServerPort = DeriveUsbPort(apiPort);
+        ProcessResult portResult = await RunProcessAsync(
+            runtime.ExePath,
+            ["port"],
+            runtime.DirectoryPath,
+            TimeSpan.FromSeconds(6),
+            cancellationToken);
+        if (portResult.ExitCode != 0)
+        {
+            lines.Add("[USBIP_SINGLETON] failed=port_dump exit=" + portResult.ExitCode +
+                      " output=" + OneLine(portResult.CombinedOutput));
+            return new UsbipAttachmentRepairResult(lines, 0, 0, 0);
+        }
+
+        int[] matchingPorts = FindUsbipPortsForRemoteDevice(
+                portResult.CombinedOutput,
+                usbServerPort,
+                device.BusId,
+                device.DevId)
+            .Distinct()
+            .Order()
+            .ToArray();
+        if (matchingPorts.Length == 1)
+        {
+            lines.Add("[USBIP_SINGLETON] state=healthy port=" + matchingPorts[0] +
+                      " remote_bus_dev=" + device.BusId + "/" + device.DevId);
+            return new UsbipAttachmentRepairResult(lines, 0, 0, 1);
+        }
+
+        lines.Add("[USBIP_SINGLETON] repair_required observed_ports=" +
+                  (matchingPorts.Length == 0 ? "none" : string.Join(",", matchingPorts)) +
+                  " remote_bus_dev=" + device.BusId + "/" + device.DevId);
+
+        int detachedCount = 0;
+        foreach (int port in SelectPortsToDetachForSingleton(matchingPorts))
+        {
+            ProcessResult detach = await RunProcessAsync(
+                runtime.ExePath,
+                ["detach", "-p", port.ToString()],
+                runtime.DirectoryPath,
+                TimeSpan.FromSeconds(8),
+                cancellationToken);
+            lines.Add("[USBIP_SINGLETON] detach_port=" + port +
+                      " exit=" + detach.ExitCode +
+                      " output=" + OneLine(detach.CombinedOutput));
+            if (detach.ExitCode == 0)
+            {
+                detachedCount++;
+            }
+        }
+
+        if (matchingPorts.Length > 0)
+        {
+            await WaitForRemoteDeviceAbsentAsync(
+                runtime,
+                usbServerPort,
+                device.BusId,
+                device.DevId,
+                cancellationToken);
+        }
+
+        ProcessResult attach = await RunProcessAsync(
+            runtime.ExePath,
+            [
+                "--tcp-port", usbServerPort.ToString(),
+                "attach", "-r", "localhost",
+                "-b", device.BusId + "-" + device.DevId
+            ],
+            runtime.DirectoryPath,
+            TimeSpan.FromSeconds(12),
+            cancellationToken);
+        int attachCount = attach.ExitCode == 0 ? 1 : 0;
+        lines.Add("[USBIP_SINGLETON] reattach exit=" + attach.ExitCode +
+                  " output=" + OneLine(attach.CombinedOutput));
+
+        int finalPortCount = await WaitForRemoteDevicePortCountAsync(
+            runtime,
+            usbServerPort,
+            device.BusId,
+            device.DevId,
+            expectedCount: 1,
+            cancellationToken);
+        lines.Add("[USBIP_SINGLETON] final_port_count=" + finalPortCount +
+                  " result=" + (finalPortCount == 1 ? "ok" : "failed") +
+                  " policy=exactly_one_attachment_per_viiper_device");
+        return new UsbipAttachmentRepairResult(
+            lines,
+            detachedCount,
+            attachCount,
+            finalPortCount);
     }
 
     private static async Task AppendViiperDumpAsync(
@@ -390,6 +508,12 @@ $items | ConvertTo-Json -Depth 5 -Compress
             .ToArray();
     }
 
+    public static IReadOnlyList<int> SelectPortsToDetachForSingleton(IEnumerable<int> ports)
+    {
+        int[] distinctPorts = ports.Distinct().Order().ToArray();
+        return distinctPorts.Length == 1 ? Array.Empty<int>() : distinctPorts;
+    }
+
     private static IEnumerable<int> MatchingUsbipPorts(string output)
     {
         return ParseUsbipPortBlocks(output)
@@ -458,6 +582,42 @@ $items | ConvertTo-Json -Depth 5 -Compress
         return false;
     }
 
+    private static async Task<int> WaitForRemoteDevicePortCountAsync(
+        UsbipRuntime runtime,
+        int usbServerPort,
+        uint busId,
+        string devId,
+        int expectedCount,
+        CancellationToken cancellationToken)
+    {
+        int lastCount = 0;
+        for (int attempt = 0; attempt < 16; attempt++)
+        {
+            ProcessResult result = await RunProcessAsync(
+                runtime.ExePath,
+                ["port"],
+                runtime.DirectoryPath,
+                TimeSpan.FromSeconds(3),
+                cancellationToken);
+            if (result.ExitCode == 0)
+            {
+                lastCount = FindUsbipPortsForRemoteDevice(
+                    result.CombinedOutput,
+                    usbServerPort,
+                    busId,
+                    devId).Distinct().Count();
+                if (lastCount == expectedCount)
+                {
+                    return lastCount;
+                }
+            }
+
+            await Task.Delay(125, cancellationToken);
+        }
+
+        return lastCount;
+    }
+
     private static int DeriveUsbPort(int apiPort) => apiPort == 3242 ? 3241 : apiPort == 1 ? 2 : apiPort - 1;
 
     private static bool IsLoopbackHost(string host)
@@ -483,6 +643,10 @@ $items | ConvertTo-Json -Depth 5 -Compress
         {
             return "nintendo_pro2_virtual";
         }
+        if (type == "nspro" || id.Contains("2009"))
+        {
+            return "nintendo_pro1_virtual";
+        }
         if (type.Contains("xbox") || id.Contains("028e"))
         {
             return "xinput_virtual";
@@ -492,6 +656,11 @@ $items | ConvertTo-Json -Depth 5 -Compress
 
     private static string ClassifyPnp(string combined, string pnpClass, string service)
     {
+        if (combined.Contains("VID_057E", StringComparison.OrdinalIgnoreCase) &&
+            combined.Contains("PID_2009", StringComparison.OrdinalIgnoreCase))
+        {
+            return "nintendo_pro1_virtual_or_physical";
+        }
         if (combined.Contains("PID_0DF2", StringComparison.OrdinalIgnoreCase))
         {
             return "ps5_edge_virtual_or_physical";

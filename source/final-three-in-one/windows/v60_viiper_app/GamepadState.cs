@@ -60,7 +60,15 @@ public sealed class GamepadState
     public long SourceTimestampTicks { get; set; }
     public ulong RawNotificationSequence { get; set; }
     public byte BatteryPercent { get; set; } = BatteryUnknown;
+    public byte BatteryLevel { get; set; } = BatteryUnknown;
+    public bool BatteryPercentApproximate { get; set; }
+    public bool BatteryPowerKnown { get; set; }
+    public bool BatteryExternalPower { get; set; }
+    public ushort BatteryVoltageMillivolts { get; set; }
     public bool BatteryCharging { get; set; }
+    // Physical jack status, not an emulated gamepad button or proof of working audio.
+    public bool HeadsetPresenceKnown { get; set; }
+    public bool HeadsetPresent { get; set; }
     public uint Updates { get; set; }
 
     public bool IsPressed(GamepadButtons button) => (Buttons & button) != 0;
@@ -117,6 +125,13 @@ public interface IGamepadFreshSequentialInputSource
 public interface IGamepadRealtimeInputSource
 {
     bool TryGetNewest(out GamepadState state, out TimeSpan age, out int supersededCount);
+}
+
+// Single-consumer wake-up; the bounded source queue, not the signal, owns data.
+public interface IGamepadSignaledInputSource
+{
+    System.Threading.Tasks.Task<bool> WaitForInputAsync(
+        TimeSpan timeout, System.Threading.CancellationToken cancellationToken);
 }
 
 public interface IGamepadRuntimeTelemetrySink

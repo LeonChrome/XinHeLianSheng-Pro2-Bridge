@@ -177,9 +177,10 @@ internal static class BleDiagnosticCli
             // The isolated Win11 experiment uses a tighter full-window threshold
             // than the historical startup guard. Always export the actual value.
             double requiredHz = customWin11 ? 128 : PureSoftware133Mode.IsEnabled ? PureSoftware133Mode.MinimumAcceptedHz : 60;
-            bool passed = report.Fd2NotifyHz >= requiredHz && report.ParsedHz >= requiredHz;
+            bool passed = report.IsInputAccepted(requiredHz);
             WriteLine("[BLE_TURBO_CLI] acceptance_required_hz=" + requiredHz +
                 " target_hz=" + (PureSoftware133Mode.IsEnabled ? 133 : 60) +
+                " measurement_valid=" + report.MeasurementValid.ToString().ToLowerInvariant() +
                 " passed=" + passed.ToString().ToLowerInvariant());
             return passed ? 0 : 3;
         }

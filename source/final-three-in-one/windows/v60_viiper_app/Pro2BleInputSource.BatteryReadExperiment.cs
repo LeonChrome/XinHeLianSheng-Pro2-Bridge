@@ -114,8 +114,8 @@ public sealed partial class Pro2BleInputSource
             {
                 var samples = capture.Snapshot(Stopwatch.GetTimestamp());
                 return new BleTrialMeasurement(phase, samples.DurationSeconds,
-                    samples.Fd2Ticks.Length / samples.DurationSeconds, samples.ParsedTicks.Length / samples.DurationSeconds,
-                    samples.Fd2Ticks.Length, samples.ParsedTicks.Length, connectionIntervalUnits, connectionPreferenceStatus,
+                    samples.Fd2Count / samples.DurationSeconds, samples.ParsedCount / samples.DurationSeconds,
+                    samples.Fd2Count, samples.ParsedCount, connectionIntervalUnits, connectionPreferenceStatus,
                     Win10BleDiagnostic.BuildGapStatistics(samples.Fd2Ticks));
             }
         }

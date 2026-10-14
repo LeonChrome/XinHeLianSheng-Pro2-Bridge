@@ -11,6 +11,13 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        if (BluetoothAdapterRestart.IsCommand(e.Args))
+        {
+            base.OnStartup(e);
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = RunBluetoothRestartHelperAsync(e.Args);
+            return; // Must precede the manager mutex and stale-process cleanup.
+        }
         if (BleTurboConfigurator.IsCommand(e.Args))
         {
             base.OnStartup(e);
@@ -121,6 +128,15 @@ public partial class App : System.Windows.Application
     private async System.Threading.Tasks.Task RunBleDiagnosticCliAsync(string[] args)
     {
         int exitCode = await BleDiagnosticCli.RunAsync(args);
+        Shutdown(exitCode);
+        Environment.Exit(exitCode);
+    }
+
+    private async System.Threading.Tasks.Task RunBluetoothRestartHelperAsync(string[] args)
+    {
+        int exitCode;
+        try { exitCode = await BluetoothAdapterRestart.ExecuteAsync(args); }
+        catch { exitCode = 5; }
         Shutdown(exitCode);
         Environment.Exit(exitCode);
     }

@@ -321,11 +321,6 @@
                                 <TextBlock Text="{Binding CompactHapticSource}" FontSize="15" Margin="0,7,0,0"/>
                             </StackPanel>
                         </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <Button Content="修复默认音频设备" Command="{Binding FixAudioDefaultsCommand}" IsEnabled="{Binding CanOperate}" HorizontalAlignment="Left"/>
-                            </StackPanel>
-                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -401,9 +396,8 @@
                                     <CheckBox Content="启动后自动进入上次使用的模式" IsChecked="{Binding AutoReconnectOnStartupEnabled}"/>
                                 </WrapPanel>
                                 <WrapPanel>
-                                    <CheckBox Content="保护电脑默认音频设备" IsChecked="{Binding AudioEndpointGuardEnabled}" Margin="0,0,28,0"/>
-                                    <CheckBox Content="定时更新电量" IsChecked="{Binding RuntimeBatteryRefreshEnabled}"
-                                              Margin="0,0,28,0" ToolTip="约每 2 分钟读取原生档位；异常时自动暂停更新以保护输入。"/>
+                                    <CheckBox Content="每10分钟更新电量" IsChecked="{Binding RuntimeBatteryRefreshEnabled}"
+                                              Margin="0,0,28,0" ToolTip="输入稳定时读取原生档位；异常时自动暂停更新，保留上次读取值。"/>
                                     <CheckBox x:Name="AutoOptimizeBleCheckBox" Content="低速时自动优化蓝牙" IsChecked="{Binding AutoOptimizeBle}" IsEnabled="{Binding CanChangeBleOptimizationSettings}"
                                               ToolTip="Win11 在当前连接内自动尝试有限预设，跨适配器型号和驱动版本开放；Win10 全局参数必须单独确认和管理员授权，不会静默轮换。"/>
                                 </WrapPanel>
@@ -417,8 +411,12 @@
                                     <Button Content="摇杆行程校准" Command="{Binding CalibrateStickRangeSlotCommand}" CommandParameter="1"/>
                                     <Button Content="陀螺仪校准" Command="{Binding CalibrateSourceGyroCommand}"/>
                                     <Button Content="断开真实手柄" Command="{Binding DisconnectPro2InputCommand}"/>
+                                    <Button x:Name="RestartBluetoothAdapterButton" Content="重启蓝牙适配器…" Click="RestartBluetooth_Click"
+                                            ToolTip="需要管理员授权；所选适配器的蓝牙连接会暂时断开，不改驱动或配对。"/>
                                 </WrapPanel>
                                 <TextBlock Text="零位：松开摇杆2秒 · 行程：沿外圈转动8秒 · 陀螺仪：静置3秒" Style="{StaticResource MutedText}"/>
+                                <TextBlock Text="{Binding BluetoothRestartStatus}" TextWrapping="Wrap" Style="{StaticResource MutedText}" Margin="0,8,0,0"
+                                           Visibility="{Binding HasBluetoothRestartStatus, Converter={StaticResource BoolVisibility}}"/>
                                 <Expander Header="更多手柄 · Steam / Xbox" Margin="0,16,0,0">
                                     <ItemsControl ItemsSource="{Binding Pro2Slots}">
                                         <ItemsControl.ItemTemplate><DataTemplate>
@@ -464,6 +462,9 @@
                                             <Button Content="修复 USBIP 驱动" Command="{Binding InstallUsbipCommand}"/>
                                             <Button Content="刷新 Steam 缓存" Click="RefreshSteamControllerCache_Click"/>
                                         </WrapPanel>
+                                        <TextBlock Text="BLE 初始化对照" FontWeight="SemiBold" Margin="0,14,0,6"/>
+                                        <CheckBox Content="同时跳过 USB 初始化（对照测试）" IsChecked="{Binding SkipUsbBleInitialization}"/>
+                                        <TextBlock Text="默认已跳过配对提交。此开关仅影响下一次连接，不自动断开；本次程序关闭后复位。" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                     </StackPanel>
                                 </Border>
                                 <Border Style="{StaticResource Card}">

@@ -84,8 +84,11 @@ public sealed partial class Pro2BleInputSource
         if (primary == null || (primary.CharacteristicProperties & GattCharacteristicProperties.Notify) == 0)
         { runtimeBatteryRefreshStatus = "unsupported"; return; }
         progress.Report("[BATTERY_RUNTIME] enabled=" + runtimeBatteryRefreshEnabled +
-            " interval_s=120 first_refresh_s=30 native_level=true input_route=fd2_only normal_watchdog=unchanged");
+            " interval_s=" + Pro2RuntimeBatteryPolicy.IntervalSeconds +
+            " first_refresh_s=" + Pro2RuntimeBatteryPolicy.FirstRefreshSeconds +
+            " native_level=true input_route=fd2_only normal_watchdog=unchanged");
         long due = Stopwatch.GetTimestamp() + (long)(Pro2RuntimeBatteryPolicy.FirstRefreshSeconds * Stopwatch.Frequency);
+        int cooldownRetries = 0;
         try
         {
             while (!token.IsCancellationRequested)
@@ -144,6 +147,43 @@ public sealed partial class Pro2BleInputSource
                 {
                     runtimeBatterySuspensionReason = decision.Reason;
                     runtimeBatteryRefreshStatus = "suspended";
+                    if (Pro2RuntimeBatteryPolicy.CanCooldownRetry(decision, after.Rate,
+                        SameSession(), report.SubscriptionReleased, cooldownRetries))
+                    {
+                        cooldownRetries++;
+                        runtimeBatteryRefreshStatus = "cooldown";
+                        progress.Report("[BATTERY_RUNTIME] cooldown=true reason=" + decision.Reason +
+                            " healthy_seconds_required=600 retry=" + cooldownRetries + "/1 cccd_released=true");
+                        long healthySince = 0;
+                        long lastCooldownCheck = Stopwatch.GetTimestamp();
+                        while (true)
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(5), token);
+                            if (!SameSession()) return;
+                            Pro2RateEvidence evidence = GetRateEvidence();
+                            bool healthy = runtimeBatteryRefreshEnabled && evidence.RecentWindow &&
+                                evidence.LastInputAgeMs is >= 0 and < 500 &&
+                                evidence.Stability is { IsStableHighRate: true, IsRecent: true };
+                            long current = Stopwatch.GetTimestamp();
+                            long lastLowEnd = evidence.Stability?.RecentLowWindow?.WindowEndTicks ?? 0;
+                            bool continuityLost = Stopwatch.GetElapsedTime(lastCooldownCheck, current).TotalSeconds > 10 ||
+                                (healthySince != 0 && lastLowEnd > healthySince);
+                            lastCooldownCheck = current;
+                            if (!healthy || continuityLost) healthySince = 0;
+                            if (healthy && healthySince == 0) healthySince = current;
+                            double healthySeconds = healthySince == 0 ? 0 :
+                                Stopwatch.GetElapsedTime(healthySince, current).TotalSeconds;
+                            if (!Pro2RuntimeBatteryPolicy.HealthyCooldownComplete(
+                                healthySeconds, runtimeBatteryRefreshEnabled, SameSession(), healthy)) continue;
+                            runtimeBatterySuspensionReason = "";
+                            runtimeBatteryRefreshStatus = "waiting";
+                            // Re-run the normal 10s baseline, with no Notify held during cooldown.
+                            due = current + 10 * Stopwatch.Frequency;
+                            progress.Report("[BATTERY_RUNTIME] cooldown_complete=true normal_baseline_required=true retry_budget_remaining=0");
+                            break;
+                        }
+                        continue;
+                    }
                     // An owned Notify that cannot be confirmed off is a
                     // controlled safety reconnect, not a claimed RF disconnect.
                     // The ordinary reconnect loop consumes this signal after
@@ -253,8 +293,8 @@ public sealed partial class Pro2BleInputSource
             Win10BleDiagnosticSamples samples;
             lock (gate) samples = capture.Snapshot(Stopwatch.GetTimestamp());
             var gaps = Win10BleDiagnostic.BuildGapStatistics(samples.Fd2Ticks);
-            return (new(samples.Fd2Ticks.Length / samples.DurationSeconds,
-                samples.ParsedTicks.Length / samples.DurationSeconds, gaps.P50Ms, gaps.P95Ms, gaps.MaxMs), samples, previousTicks);
+            return (new(samples.Fd2Count / samples.DurationSeconds,
+                samples.ParsedCount / samples.DurationSeconds, gaps.P50Ms, gaps.P95Ms, gaps.MaxMs), samples, previousTicks);
         }
         finally { lock (gate) if (ReferenceEquals(runtimeBatteryCapture, capture)) runtimeBatteryCapture = null; }
     }

@@ -20,7 +20,6 @@ public sealed class V60UserSettings
     public string[] LastConnectedPro2Addresses { get; set; } = new string[4];
     public Dictionary<string, Pro2StickCalibrationProfile> Pro2StickCalibrations { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
-    public bool AudioEndpointGuardEnabled { get; set; } = true;
     public bool RuntimeBatteryRefreshEnabled { get; set; } = true;
     public bool AutoOptimizeBle { get; set; } = true;
     public string UsbipExecutablePath { get; set; } = "";

@@ -31,11 +31,18 @@ internal static class Program
                 var environment = SystemBluetoothDiagnostics.CaptureAsync(timeout.Token).GetAwaiter().GetResult();
                 File.WriteAllText(Path.Combine(output, "actual-system-bluetooth.txt"), SystemBluetoothDiagnostics.Format(environment));
                 Console.WriteLine(string.Join(Environment.NewLine, SystemBluetoothDiagnostics.LogLines(environment)));
+                foreach (var target in BluetoothRestartPolicy.Targets(environment))
+                    Console.WriteLine("[BLUETOOTH_RESTART_PLAN] name=\"" + target.Name + "\" pnp_id=\"" + target.PnpId +
+                        "\" exact_radio=" + target.CanRestart + " present_started=" + BluetoothAdapterRestart.PresentStarted(target.PnpId) +
+                        " restart_executed=false metadata_only=true");
                 return 0;
             }
             TestReleasePackaging();
             UsbipDiscoveryRegressionTests.Run(Check, output);
             EnvironmentDiagnosticsRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
+            BleDiagnosticValidityRegressionTests.Run(Check, output);
+            BleProtocolAuditRegressionTests.Run(Check);
+            BluetoothRestartRegressionTests.Run(Check);
             CompatibleRateRegressionTests.Run(Check);
             BleRateStabilityRegressionTests.Run(Check);
             BleMeasuredTrialRegressionTests.Run(Check);
@@ -96,9 +103,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "1.3.18.0", "BLE compatibility release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "1.3.22.0", "BLE compatibility release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "1.3.18-ble-preset-diagnostics", "BLE compatibility release metadata");
+            "1.3.22-long-session", "BLE compatibility release metadata");
         Check(assembly.GetType("Y700Switch2V60Viiper.Pro2LiveBatteryReadPolicy") == null,
             "formal release excludes experimental battery query policy");
         Check(assembly.GetType("Y700Switch2V60Viiper.BleOutputIsolationExperiment") == null,
@@ -859,6 +866,7 @@ internal static class Program
         Check(new FileInfo(stress.FilePath).Length <= SessionLogWriter.MaxLogBytes + 1024,
             "persistent log bounded");
         Check(stress.LastError == null, "concurrent producers do not fail writer");
+        await LongSessionRegressionTests.RunLogAsync(directory, Check);
     }
 
     private static void TestUi()
@@ -892,11 +900,12 @@ internal static class Program
             Save(window, "ui-home-win10-optimization-closed.png");
         }
         Check(vm.IsPro2Selected && !vm.Running, "new settings default Steam/Pro2, no hardware start");
-        Check(vm.CompactSystemText.EndsWith("v1.3.18") &&
+        Check(vm.CompactSystemText.EndsWith("v1.3.22") &&
             (vm.CompactSystemText.Contains("Windows 10") || vm.CompactSystemText.Contains("Windows 11")), "UI system family/version follows runtime metadata");
         Check(vm.CompactCanConnect && vm.CompactConnectText == "连接 Pro2", "offline connection button remains usable");
         var settingsTabs = Descendants<TabControl>(window).First();
         settingsTabs.SelectedIndex = 3; Pump(window);
+        BluetoothRestartRegressionTests.RunUi(window, vm, Check, () => Pump(window), (dialog, name) => Save(dialog, name));
         var selectUsbip = (Button)window.FindName("SelectUsbipPathButton");
         var resetUsbip = (Button)window.FindName("ResetUsbipPathButton");
         Check(selectUsbip.IsVisible && selectUsbip.IsEnabled && resetUsbip.Command == vm.ResetUsbipPathCommand,
@@ -1030,7 +1039,7 @@ internal static class Program
         Check(vm.CompactBatteryVisual.Caption.Contains("更新已暂停") && vm.CompactBatteryHint.Contains("保护输入"),
             "automatic input guard is visible rather than pretending updates continue");
         typeof(Pro2BleInputSource).GetField("batteryStatusTicks", sourceFlags)!.SetValue(source,
-            Stopwatch.GetTimestamp() - Stopwatch.Frequency * 301);
+            Stopwatch.GetTimestamp() - Stopwatch.Frequency * 721);
         vm.RefreshCompactTelemetry(); Pump(window);
         Check(vm.CompactBattery.Contains("上次读取"), "expired runtime level is explicitly historical");
         typeof(Pro2BleInputSource).GetField("runtimeBatterySuspensionReason", sourceFlags)!.SetValue(source, "");
@@ -1208,6 +1217,7 @@ internal static class Program
         cSelector.Command.Execute(cSelector.CommandParameter); Pump(window); Save(window, "ui-min-c-key.png");
         Check(vm.SelectedRearIndex == 2 && vm.SelectedRearEditor.Title == "C 键", "C editor works at minimum dimensions");
         TestManualDialogUi(window);
+        LongSessionRegressionTests.RunUi(window, vm, Check, () => Pump(window));
         listener.Flush();
         File.WriteAllText(Path.Combine(output, "binding-trace.txt"), bindingText.ToString());
         Check(string.IsNullOrWhiteSpace(bindingText.ToString()), "zero binding errors/warnings");

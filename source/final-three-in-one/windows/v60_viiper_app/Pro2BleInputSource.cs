@@ -137,6 +137,7 @@ public sealed partial class Pro2BleInputSource :
             }
         }
         connectionProgress?.Report(windowMessage);
+        connectionProgress?.Report(protocolAudit.Summary(Stopwatch.GetTimestamp()));
         if (downgraded) SetConnectionPhase(Pro2ConnectionPhase.RateLimited);
         if (recovered)
         {
@@ -410,6 +411,7 @@ public sealed partial class Pro2BleInputSource :
 
     public Pro2BleDisconnectSignal CreateInputTimeoutDisconnectSignal(TimeSpan age)
     {
+        AuditSessionEnd("fd2_input_timeout");
         lock (gate)
         {
             return CreateDisconnectSignalNoLock(
@@ -653,9 +655,11 @@ public sealed partial class Pro2BleInputSource :
         string descriptorBefore;
         string descriptorStatus;
         string descriptorAfter;
+        BluetoothLEDevice? measuredDevice;
+        long measuredConnectionSequence;
         lock (gate)
         {
-            if (!IsRunning || fd2Characteristic == null)
+            if (!IsRunning || !transportConnected || disconnectSignalCaptured || fd2Characteristic == null)
             {
                 throw new InvalidOperationException(
                     "真实 Pro2 FD2 Notify 尚未连接，先连接手柄后再运行 BLE Turbo 诊断。");
@@ -666,6 +670,8 @@ public sealed partial class Pro2BleInputSource :
             }
 
             activeBleDiagnosticCapture = capture;
+            measuredDevice = device;
+            measuredConnectionSequence = connectionSequence;
             address = connectedAddress;
             descriptorHandle = fd2ReportRateDescriptorHandle;
             descriptorUuid = fd2ReportRateDescriptorUuid;
@@ -680,7 +686,7 @@ public sealed partial class Pro2BleInputSource :
             " move_sticks=optional keep_controller_awake=true");
         try
         {
-            await Task.Delay(duration, cancellationToken);
+            await BleMeasurementWindow.WaitUntilElapsedAsync(capture.StartedTicks, duration, cancellationToken);
         }
         catch
         {
@@ -698,7 +704,12 @@ public sealed partial class Pro2BleInputSource :
         DateTimeOffset completedAtUtc = DateTimeOffset.UtcNow;
         lock (gate)
         {
-            samples = capture.Snapshot(Stopwatch.GetTimestamp());
+            bool sameSession = ReferenceEquals(activeBleDiagnosticCapture, capture) &&
+                ReferenceEquals(device, measuredDevice) && connectionSequence == measuredConnectionSequence;
+            if (!sameSession) capture.MarkInterrupted("connection_replaced_or_stopped");
+            bool connectedAtEnd = sameSession && IsRunning && transportConnected && !disconnectSignalCaptured &&
+                device?.ConnectionStatus == BluetoothConnectionStatus.Connected;
+            samples = capture.Snapshot(Stopwatch.GetTimestamp(), measurementCompleted: true, connectedAtEnd);
             if (ReferenceEquals(activeBleDiagnosticCapture, capture))
             {
                 activeBleDiagnosticCapture = null;
@@ -1112,6 +1123,7 @@ public sealed partial class Pro2BleInputSource :
         CancellationToken cancellationToken)
     {
         ResetLiveState();
+        BeginProtocolAudit(progress);
         SetConnectionPhase(Pro2ConnectionPhase.Connecting);
         BluetoothLEDevice? opened = candidate.IsManualSelection
             ? await BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType).AsTask(cancellationToken)
@@ -1128,6 +1140,7 @@ public sealed partial class Pro2BleInputSource :
         opened.ConnectionStatusChanged += OnBluetoothConnectionStatusChanged;
         progress.Report("[PRO2_BLE] opened address=" + FormatAddress(candidate.Address) +
                         " name=" + (opened.Name ?? candidate.Name ?? "<unnamed>"));
+        if (opened.ConnectionStatus == BluetoothConnectionStatus.Connected) AuditConnectionActive("windows");
 
         await ObserveGattSessionAsync(opened, progress);
         ObserveWindowsConnectionParameters(opened, progress);
@@ -1207,6 +1220,14 @@ public sealed partial class Pro2BleInputSource :
 
         for (int i = 0; i < InitCommands.Length; i++)
         {
+            byte[] initCommand = InitCommands[i];
+            if (!BleInitAuditPolicy.ShouldSend(initCommand, sessionSkipUsbInitialization))
+            {
+                AuditControl("init_skipped index=" + i + " " + BleInitAuditPolicy.CommandIdentity(initCommand) +
+                    " reason=" + (initCommand[0] == 0x15 ? "no_pairing_commit_on_ble" : "usb_init_comparison") + " sent=false");
+                continue;
+            }
+            long initStarted = Stopwatch.GetTimestamp();
             ackTcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
             GattCommunicationStatus write = await WriteCharacteristicWithRetryAsync(
                 commandCharacteristic,
@@ -1223,11 +1244,21 @@ public sealed partial class Pro2BleInputSource :
             Task completed = await Task.WhenAny(ackTcs.Task, Task.Delay(1500, cancellationToken));
             if (completed != ackTcs.Task)
             {
+                AuditControl("init_ack_timeout index=" + i + " " + BleInitAuditPolicy.CommandIdentity(initCommand) +
+                    " elapsed_ms=" + Stopwatch.GetElapsedTime(initStarted).TotalMilliseconds.ToString("F1") + " continuing=true");
                 progress.Report("[PRO2_BLE] init ACK timeout index=" + i + "; continuing cautiously.");
             }
-            else if (i == 0 || i == InitCommands.Length - 1)
+            else
             {
-                progress.Report("[PRO2_BLE] init ACK index=" + i + " len=" + ackTcs.Task.Result.Length);
+                byte[] reply = ackTcs.Task.Result;
+                AuditControl("init_ack index=" + i + " expected_" + BleInitAuditPolicy.CommandIdentity(initCommand) +
+                    " reply_" + BleInitAuditPolicy.CommandIdentity(reply) +
+                    " identity_match=" + BleInitAuditPolicy.AckMatches(initCommand, reply) +
+                    " ack=" + (reply.Length >= 8 ? "0x" + reply[5].ToString("X2") : "short") +
+                    " elapsed_ms=" + Stopwatch.GetElapsedTime(initStarted).TotalMilliseconds.ToString("F1") +
+                    " legacy_waiter_behavior_unchanged=true");
+                if (i == 0 || i == InitCommands.Length - 1)
+                    progress.Report("[PRO2_BLE] init ACK index=" + i + " len=" + reply.Length);
             }
         }
 
@@ -2158,6 +2189,8 @@ public sealed partial class Pro2BleInputSource :
                             " attempt=" + attempt +
                             " status=" + status +
                             " " + DescribeCharacteristic(characteristic));
+            protocolAudit.Note("cccd label=" + label + " value=Notify attempt=" + attempt + " status=" + status,
+                Stopwatch.GetTimestamp());
             if (status == GattCommunicationStatus.Success)
             {
                 return true;
@@ -2235,6 +2268,10 @@ public sealed partial class Pro2BleInputSource :
     private void OnAckValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
     {
         byte[] data = ReadBuffer(args.CharacteristicValue);
+        AuditControl("ack_notify " + BleInitAuditPolicy.CommandIdentity(data) +
+            " sender_current=" + ReferenceEquals(sender, ackCharacteristic) +
+            " direction=" + (data.Length >= 8 ? "0x" + data[1].ToString("X2") : "short") +
+            " ack=" + (data.Length >= 8 ? "0x" + data[5].ToString("X2") : "short") + " payload_logged=false");
         if (Pro2FirmwareInfo.TryDecode(data, out var firmware))
         {
             lock (gate) firmwareInfo = firmware;
@@ -2353,6 +2390,13 @@ public sealed partial class Pro2BleInputSource :
         DateTimeOffset now = DateTimeOffset.UtcNow;
         bool isFd2 = sender.Uuid == NotifyFd2Uuid;
         bool isPrimary = sender.Uuid == NotifyLegacyUuid;
+        if (isFd2)
+        {
+            double callbackAgeMs;
+            try { callbackAgeMs = (now - args.Timestamp).TotalMilliseconds; }
+            catch { callbackAgeMs = double.NaN; }
+            protocolAudit.RecordFd2(data, nowTicks, callbackAgeMs);
+        }
         string reportType = isFd2
             ? "fd2"
             : isPrimary
@@ -2697,6 +2741,9 @@ public sealed partial class Pro2BleInputSource :
 
             gattSession = session;
             session.SessionStatusChanged += OnGattSessionStatusChanged;
+            session.MaxPduSizeChanged += OnGattMaxPduSizeChanged;
+            AuditPdu(session);
+            if (session.SessionStatus == GattSessionStatus.Active) AuditConnectionActive("gatt");
             if (session.CanMaintainConnection)
             {
                 // Hold this session while the app owns the input. This is not
@@ -2724,6 +2771,7 @@ public sealed partial class Pro2BleInputSource :
             BluetoothConnectionStatus status = sender.ConnectionStatus;
             if (!ReferenceEquals(sender, device)) return;
             transportConnected = status == BluetoothConnectionStatus.Connected;
+            if (transportConnected) AuditConnectionActive("windows");
             if (transportConnected && connectionPhase == Pro2ConnectionPhase.Connecting)
                 SetConnectionPhase(Pro2ConnectionPhase.Initializing);
             else if (!transportConnected)
@@ -2751,6 +2799,7 @@ public sealed partial class Pro2BleInputSource :
         try
         {
             if (!ReferenceEquals(sender, gattSession)) return;
+            if (args.Status == GattSessionStatus.Active) AuditConnectionActive("gatt");
             connectionProgress?.Report(
                 "[PRO2_BLE_LINK] gatt_session_status=" + args.Status +
                 " bluetooth_error=" + args.Error);
@@ -2775,9 +2824,11 @@ public sealed partial class Pro2BleInputSource :
         string detector,
         BluetoothError? bluetoothError)
     {
+        AuditSessionEnd(detector + ":" + (bluetoothError?.ToString() ?? "not_provided"));
         Pro2BleDisconnectSignal? captured = null;
         lock (gate)
         {
+            activeBleDiagnosticCapture?.MarkInterrupted(detector);
             if (!IsRunning)
             {
                 return;
@@ -3152,7 +3203,7 @@ public sealed partial class Pro2BleInputSource :
                 preference = connectionPreferenceStatus;
                 lastInputAge = lastParsedNotifyTicks == 0 ? double.PositiveInfinity :
                     Stopwatch.GetElapsedTime(lastParsedNotifyTicks).TotalMilliseconds;
-                connectedAtEnd = transportConnected && ReferenceEquals(device, deviceAtCapture);
+                connectedAtEnd = transportConnected && ReferenceEquals(device, deviceAtCapture) && samples.Interruption.Length == 0;
             }
         }
         finally
@@ -3167,8 +3218,8 @@ public sealed partial class Pro2BleInputSource :
             exactGaps.Record(Stopwatch.GetElapsedTime(samples.Fd2Ticks[i - 1], samples.Fd2Ticks[i]).TotalMilliseconds);
         exactGaps.SummarizeAndReset(out NotifyGapSummary exactSummary);
         var trial = new BleTrialMeasurement(phase, samples.DurationSeconds,
-            samples.Fd2Ticks.Length / samples.DurationSeconds, samples.ParsedTicks.Length / samples.DurationSeconds,
-            samples.Fd2Ticks.Length, samples.ParsedTicks.Length, interval, preference,
+            samples.Fd2Count / samples.DurationSeconds, samples.ParsedCount / samples.DurationSeconds,
+            samples.Fd2Count, samples.ParsedCount, interval, preference,
             Win10BleDiagnostic.BuildGapStatistics(samples.Fd2Ticks), lastInputAge, connectedAtEnd, exactSummary);
         progress.Report("[WIN11_PARAMETER_TRIAL] phase=" + phase + " duration_s=" + trial.DurationSeconds.ToString("F2") +
             " fd2_hz=" + trial.Fd2Hz.ToString("F2") + " parsed_hz=" + trial.ParsedHz.ToString("F2") +
@@ -3504,7 +3555,7 @@ public sealed partial class Pro2BleInputSource :
         return await characteristic.WriteValueAsync(ToBuffer(data), option);
     }
 
-    private static async Task<GattCommunicationStatus> WriteCharacteristicWithRetryAsync(
+    private async Task<GattCommunicationStatus> WriteCharacteristicWithRetryAsync(
         GattCharacteristic characteristic,
         byte[] data,
         string label,
@@ -3514,7 +3565,19 @@ public sealed partial class Pro2BleInputSource :
         GattCommunicationStatus status = GattCommunicationStatus.Unreachable;
         for (int attempt = 1; attempt <= 3; attempt++)
         {
-            status = await WriteCharacteristicAsync(characteristic, data);
+            long writeStarted = Stopwatch.GetTimestamp();
+            AuditControl("gatt_write_begin label=" + label + " " + BleInitAuditPolicy.CommandIdentity(data) +
+                " attempt=" + attempt + " payload_logged=false");
+            try { status = await WriteCharacteristicAsync(characteristic, data); }
+            catch (Exception ex)
+            {
+                AuditControl("gatt_write_exception label=" + label + " type=" + ex.GetType().Name +
+                    " hresult=0x" + ex.HResult.ToString("X8") +
+                    " elapsed_ms=" + Stopwatch.GetElapsedTime(writeStarted).TotalMilliseconds.ToString("F1"));
+                throw;
+            }
+            AuditControl("gatt_write_end label=" + label + " status=" + status +
+                " elapsed_ms=" + Stopwatch.GetElapsedTime(writeStarted).TotalMilliseconds.ToString("F1"));
             if (status == GattCommunicationStatus.Success)
             {
                 if (attempt > 1)
@@ -3536,6 +3599,8 @@ public sealed partial class Pro2BleInputSource :
 
     private async Task CloseCurrentAsync(string nextStatus)
     {
+        AuditSessionEnd("receiver_release:" + nextStatus);
+        lock (gate) activeBleDiagnosticCapture?.MarkInterrupted("receiver_stopped");
         try { compatibilityTrialCts?.Cancel(); } catch (ObjectDisposedException) { }
         IsRunning = false;
         transportConnected = false;
@@ -3584,6 +3649,7 @@ public sealed partial class Pro2BleInputSource :
         if (gattSession != null)
         {
             gattSession.SessionStatusChanged -= OnGattSessionStatusChanged;
+            gattSession.MaxPduSizeChanged -= OnGattMaxPduSizeChanged;
             try { gattSession.MaintainConnection = false; }
             catch (Exception ex)
             {

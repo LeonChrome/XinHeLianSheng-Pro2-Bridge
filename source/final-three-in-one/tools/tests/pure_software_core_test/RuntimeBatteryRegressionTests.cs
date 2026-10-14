@@ -44,13 +44,31 @@ internal static class RuntimeBatteryRegressionTests
             "old settings without battery property adopt enabled default");
         check(!JsonSerializer.Deserialize<V60UserSettings>("{\"RuntimeBatteryRefreshEnabled\":false}")!.RuntimeBatteryRefreshEnabled,
             "explicit off survives settings migration");
-        check(Pro2RuntimeBatteryPolicy.IntervalSeconds >= 120 && Pro2RuntimeBatteryPolicy.FirstRefreshSeconds >= 30,
-            "battery operations do not run in the startup or per-frame path");
-        check(Pro2RuntimeBatteryPolicy.IsFreshRuntimeLevel(true, 300) &&
-            !Pro2RuntimeBatteryPolicy.IsFreshRuntimeLevel(true, 300.01) &&
+        check(Pro2RuntimeBatteryPolicy.IntervalSeconds == 600 && Pro2RuntimeBatteryPolicy.FirstRefreshSeconds == 600,
+            "ten-minute battery cadence starts after the connection snapshot");
+        check(Pro2RuntimeBatteryPolicy.IsFreshRuntimeLevel(true, 600) &&
+            Pro2RuntimeBatteryPolicy.IsFreshRuntimeLevel(true, 720) &&
+            !Pro2RuntimeBatteryPolicy.IsFreshRuntimeLevel(true, 720.01) &&
             !Pro2RuntimeBatteryPolicy.IsFreshRuntimeLevel(false, 0) &&
             !Pro2RuntimeBatteryPolicy.IsFreshRuntimeLevel(true, double.NaN), "runtime freshness and snapshot distinction");
         long Tick(double ms) => (long)(ms * Stopwatch.Frequency / 1000);
+        var transient = new BatteryRefreshDecision(false, "notify_gap_exceeded");
+        check(Pro2RuntimeBatteryPolicy.CanCooldownRetry(transient, after, true, true, 0),
+            "brief isolated gap allows one cooldown retry, no safety-threshold relaxation");
+        check(!Pro2RuntimeBatteryPolicy.CanCooldownRetry(transient, after, true, false, 0) &&
+            !Pro2RuntimeBatteryPolicy.CanCooldownRetry(transient, after, false, true, 0) &&
+            !Pro2RuntimeBatteryPolicy.CanCooldownRetry(transient, after, true, true, 1) &&
+            !Pro2RuntimeBatteryPolicy.CanCooldownRetry(transient, after with { Fd2Hz = 66 }, true, true, 0) &&
+            !Pro2RuntimeBatteryPolicy.CanCooldownRetry(transient, after with { MaxGapMs = 121 }, true, true, 0),
+            "unknown cleanup, session change, low rate, long pause or retry exhaustion blocks recovery");
+        check(!Pro2RuntimeBatteryPolicy.CanCooldownRetry(new(false, "fd2_rate_or_cadence_changed"), after, true, true, 0),
+            "changed report cadence never receives speculative retry");
+        check(!Pro2RuntimeBatteryPolicy.HealthyCooldownComplete(599.99, true, true, true) &&
+            Pro2RuntimeBatteryPolicy.HealthyCooldownComplete(600, true, true, true) &&
+            !Pro2RuntimeBatteryPolicy.HealthyCooldownComplete(36000, true, true, false) &&
+            !Pro2RuntimeBatteryPolicy.HealthyCooldownComplete(600, false, true, true) &&
+            !Pro2RuntimeBatteryPolicy.HealthyCooldownComplete(600, true, false, true),
+            "cooldown requires continuous healthy ten minutes in enabled same session");
         check(Math.Abs(Pro2BleInputSource.OperationGap([Tick(37), Tick(44.5), Tick(52)], Tick(1), Tick(38), Tick(0.1)) - 36.9) < 0.01,
             "first gap crossing operation start is not lost by capture");
         check(Pro2BleInputSource.OperationGap([Tick(7.5), Tick(15), Tick(22.5), Tick(30), Tick(200), Tick(207.5)],

@@ -67,7 +67,26 @@ public sealed record Win10BleDiagnosticReport(
 {
     public double EffectiveInputHz => Math.Min(Fd2NotifyHz, ParsedHz);
     public double ParsedRatio => Fd2NotifyHz > 0 ? ParsedHz / Fd2NotifyHz : 0;
-    public bool Input133HzAccepted => Win10BleDiagnostic.Is133HzInputAccepted(Fd2NotifyHz, ParsedHz);
+    // A high connection average is not evidence of a completed, live test.
+    // Missing continuity evidence fails closed, including older serialized reports.
+    public bool Input133HzAccepted => IsInputAccepted(PureSoftware133Mode.MinimumAcceptedHz);
+    public bool MeasurementCompleted { get; init; }
+    public bool ConnectionContinuous { get; init; }
+    public bool ConnectedAtEnd { get; init; }
+    public string MeasurementFailure { get; init; } = "measurement_not_verified";
+    public double? LastParsedInputAgeMs { get; init; }
+    public double? MaximumFd2SilenceMs { get; init; }
+    public double? MaximumParsedSilenceMs { get; init; }
+    public bool GapSamplesTruncated { get; init; }
+    public bool MeasurementValid => MeasurementCompleted && ConnectionContinuous && ConnectedAtEnd &&
+        MeasurementFailure.Length == 0 && DurationSeconds >= 10 && double.IsFinite(DurationSeconds) &&
+        RawNotifyCount > 0 && Fd2NotifyCount > 0 && ParsedCount > 0 && RawNotifyCount >= Fd2NotifyCount &&
+        IsFresh(LastParsedInputAgeMs) && IsFresh(MaximumFd2SilenceMs) && IsFresh(MaximumParsedSilenceMs);
+    public bool IsInputAccepted(double minimumHz) => MeasurementValid && double.IsFinite(minimumHz) && minimumHz > 0 &&
+        double.IsFinite(Fd2NotifyHz) && double.IsFinite(ParsedHz) &&
+        Fd2NotifyHz >= minimumHz && ParsedHz >= minimumHz && ParsedRatio >= 0.95;
+    private static bool IsFresh(double? milliseconds) => milliseconds is double value &&
+        double.IsFinite(value) && value >= 0 && value <= Win10BleDiagnostic.MaximumAcceptedSilenceMs;
     public string CompatibilityRoute { get; init; } = "unknown";
     public string CompatibilityGuidance { get; init; } = "";
     public string SystemStackSha256 { get; init; } = "unknown";
@@ -141,6 +160,14 @@ public sealed record Win10BleDiagnosticReport(
                      " parsed_count=" + ParsedCount;
         yield return "[BLE_TURBO_INPUT_ACCEPTANCE] effective_input_hz=" + EffectiveInputHz.ToString("F2") +
             " parsed_ratio=" + ParsedRatio.ToString("F4") + " accepted_133=" + Input133HzAccepted;
+        yield return "[BLE_TURBO_VALIDITY] measurement_completed=" + MeasurementCompleted +
+            " connection_continuous=" + ConnectionContinuous + " connected_at_end=" + ConnectedAtEnd +
+            " measurement_valid=" + MeasurementValid + " failure=" +
+            (MeasurementFailure.Length == 0 ? "none" : MeasurementFailure) +
+            " last_parsed_age_ms=" + LastParsedInputAgeMs?.ToString("F2") +
+            " max_fd2_silence_ms=" + MaximumFd2SilenceMs?.ToString("F2") +
+            " max_parsed_silence_ms=" + MaximumParsedSilenceMs?.ToString("F2") +
+            " gap_samples_truncated=" + GapSamplesTruncated + " rate_counts=full_capture";
         yield return "[PRO2_BATTERY_DIAGNOSTIC] connection_level=" +
             (BatteryLevelAtConnection <= 9 ? BatteryLevelAtConnection + "/9" : "unknown") +
             " last_read_level=" + (BatteryLastReadLevel <= 9 ? BatteryLastReadLevel + "/9" : "unknown") +
@@ -169,6 +196,14 @@ internal sealed class Win10BleDiagnosticCapture
     private readonly List<long> rawTicks = new(MaximumSamples);
     private readonly List<long> fd2Ticks = new(MaximumSamples);
     private readonly List<long> parsedTicks = new(MaximumSamples);
+    private int rawCount;
+    private int fd2Count;
+    private int parsedCount;
+    private long lastFd2Ticks;
+    private long lastParsedTicks;
+    private long maximumFd2GapTicks;
+    private long maximumParsedGapTicks;
+    private string interruption = "";
 
     public Win10BleDiagnosticCapture(long startedTicks, DateTimeOffset startedAtUtc)
     {
@@ -181,30 +216,63 @@ internal sealed class Win10BleDiagnosticCapture
 
     public void RecordRaw(long ticks, bool isFd2)
     {
+        if (ticks < StartedTicks) return; // An in-flight pre-capture callback is outside this window.
+        rawCount++;
         Add(rawTicks, ticks);
         if (isFd2)
         {
+            fd2Count++;
+            NoteArrival(ticks, ref lastFd2Ticks, ref maximumFd2GapTicks);
             Add(fd2Ticks, ticks);
         }
     }
 
     public void RecordParsed(long ticks, bool isFd2)
     {
-        if (isFd2)
+        if (isFd2 && ticks >= StartedTicks)
         {
+            parsedCount++;
+            NoteArrival(ticks, ref lastParsedTicks, ref maximumParsedGapTicks);
             Add(parsedTicks, ticks);
         }
     }
 
-    public Win10BleDiagnosticSamples Snapshot(long completedTicks)
+    // Call under the receiver gate, as with RecordRaw/RecordParsed.
+    public void MarkInterrupted(string reason)
+    {
+        if (interruption.Length == 0) interruption = reason.Length == 0 ? "connection_interrupted" : reason;
+    }
+
+    private void NoteArrival(long ticks, ref long last, ref long maximumGap)
+    {
+        // Concurrent callbacks may enter the gate in a different order. An older
+        // arrival must not move the freshness clock backwards or invent a gap.
+        maximumGap = Math.Max(maximumGap, ticks - (last == 0 ? StartedTicks : last));
+        last = Math.Max(last, ticks);
+    }
+
+    public Win10BleDiagnosticSamples Snapshot(long completedTicks, bool measurementCompleted = false,
+        bool connectedAtEnd = false)
     {
         return new Win10BleDiagnosticSamples(
             StartedTicks,
             completedTicks,
             rawTicks.ToArray(),
             fd2Ticks.ToArray(),
-            parsedTicks.ToArray());
+            parsedTicks.ToArray())
+        {
+            RawCount = rawCount, Fd2Count = fd2Count, ParsedCount = parsedCount,
+            MeasurementCompleted = measurementCompleted, ConnectedAtEnd = connectedAtEnd,
+            Interruption = interruption,
+            LastParsedInputAgeMs = ToMilliseconds(completedTicks - (lastParsedTicks == 0 ? StartedTicks : lastParsedTicks)),
+            MaximumFd2SilenceMs = ToMilliseconds(Math.Max(maximumFd2GapTicks,
+                completedTicks - (lastFd2Ticks == 0 ? StartedTicks : lastFd2Ticks))),
+            MaximumParsedSilenceMs = ToMilliseconds(Math.Max(maximumParsedGapTicks,
+                completedTicks - (lastParsedTicks == 0 ? StartedTicks : lastParsedTicks)))
+        };
     }
+
+    private static double ToMilliseconds(long ticks) => Math.Max(0, ticks * 1000.0 / Stopwatch.Frequency);
 
     private static void Add(List<long> samples, long ticks)
     {
@@ -222,6 +290,16 @@ internal sealed record Win10BleDiagnosticSamples(
     long[] Fd2Ticks,
     long[] ParsedTicks)
 {
+    public int RawCount { get; init; } = RawTicks.Length;
+    public int Fd2Count { get; init; } = Fd2Ticks.Length;
+    public int ParsedCount { get; init; } = ParsedTicks.Length;
+    public bool MeasurementCompleted { get; init; }
+    public bool ConnectedAtEnd { get; init; }
+    public string Interruption { get; init; } = "";
+    public double? LastParsedInputAgeMs { get; init; }
+    public double? MaximumFd2SilenceMs { get; init; }
+    public double? MaximumParsedSilenceMs { get; init; }
+    public bool GapSamplesTruncated => RawCount > RawTicks.Length || Fd2Count > Fd2Ticks.Length || ParsedCount > ParsedTicks.Length;
     public double DurationSeconds => Math.Max(
         0.001,
         (CompletedTicks - StartedTicks) / (double)Stopwatch.Frequency);
@@ -229,6 +307,7 @@ internal sealed record Win10BleDiagnosticSamples(
 
 internal static class Win10BleDiagnostic
 {
+    internal const double MaximumAcceptedSilenceMs = 500;
     private static readonly string[] RequestedDeviceProperties =
     [
         "System.Devices.DeviceInstanceId",
@@ -315,9 +394,23 @@ internal static class Win10BleDiagnostic
         double seconds = samples.DurationSeconds;
         // Count over the entire capture: a disconnect/silent tail must reduce the
         // reported rate, rather than disappearing from a first-to-last calculation.
-        double rawHz = samples.RawTicks.Length / seconds;
-        double fd2Hz = samples.Fd2Ticks.Length / seconds;
-        double parsedHz = samples.ParsedTicks.Length / seconds;
+        double rawHz = samples.RawCount / seconds;
+        double fd2Hz = samples.Fd2Count / seconds;
+        double parsedHz = samples.ParsedCount / seconds;
+        string failure = !samples.MeasurementCompleted ? "measurement_not_completed" :
+            seconds < 10 ? "measurement_window_too_short" :
+            samples.Interruption.Length > 0 ? "connection_interrupted:" + samples.Interruption :
+            !samples.ConnectedAtEnd ? "disconnected_at_end" :
+            samples.LastParsedInputAgeMs == null || samples.MaximumFd2SilenceMs == null || samples.MaximumParsedSilenceMs == null
+                ? "freshness_not_verified" :
+            samples.RawCount == 0 || samples.Fd2Count == 0 || samples.ParsedCount == 0 ? "no_live_input" :
+            !double.IsFinite(samples.LastParsedInputAgeMs.Value) || samples.LastParsedInputAgeMs.Value < 0 ||
+            !double.IsFinite(samples.MaximumFd2SilenceMs.Value) || samples.MaximumFd2SilenceMs.Value < 0 ||
+            !double.IsFinite(samples.MaximumParsedSilenceMs.Value) || samples.MaximumParsedSilenceMs.Value < 0
+                ? "invalid_freshness" :
+            samples.LastParsedInputAgeMs > MaximumAcceptedSilenceMs ||
+            samples.MaximumFd2SilenceMs > MaximumAcceptedSilenceMs || samples.MaximumParsedSilenceMs > MaximumAcceptedSilenceMs
+                ? "input_stalled" : "";
         BleCompatibilitySnapshot compatibility = BleCompatibilityInspector.Refresh();
         return new Win10BleDiagnosticReport(
             startedAtUtc,
@@ -336,15 +429,23 @@ internal static class Win10BleDiagnostic
             EmptyToUnknown(descriptorBefore),
             EmptyToUnknown(descriptorWriteStatus),
             EmptyToUnknown(descriptorAfter),
-            samples.RawTicks.Length,
-            samples.Fd2Ticks.Length,
-            samples.ParsedTicks.Length,
+            samples.RawCount,
+            samples.Fd2Count,
+            samples.ParsedCount,
             rawHz,
             fd2Hz,
             parsedHz,
             BuildGapStatistics(samples.Fd2Ticks),
-            ClassifyRates(fd2Hz, parsedHz))
+            failure.Length == 0 ? ClassifyRates(fd2Hz, parsedHz) : failure)
         {
+            MeasurementCompleted = samples.MeasurementCompleted,
+            ConnectionContinuous = samples.Interruption.Length == 0,
+            ConnectedAtEnd = samples.ConnectedAtEnd,
+            MeasurementFailure = failure,
+            LastParsedInputAgeMs = samples.LastParsedInputAgeMs,
+            MaximumFd2SilenceMs = samples.MaximumFd2SilenceMs,
+            MaximumParsedSilenceMs = samples.MaximumParsedSilenceMs,
+            GapSamplesTruncated = samples.GapSamplesTruncated,
             CompatibilityRoute = compatibility.Plan.Route.ToString(),
             CompatibilityGuidance = compatibility.Plan.Guidance,
             SystemStackSha256 = compatibility.Facts.StackSha256,

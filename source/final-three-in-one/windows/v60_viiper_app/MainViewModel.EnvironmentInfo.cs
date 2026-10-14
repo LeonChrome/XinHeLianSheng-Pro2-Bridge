@@ -48,7 +48,9 @@ public sealed partial class MainViewModel
         " / " + CompactFirmwareHint + Environment.NewLine + "游戏输出：" +
         (Running ? CompactActualMode : "未启动；BLE 连接不等于游戏手柄已经创建") + Environment.NewLine +
         "电量更新：" + inputSource.RuntimeBatteryRefreshStatus + Environment.NewLine +
+        Environment.NewLine + inputSource.ProtocolDiagnosticText +
         Environment.NewLine + inputSource.GetAdaptiveDiagnosticText(includeHistory: !previewOnly) +
+        (bluetoothRestartDiagnostic.Length > 0 ? "\n蓝牙适配器重启记录\n" + bluetoothRestartDiagnostic + "\n" : "") +
         (win10ConfigurationHistoryText.Length > 0 ? "\n" + win10ConfigurationHistoryText + "\n" : "") +
         (win10ConfigurationAttemptText.Length > 0 ? "\nWin10 本次程序配置操作记录\n" + win10ConfigurationAttemptText : "") +
         (HasLowRateWarning ? "\n低速判定\n" + LowRateReportText : "");

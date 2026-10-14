@@ -1,6 +1,6 @@
 # PRO2 手柄助手 · 源码
 
-当前纯软件版：**v1.3.18**。主要程序位于 `windows/v60_viiper_app`，离线回归位于 `tools/tests/pure_software_core_test`；Pro1 虚拟设备后端位于 `tools/viiper/haptic-src/device/nspro`。
+当前纯软件版：**v1.3.22**。主要程序位于 `windows/v60_viiper_app`，离线回归位于 `tools/tests/pure_software_core_test`；Pro1 虚拟设备后端位于 `tools/viiper/haptic-src/device/nspro`。
 
 本目录保留原有布局，不另建独立架构。ESP、Pico、三合一相关目录仅作历史参考：[旧构建说明](README_THREE_IN_ONE_ARCHIVE.md)。
 
@@ -28,4 +28,4 @@ dotnet build tools/tests/pure_software_core_test/PureSoftwareCoreTest.csproj -c 
 
 离线检查不修改蓝牙参数或驱动；恢复机制仅使用临时 HKCU 测试键并在结束时清理。这些检查不证明某台电脑已达到 133Hz，真实速率需连接 Pro2 实测。
 
-[使用说明](../../README.md) · [v1.3.18 更新说明](../../docs/RELEASE_v1.3.18_ZH.md)
+[使用说明](../../README.md) · [v1.3.22 更新说明](../../docs/RELEASE_v1.3.22_ZH.md)

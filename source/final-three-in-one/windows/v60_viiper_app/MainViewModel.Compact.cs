@@ -83,8 +83,10 @@ public sealed partial class MainViewModel
                     ? " 电池电压 " + (battery.State.BatteryVoltageMillivolts / 1000.0).ToString("F3") + " V。" : "") +
                 (battery.HasConnectionLevel ? " 档位采集于 " + battery.LevelAgeSeconds.ToString("0") + " 秒前。" : unavailable) +
                 (inputSource.RuntimeBatterySuspensionReason.Length > 0
-                    ? " 自动更新已暂停以保护输入：" + inputSource.RuntimeBatterySuspensionReason + "；保留上次读取值。"
-                    : RuntimeBatteryRefreshEnabled ? " 约每 2 分钟短暂采集一次新档位，结束后核验通知已关闭。"
+                    ? inputSource.RuntimeBatteryRefreshStatus == "cooldown"
+                        ? " 更新已暂停；输入稳定10分钟后尝试恢复一次，保留上次读取值。"
+                        : " 自动更新已暂停以保护输入：" + inputSource.RuntimeBatterySuspensionReason + "；保留上次读取值。"
+                    : RuntimeBatteryRefreshEnabled ? " 约每 10 分钟短暂采集一次新档位，结束后核验通知已关闭。"
                     : " 自动更新已关闭；保留上次读取值。") +
                 " 电压和充电状态随 FD2 原包更新。";
         }
@@ -132,6 +134,17 @@ public sealed partial class MainViewModel
         set { showDiagnostics = value; OnPropertyChanged(); FlushCompactLog(); }
     }
 
+    public void ResetCompactTelemetrySample()
+    {
+        compactSampleTicks = 0;
+        Pro2RateEvidence rate = inputSource.GetRateEvidence();
+        bool fresh = rate.Connected && rate.Running && rate.RecentWindow &&
+            rate.LastInputAgeMs is >= 0 and < 500;
+        compactInputRate = fresh ? rate.Fd2Hz.ToString("0.0") : "—";
+        compactRawRate = fresh ? rate.Fd2Hz.ToString("0.0") + " Hz" : "—";
+        compactParsedRate = fresh ? rate.ParsedHz.ToString("0.0") + " Hz" : "—";
+    }
+
     public void RefreshCompactTelemetry()
     {
         var counters = inputSource.GetCompactCounters();
@@ -141,7 +154,8 @@ public sealed partial class MainViewModel
             double seconds = Stopwatch.GetElapsedTime(compactSampleTicks, now).TotalSeconds;
             bool monotonic = counters.Raw >= compactRaw && counters.Fd2 >= compactFd2 &&
                              counters.Parsed >= compactParsed;
-            bool live = inputSource.IsTransportConnected && counters.LastTicks > 0 && monotonic;
+            bool live = inputSource.IsTransportConnected && counters.LastTicks > 0 && monotonic &&
+                double.IsFinite(seconds) && seconds > 0;
             compactInputRate = live ? ((counters.Fd2 - compactFd2) / seconds).ToString("0.0") : "—";
             compactRawRate = live ? ((counters.Raw - compactRaw) / seconds).ToString("0.0") + " Hz" : "—";
             compactParsedRate = live ? ((counters.Parsed - compactParsed) / seconds).ToString("0.0") + " Hz" : "—";
@@ -156,7 +170,8 @@ public sealed partial class MainViewModel
         if (battery.RuntimeLevel && !battery.LevelFresh) compactBattery += "（上次读取）";
         compactBatteryVisual = BatteryVisual.Create(battery.State, inputSource.IsRunning,
             battery.HasConnectionLevel, battery.Fresh,
-            inputSource.RuntimeBatterySuspensionReason.Length > 0 ? "更新已暂停" :
+            inputSource.RuntimeBatterySuspensionReason.Length > 0
+                ? inputSource.RuntimeBatteryRefreshStatus == "cooldown" ? "等待恢复" : "更新已暂停" :
                 battery.RuntimeLevel ? battery.LevelFresh && RuntimeBatteryRefreshEnabled ? "定时更新" : "上次读取" : "连接时档位");
         compactInputAge = inputSource.IsRunning && counters.LastTicks > 0
             ? Stopwatch.GetElapsedTime(counters.LastTicks, now).TotalMilliseconds.ToString("0") + " ms" : "—";

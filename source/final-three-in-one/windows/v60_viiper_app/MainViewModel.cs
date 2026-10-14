@@ -57,7 +57,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
     private string selectedPushRateLabel = ViiperPushRateOption.Default.Label;
     private string selectedBackendLabel = VirtualBackendOption.Default.Label;
     private string selectedStickProcessingLabel = StickProcessingOption.Default.Label;
-    private bool audioEndpointGuardEnabled = true;
     private bool runtimeBatteryRefreshEnabled = true;
     private bool running;
     private bool busy;
@@ -207,7 +206,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             VirtualBackendOption.FromLabel(userSettings.BackendLabel).Label;
         selectedStickProcessingLabel =
             StickProcessingOption.FromLabel(userSettings.StickProcessingLabel).Label;
-        audioEndpointGuardEnabled = userSettings.AudioEndpointGuardEnabled;
         runtimeBatteryRefreshEnabled = userSettings.RuntimeBatteryRefreshEnabled;
         launchAtLoginEnabled = !previewOnly && userSettings.LaunchAtLoginEnabled && StartupLaunchRegistration.IsEnabled();
         autoReconnectOnStartupEnabled = userSettings.AutoReconnectOnStartupEnabled;
@@ -226,18 +224,23 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             _ = RefreshRuntimeReadinessAsync();
         }
         AppendLog("[SESSION_LOG] " + sessionLog.FilePath);
+        AppendLog("[SESSION_RECENT_LOG] " + sessionLog.RecentFilePath);
         if (!string.IsNullOrWhiteSpace(StartupProcessGuard.LastSummary))
         {
             AppendLog(StartupProcessGuard.LastSummary);
         }
-        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：Pro2 / Pro1 / Xbox / PS5 · USBIP 自定义路径识别 · 原生电量定时更新。");
+        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：长时间显示刷新修复 · 10分钟电量更新 · 内置音频保护。");
+        AppendLog("[BLE_INIT_POLICY] default=no_pair_finalize pairing_finalize_15_03=blocked comparison_checkbox=skip_usb_init next_connection_only=true");
         AppendLog("[FEATURE_POLICY] gyro_quality=" + Pro2QualityMode.GyroEnabled +
             " haptics_quality=" + Pro2QualityMode.HapticsEnabled +
             " battery_init_snapshot=" + Pro2InitialBatterySnapshot.IsRequested(Environment.GetCommandLineArgs()) +
-            " runtime_battery_refresh=" + RuntimeBatteryRefreshEnabled + " runtime_battery_interval_s=120");
+            " runtime_battery_refresh=" + RuntimeBatteryRefreshEnabled +
+            " runtime_battery_interval_s=" + Pro2RuntimeBatteryPolicy.IntervalSeconds +
+            " audio_guard=built_in_always_on");
         AppendLog("[BLE_COMPATIBILITY] " + BleCompatibilityInspector.Current.Telemetry);
         AppendLog("[LOG_POLICY] previous logs preserved; async bounded manager log limit=" +
-                  (SessionLogWriter.MaxLogBytes / 1024 / 1024) + "MB; VIIPER server log level=info.");
+                  (SessionLogWriter.MaxLogBytes / 1024 / 1024) +
+                  "MB; recent status remains live in a bounded 128KB snapshot; VIIPER server log level=info.");
         AppendLog("[RUNTIME] " + RuntimeReadinessText);
         AppendLog("[RUMBLE_GAIN] multiplier=" + rumbleMultiplier.ToString("F1"));
         AppendLog("[STARTUP] launch_at_login=" + launchAtLoginEnabled +
@@ -256,7 +259,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                   " ps5_output_imu=" + SelectedPs5OutputImuTuning.TelemetryValue +
                   " gyro_axis_inv=" + default(GyroAxisInversion).TelemetryValue +
                   " stick=" + SelectedStickProcessingOption.Label +
-                  " audio_guard=" + audioEndpointGuardEnabled +
+                  " audio_guard=" + AudioEndpointGuardEnabled +
                   " backend=" + SelectedBackendOption.Label);
         InitializeEnvironmentInfo();
     }
@@ -634,29 +637,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool AudioEndpointGuardEnabled
-    {
-        get => audioEndpointGuardEnabled;
-        set
-        {
-            if (audioEndpointGuardEnabled == value)
-            {
-                return;
-            }
-
-            audioEndpointGuardEnabled = value;
-            userSettings.AudioEndpointGuardEnabled = value;
-            SaveUserSettings("[AUDIO_GUARD]");
-            AppendLog("[AUDIO_GUARD] enabled=" + value);
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(AudioEndpointGuardText));
-            OnPropertyChanged(nameof(LinkTuningSummary));
-        }
-    }
-
-    public string AudioEndpointGuardText => AudioEndpointGuardEnabled
-        ? "音频保护已开启：PS5 模式会自动阻止 DualSense 成为默认播放/通信/麦克风。"
-        : "音频保护已关闭：Windows 可能把 DualSense 设为默认音频或麦克风。";
+    // Legacy settings cannot disable the built-in PS5 default-endpoint guard.
+    public bool AudioEndpointGuardEnabled => true;
 
     public string LinkTuningSummary =>
         "push=" + (SelectedPushRateOption.SourcePaced
@@ -3174,6 +3156,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             await Task.Delay(900, cancellationToken);
             RunAudioEndpointGuard();
+            StartBuiltInAudioGuard();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -3216,10 +3199,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             await Win10BleDiagnostic.SaveAsync(report, cancellationToken);
         AppendLog("[BLE_TURBO_REPORT] json=\"" + jsonPath +
                   "\" text=\"" + textPath + "\"");
-        Status = "BLE Turbo 诊断完成：FD2=" +
+        Status = report.MeasurementValid ? "BLE Turbo 诊断完成：FD2=" +
                  report.Fd2NotifyHz.ToString("F2") + "Hz，P50=" +
                  report.Fd2NotifyGaps.P50Ms.ToString("F2") + "ms，判定=" +
-                 report.Verdict + "。报告：" + jsonPath;
+                 report.Verdict + "。报告：" + jsonPath :
+                 "BLE 诊断未通过：本轮连接或输入不连续。报告：" + jsonPath;
     }
 
     private async Task RunBleTurboConfiguratorAsync(
@@ -3523,6 +3507,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             AppendLog(line);
         }
         builder.AppendLine("# session_log=" + sessionLog.FilePath);
+        builder.AppendLine("# recent_session_status=" + sessionLog.RecentFilePath);
+        builder.AppendLine(sessionLog.RecentText);
         builder.AppendLine();
         foreach (string line in dump)
         {
@@ -3542,6 +3528,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private void RunAudioEndpointGuard()
     {
+        if (previewOnly) return;
         foreach (string line in AudioEndpointGuard.EnsureDualSenseIsNotDefault())
         {
             AppendLog(line);
@@ -4283,6 +4270,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private void SetActiveMode(ViiperVirtualMode? mode)
     {
+        if (mode is not (ViiperVirtualMode.DualSenseLike or ViiperVirtualMode.DualSenseProfessionalImuTest))
+            StopBuiltInAudioGuard();
         activeMode = mode;
         OnPropertyChanged(nameof(IsDualSenseActive));
         OnPropertyChanged(nameof(IsPro1Active));

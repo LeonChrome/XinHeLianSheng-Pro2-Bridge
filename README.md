@@ -1,41 +1,31 @@
 # PRO2 手柄助手
 
-让 **Switch 2 Pro（Pro2）手柄无线接入 Windows**，支持 Steam / Pro2、Pro1、Xbox 与 PS5 兼容模式。纯软件连接，无需 ESP、Pico 或外置接收器。
+让 **Nintendo Switch 2 Pro（Pro2）手柄无线连接 Windows**，在 Steam 和其他 PC 游戏中使用。利用电脑的 BLE 蓝牙，无需专用接收器。
 
-**[下载 v1.3.18](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v1.3.18)** · [更新说明](docs/RELEASE_v1.3.18_ZH.md) · [源码与构建](source/final-three-in-one/README.md)
+**[推荐下载：v1.3.22 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v1.3.22/PRO2ControllerAssistant-v1.3.22-win-x64.exe)** · [版本说明](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v1.3.22)
 
-![PRO2 手柄助手首页](docs/images/pro2-v1.3.17-home.png)
+## 能做什么
 
-## 功能
+- **四种模式**：Steam / Pro2、Pro1、Xbox、PS5 兼容输出。
+- **背键 / C 键自定义**：Pro1、Xbox、PS5 模式支持单键、组合键、连发、顺序动作和延迟；没连接手柄也能设置。
+- **震动与陀螺仪**：震动强度调节、PS5 触觉转换、陀螺仪校准。
+- **手柄状态**：真实输入频率、电量档位、固件版本、耳机插入状态；安全检查通过时每 10 分钟更新电量。
+- **连接与诊断**：自动重连、首页低速提示、系统与蓝牙信息、逐组优化结果；设置中可手动重启蓝牙。
 
-- 四种游戏模式：Steam / Pro2、Pro1、Xbox、PS5。
-- Pro1 / Xbox / PS5 支持背键与 C 键映射：单键、组合键、连发、顺序动作、延迟；未连接也可设置。
-- 陀螺仪校准、震动强度调节、PS5 触觉转换。
-- 显示真实输入频率、电量档位、固件、耳机插入状态及系统 / 蓝牙诊断。
-- “系统与蓝牙信息”直接显示每组预设的请求状态、实测间隔和最终结果，复制全部信息即可反馈。
-- 自动重连；真实输入达到 60Hz 可兼容游玩，首页提示低速原因与优化建议。
+## 怎么用
 
-## 使用
+1. 下载 EXE，退出旧版；手柄保持 **PRO2 模式**，开启配对广播。
+2. 打开软件，点击“连接 Pro2”，选择游戏模式。无需先在 Windows 蓝牙设置中添加手柄。
+3. 首次使用按提示安装内置 **USBIP 驱动**，可能需要管理员授权或重启。无需另装 .NET 或 VIIPER；已有 USBIP 支持自动查找或手动指定位置。
 
-1. 下载 EXE，退出旧版。手柄使用 **PRO2 模式**，开启配对广播。
-2. 在软件中点击“连接 Pro2”，选择游戏模式。无需先在 Windows 蓝牙设置中添加手柄。
-3. 首次使用按提示安装内置 **USBIP 内核驱动**；可能需要管理员授权或重启。无需另装 .NET、VIIPER；已有 USBIP 支持自动查找或手动指定位置。
+## 速率与兼容性
 
-## 蓝牙速率
+支持 **Windows 10 2004 及以上 / Windows 11 x64**，电脑需有可用的 BLE 蓝牙。
 
-目标为**真实 133Hz 输入**。真实 FD2 / Parsed 均达到 60Hz 且输入正常时允许游玩；低速时首页显示诊断，不用重复帧伪造回报率。
+目标是真实 **133Hz**，达到 **60Hz** 也允许游玩；低速时首页给出诊断和优化建议。Win11 自动尝试连接参数；Win10 在首页点击“优化蓝牙 · Win10”授权测试，修改前备份，支持恢复。Win10 优化会改变系统全局 BLE 参数，可能影响其他蓝牙设备或需要重启。
 
-- **Win11**：自动尝试连接参数，实测后选用较优方案。
-- 每组请求、异常返回码、完整测量和恢复记录在“系统与蓝牙信息”查看；缺失记录明确标注，不推测请求成功。
-- **Win10**：首页“优化蓝牙 · Win10” → 默认“固定 7.5ms” → “授权并测试”。提供三组预设、自动备份和“恢复原参数”；打开选项不会修改系统。
-- Win10 优化会修改系统全局 BLE 参数，其他蓝牙设备可能暂时断开；不能安全重启蓝牙时会提示重启 Windows。
+实际速率受系统、适配器和驱动影响，不保证所有电脑达到 133Hz，以实测为准。PS5 模式提供兼容输出与触觉转换，不等于完整复刻 DualSense；无线耳机音频和跨设备蓝牙转发尚不支持。
 
-实际速率取决于系统、蓝牙适配器与驱动，**不保证所有电脑达到 133Hz**。请求成功不代表实际提速，以首页实测为准。
+v1.3.22 修复托盘恢复后的速率停刷，电量更新改为 10 分钟，PS5 默认音频保护已内置。
 
-## 支持范围
-
-Windows 10 2004 及以上 / Windows 11 **x64**，需可用的 BLE 蓝牙适配器。PS5 模式是兼容输出与触觉转换，不等于完整复刻 DualSense。无线耳机音频、跨设备蓝牙转发不在当前正式功能内。
-
-旧三合一源码与下载保留作历史参考：[历史说明](docs/HISTORICAL_THREE_IN_ONE_README.md)。当前版本只维护纯软件路线，不修改历史硬件版本。
-
-[许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues)
+[反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [源码与构建](source/final-three-in-one/README.md) · [许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [历史三合一版本](docs/HISTORICAL_THREE_IN_ONE_README.md)

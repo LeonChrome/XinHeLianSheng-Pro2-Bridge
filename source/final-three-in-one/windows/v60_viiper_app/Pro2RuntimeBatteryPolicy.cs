@@ -10,10 +10,12 @@ public readonly record struct BatteryRefreshDecision(bool Accepted, string Reaso
 // No clock, radio, worker or input generation here: decisions can be tested offline.
 public static class Pro2RuntimeBatteryPolicy
 {
-    public const double IntervalSeconds = 120;
-    public const double FirstRefreshSeconds = 30;
-    public const double LevelFreshSeconds = 300;
+    public const double IntervalSeconds = 600;
+    public const double FirstRefreshSeconds = 600;
+    public const double LevelFreshSeconds = IntervalSeconds + 120;
     public const double MaximumOperationGapMs = 45;
+    public const int MaximumCooldownRetries = 1;
+    public const double RetryHealthySeconds = 600;
     public const string DisableArgument = "--battery-runtime-off";
 
     public static bool CanProbe(BatteryRefreshRate rate) =>
@@ -42,6 +44,17 @@ public static class Pro2RuntimeBatteryPolicy
 
     public static bool IsFreshRuntimeLevel(bool runtime, double ageSeconds) =>
         runtime && double.IsFinite(ageSeconds) && ageSeconds >= 0 && ageSeconds <= LevelFreshSeconds;
+
+    public static bool CanCooldownRetry(BatteryRefreshDecision decision, BatteryRefreshRate after,
+        bool sameSession, bool cleanupVerified, int retriesUsed) =>
+        !decision.Accepted && decision.Reason == "notify_gap_exceeded" &&
+        sameSession && cleanupVerified && retriesUsed >= 0 && retriesUsed < MaximumCooldownRetries &&
+        CanProbe(after) && after.MaxGapMs <= 120;
+
+    public static bool HealthyCooldownComplete(double continuousHealthySeconds, bool enabled,
+        bool sameSession, bool recentHighRate) =>
+        enabled && sameSession && recentHighRate && double.IsFinite(continuousHealthySeconds) &&
+        continuousHealthySeconds >= RetryHealthySeconds;
 
     private static bool Finite(BatteryRefreshRate rate) =>
         double.IsFinite(rate.Fd2Hz) && double.IsFinite(rate.ParsedHz) &&

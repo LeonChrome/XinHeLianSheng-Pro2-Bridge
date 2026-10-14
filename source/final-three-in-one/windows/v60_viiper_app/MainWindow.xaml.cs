@@ -46,8 +46,7 @@ public partial class MainWindow : Window
         };
         IsVisibleChanged += (_, _) =>
         {
-            if (IsVisible && WindowState != WindowState.Minimized) presentationTimer.Start();
-            else presentationTimer.Stop();
+            UpdatePresentationRefresh();
         };
         if (DataContext is MainViewModel viewModel)
         {
@@ -114,7 +113,7 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        if (IsVisible && WindowState != WindowState.Minimized) presentationTimer.Start();
+        UpdatePresentationRefresh();
         if (!IsUiSmokeRun()) FitStartupWindow();
         if (DataContext is MainViewModel initial) initial.RefreshCompactTelemetry();
         if (IsUiSmokeRun())
@@ -226,6 +225,16 @@ public partial class MainWindow : Window
         environmentInfoWindow = dialog;
         dialog.Closed += (_, _) => environmentInfoWindow = null;
         dialog.Show();
+    }
+
+    private async void RestartBluetooth_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm || !vm.CanOperate) return;
+        await vm.RequestBluetoothRestartAsync(targets =>
+        {
+            var dialog = new BluetoothRestartWindow(targets) { Owner = this };
+            return dialog.ShowDialog() == true ? dialog.SelectedTarget : null;
+        });
     }
 
     private async void ManualConnect_Click(object sender, RoutedEventArgs e)
@@ -361,6 +370,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
+        UpdatePresentationRefresh();
         if (WindowState != WindowState.Minimized)
         {
             return;
@@ -383,12 +393,32 @@ public partial class MainWindow : Window
 
     private void ShowFromTray()
     {
-        Show();
         if (WindowState == WindowState.Minimized)
         {
             WindowState = WindowState.Normal;
         }
+        Show();
+        UpdatePresentationRefresh();
         Activate();
+    }
+
+    private void UpdatePresentationRefresh()
+    {
+        if (shutdownInProgress || !IsVisible || WindowState == WindowState.Minimized)
+        {
+            presentationTimer.Stop();
+            return;
+        }
+        if (!presentationTimer.IsEnabled)
+        {
+            // Hidden time is not a UI rate window. Resume from cached live evidence.
+            if (DataContext is MainViewModel vm)
+            {
+                vm.ResetCompactTelemetrySample();
+                vm.RefreshCompactTelemetry();
+            }
+            presentationTimer.Start();
+        }
     }
 
     private void ExecuteTrayCommand(Func<MainViewModel, System.Windows.Input.ICommand> commandSelector)

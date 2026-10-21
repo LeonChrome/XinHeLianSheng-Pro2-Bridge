@@ -85,6 +85,7 @@ internal static class Program
             TestInputUpdateRateWindow();
             TestSignalAsync().GetAwaiter().GetResult();
             TestHapticsAsync().GetAwaiter().GetResult();
+            DualSenseFeedbackRoutingRegressionTests.Run(Check);
             QualityRegressionTests.Run(Check, output);
             TestLogAsync().GetAwaiter().GetResult();
             TestUi();
@@ -103,9 +104,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "1.3.22.0", "BLE compatibility release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "1.3.23.0", "PS5 feedback release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "1.3.22-long-session", "BLE compatibility release metadata");
+            "1.3.23-ps5-rumble", "PS5 feedback release metadata");
         Check(assembly.GetType("Y700Switch2V60Viiper.Pro2LiveBatteryReadPolicy") == null,
             "formal release excludes experimental battery query policy");
         Check(assembly.GetType("Y700Switch2V60Viiper.BleOutputIsolationExperiment") == null,
@@ -900,7 +901,7 @@ internal static class Program
             Save(window, "ui-home-win10-optimization-closed.png");
         }
         Check(vm.IsPro2Selected && !vm.Running, "new settings default Steam/Pro2, no hardware start");
-        Check(vm.CompactSystemText.EndsWith("v1.3.22") &&
+        Check(vm.CompactSystemText.EndsWith("v1.3.23") &&
             (vm.CompactSystemText.Contains("Windows 10") || vm.CompactSystemText.Contains("Windows 11")), "UI system family/version follows runtime metadata");
         Check(vm.CompactCanConnect && vm.CompactConnectText == "连接 Pro2", "offline connection button remains usable");
         var settingsTabs = Descendants<TabControl>(window).First();

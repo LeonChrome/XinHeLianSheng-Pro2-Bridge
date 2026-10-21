@@ -22,14 +22,16 @@ type DualSense struct {
 	inputState *InputState
 	metaState  *MetaState
 
-	deviceType        string
-	outputFunc        func(OutputState)
-	rawOutputFunc     func([]byte)
-	hapticAudioFunc   func([]byte)
-	descriptor        usb.Descriptor
-	hapticEnabled     bool
-	audioStreaming    bool
-	hapticAudioFrames uint64
+	deviceType            string
+	outputFunc            func(OutputState)
+	rawOutputFunc         func([]byte)
+	hapticAudioFunc       func([]byte)
+	descriptor            usb.Descriptor
+	hapticEnabled         bool
+	audioStreaming        bool
+	hapticAudioFrames     uint64
+	interruptOutputFrames uint64
+	controlOutputFrames   uint64
 
 	subcommand [2]byte
 
@@ -138,6 +140,8 @@ func (d *DualSense) SetMetaState(meta MetaState) {
 }
 
 func (d *DualSense) SetOutputCallback(f func(OutputState)) {
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
 	d.outputFunc = f
 }
 
@@ -210,17 +214,7 @@ func (d *DualSense) HandleTransfer(ctx context.Context, ep uint32, dir uint32, o
 	}
 
 	if dir == usbip.DirOut && ep == 3 {
-		if len(out) >= 48 && out[0] == ReportIDOutput {
-			if d.outputFunc != nil {
-				d.outputFunc(parseOutputReport(out))
-			}
-			d.mtx.Lock()
-			rawCallback := d.rawOutputFunc
-			d.mtx.Unlock()
-			if rawCallback != nil {
-				rawCallback(append([]byte(nil), out...))
-			}
-		}
+		d.routeOutputReport(out, false)
 	}
 
 	if dir == usbip.DirOut && ep == 1 && d.hapticEnabled {
@@ -242,6 +236,45 @@ func (d *DualSense) HandleTransfer(ctx context.Context, ep uint32, dir uint32, o
 	}
 
 	return nil
+}
+
+// Both USB HID output transports must reach the same feedback consumers.
+// Haptic mode registers rawOutputFunc, whereas the legacy handler uses outputFunc.
+// Invoke callbacks outside the mutex and give the raw consumer an owned copy.
+func (d *DualSense) routeOutputReport(report []byte, control bool) bool {
+	if len(report) < 48 || report[0] != ReportIDOutput {
+		return false
+	}
+	d.mtx.Lock()
+	outputCallback := d.outputFunc
+	rawCallback := d.rawOutputFunc
+	var count uint64
+	transport := "interrupt_out"
+	if control {
+		d.controlOutputFrames++
+		count = d.controlOutputFrames
+		transport = "control_set_report"
+	} else {
+		d.interruptOutputFrames++
+		count = d.interruptOutputFrames
+	}
+	haptic := d.hapticEnabled
+	d.mtx.Unlock()
+	if outputCallback != nil {
+		outputCallback(parseOutputReport(report))
+	}
+	if rawCallback != nil {
+		rawCallback(append([]byte(nil), report...))
+	}
+	if haptic && (count <= 3 || count%1000 == 0) {
+		slog.Info("DualSense HID output routed",
+			"transport", transport, "frames", count,
+			"rawCallbackReady", rawCallback != nil,
+			"legacyCallbackReady", outputCallback != nil,
+			"bytes", len(report), "flag0", report[1],
+			"rumbleSmall", report[3], "rumbleLarge", report[4])
+	}
+	return true
 }
 
 func (d *DualSense) HandleControl(bmRequestType, bRequest uint8, wValue, wIndex, wLength uint16, data []byte) ([]byte, bool) {
@@ -321,10 +354,7 @@ func (d *DualSense) HandleControl(bmRequestType, bRequest uint8, wValue, wIndex,
 			case reportType == reportTypeFeature:
 				return nil, true
 			case reportType == reportTypeOutput && reportID == ReportIDOutput && len(data) >= 48:
-				if d.outputFunc != nil {
-					d.outputFunc(parseOutputReport(data))
-				}
-				return nil, true
+				return nil, d.routeOutputReport(data, true)
 			}
 		case hidSetIdle, hidSetProtocol:
 			return nil, true

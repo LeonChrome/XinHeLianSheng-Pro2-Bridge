@@ -64,9 +64,16 @@ internal static class LongSessionRegressionTests
             check(!timer.IsEnabled, "hidden UI stops presentation timer");
             Model("compactSampleTicks", Stopwatch.GetTimestamp() - 10 * 3600 * Stopwatch.Frequency);
             window.Show(); pump();
-            window.WindowState = WindowState.Normal; pump();
+            // This offline source has no real producer. Refresh its evidence per
+            // restore, rather than letting five OS window transitions age it out.
+            Source("lastParsedNotifyTicks", Stopwatch.GetTimestamp());
+            Source("liveRateMeasuredTicks", Stopwatch.GetTimestamp());
+            window.WindowState = WindowState.Normal;
             check(timer.IsEnabled, "show-before-restore restarts timer");
             check(vm.CompactInputRate == "133.0", "resume uses recent rate, not hidden ten-hour average");
+            // Check the synchronous resume before a periodic tick correctly sees
+            // zero new frames from this stationary fixture, then process layout.
+            pump();
         }
         window.Hide(); pump(); window.WindowState = WindowState.Minimized;
         typeof(MainWindow).GetMethod("ShowFromTray", Private)!.Invoke(window, null); pump();
@@ -78,9 +85,10 @@ internal static class LongSessionRegressionTests
         Source("lastParsedNotifyTicks", Stopwatch.GetTimestamp());
         Model("compactSampleTicks", Stopwatch.GetTimestamp() - Stopwatch.Frequency);
         var before = source.GetCompactCounters();
-        vm.RefreshCompactTelemetry(); pump();
+        vm.RefreshCompactTelemetry();
         check(double.TryParse(vm.CompactInputRate, out double rate) && rate is > 50 and < 80,
             "resumed UI reflects changed 66Hz counters, never pins 133");
+        pump();
         check(source.GetCompactCounters() == before, "UI resume never invents counters");
         var migrated = JsonSerializer.Deserialize<V60UserSettings>(
             "{\"AudioEndpointGuardEnabled\":false,\"RuntimeBatteryRefreshEnabled\":false,\"SelectedModeKey\":\"xbox\"}")!;

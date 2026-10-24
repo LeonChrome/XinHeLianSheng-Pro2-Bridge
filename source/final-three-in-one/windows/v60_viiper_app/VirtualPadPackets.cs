@@ -119,6 +119,10 @@ public sealed record ViiperDeviceProfile(
     public IReadOnlyDictionary<string, object?> DeviceSpecificArguments()
     {
         var arguments = new Dictionary<string, object?>();
+        // Every backend must know whether new physical input, rather than a
+        // host poll timeout, owns its report cadence. Do not hard-code true:
+        // explicit fixed-rate/legacy clients retain their selected policy.
+        arguments["source_paced"] = SourcePaced;
         if (!string.IsNullOrWhiteSpace(DeviceSpecificSerialNumber))
         {
             arguments["serial_number"] = DeviceSpecificSerialNumber.Trim();
@@ -130,7 +134,14 @@ public sealed record ViiperDeviceProfile(
                 (int)Math.Round(SendInterval.TotalMilliseconds),
                 1,
                 255);
-            arguments["source_paced"] = SourcePaced;
+        }
+        if (Mode == ViiperVirtualMode.Pro2)
+        {
+            // SDL's Pro2 protocol assumes a 4 ms endpoint clock. Keep the
+            // application source-paced while the USB endpoint alone performs
+            // explicit zero-order hold resampling; held reports are not new
+            // physical FD2 samples and are counted separately by the backend.
+            arguments["protocol_clock_resample"] = SourcePaced;
         }
 
         return arguments;
@@ -172,7 +183,11 @@ public static class VirtualPadPackets
     private const ushort TriggerMax = GamepadState.TriggerMax;
     private const double Pro2AccelRawPerG = ProfessionalImuConverter.SwitchAccelRawPerG;
     private const double Pro2GyroRawPerDps = ProfessionalImuConverter.SwitchGyroRawPerDps;
-    private static readonly MotionVector Ps5NeutralAccel = new(0, 0, -8192);
+    // SDL's normal gamepad orientation has +Y upward. An unavailable sensor
+    // must not invent a 90-degree rotation relative to valid flat Pro2 input
+    // (source +Z -> target +Y). This mapper is stateless across controller
+    // slots: use a documented resting fallback, never a global last sample.
+    private static readonly MotionVector Ps5NeutralAccel = new(0, 8192, 0);
 
     public static byte[] NeutralInput(ViiperDeviceProfile profile)
     {
@@ -309,10 +324,10 @@ public static class VirtualPadPackets
     {
         byte[] b = new byte[28];
         WriteU32(b, 0, Ns2ProButtons(state));
-        WriteU16(b, 4, SnapAxisCenter(state.Lx));
-        WriteU16(b, 6, SnapAxisCenter(state.Ly));
-        WriteU16(b, 8, SnapAxisCenter(state.Rx));
-        WriteU16(b, 10, SnapAxisCenter(state.Ry));
+        WriteU16(b, 4, ClampAxis(state.Lx));
+        WriteU16(b, 6, ClampAxis(state.Ly));
+        WriteU16(b, 8, ClampAxis(state.Rx));
+        WriteU16(b, 10, ClampAxis(state.Ry));
         MotionVector ns2ProAccel = MapNs2ProAccel(state);
         MotionVector ns2ProGyro = MapNs2ProGyro(state, gyroAxisInversion);
         WriteI16(b, 12, state.AccelValid ? ns2ProAccel.X : (short)0);
@@ -328,10 +343,26 @@ public static class VirtualPadPackets
     private static byte[] Pro1FromGamepad(GamepadState state, GyroAxisInversion inversion)
     {
         byte[] b = Ns2ProFromGamepad(state, inversion);
+        // SDL normalizes Switch 1 sensor axes as (-Y,+Z,-X), whereas the
+        // canonical Pro2 physical axes reach consumers as (+X,+Z,-Y).
+        // Pre-rotate at this protocol boundary, after source-axis inversion.
+        // Keep the source clock and calibrated units: the backend supplies
+        // Switch 1's advertised sensitivity, not another coordinate transform.
+        MotionVector accel = RotatePro1Axes(MapNs2ProAccel(state));
+        MotionVector gyro = RotatePro1Axes(MapNs2ProGyro(state, inversion));
+        WriteI16(b, 12, state.AccelValid ? accel.X : (short)0);
+        WriteI16(b, 14, state.AccelValid ? accel.Y : (short)0);
+        WriteI16(b, 16, state.AccelValid ? accel.Z : (short)0);
+        WriteI16(b, 18, state.GyroValid ? gyro.X : (short)0);
+        WriteI16(b, 20, state.GyroValid ? gyro.Y : (short)0);
+        WriteI16(b, 22, state.GyroValid ? gyro.Z : (short)0);
         // Pro1 has no native paddles/C key. GL/GR/C are handled by RearButtonMapper.
         WriteU32(b, 0, BinaryPrimitives.ReadUInt32LittleEndian(b) & 0x0003FFFF);
         return b;
     }
+
+    private static MotionVector RotatePro1Axes(MotionVector vector) =>
+        new(vector.Y, NegateI16(vector.X), vector.Z);
 
     private static byte[] XboxFromGamepad(GamepadState state)
     {
@@ -424,14 +455,6 @@ public static class VirtualPadPackets
         return buttons;
     }
 
-    private static ushort SnapAxisCenter(ushort value)
-    {
-        value = ClampAxis(value);
-        int delta = value - AxisCenter;
-        if (delta < 0) delta = -delta;
-        return delta <= 64 ? AxisCenter : value;
-    }
-
     private static MotionVector MapNs2ProGyro(
         GamepadState state,
         GyroAxisInversion gyroAxisInversion)
@@ -491,12 +514,13 @@ public static class VirtualPadPackets
         double accelZG = -source.AccelY / Pro2AccelRawPerG;
 
         // DualSense target axes: +source X, +source Z, -source Y.
-        double gyroX = source.GyroX / Pro2GyroRawPerDps;
-        double gyroY = source.GyroZ / Pro2GyroRawPerDps;
-        double gyroZ = -source.GyroY / Pro2GyroRawPerDps;
-        if (gyroAxisInversion.InvertX) gyroX = -gyroX;
-        if (gyroAxisInversion.InvertY) gyroY = -gyroY;
-        if (gyroAxisInversion.InvertZ) gyroZ = -gyroZ;
+        // Axis inversion is a physical Pro2/source-axis setting in every
+        // mode. Apply it before protocol rotation, so Y/Z do not silently
+        // change meaning when switching between Pro2, Pro1 and PS5.
+        MotionVector invertedGyro = MapNs2ProGyro(state, gyroAxisInversion);
+        double gyroX = invertedGyro.X / Pro2GyroRawPerDps;
+        double gyroY = invertedGyro.Z / Pro2GyroRawPerDps;
+        double gyroZ = -invertedGyro.Y / Pro2GyroRawPerDps;
 
         return new DualSenseImuRawSample(
             ClampRoundToInt16(accelXG * ProfessionalImuConverter.DualSenseAccelRawPerG),
@@ -540,7 +564,10 @@ public static class VirtualPadPackets
 
     private static short Axis12ToI16(ushort value, bool invert)
     {
-        value = SnapAxisCenter(value);
+        // Source calibration already owns its anti-drift deadzone. Applying
+        // another +/-64 clamp here swallowed valid calibrated micro-motions
+        // in every output mode, even with Raw Direct selected.
+        value = ClampAxis(value);
         int centered = value - AxisCenter;
         int scaled = centered >= 0
             ? (centered * 32767) / (AxisMax - AxisCenter)

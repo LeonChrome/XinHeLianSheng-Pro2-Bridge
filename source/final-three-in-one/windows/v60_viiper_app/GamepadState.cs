@@ -143,4 +143,6 @@ public interface IGamepadOutputSink
 {
     bool IsOutputReady { get; }
     bool TryWriteOutputReport(ReadOnlySpan<byte> report, out string error);
+    bool TryWriteOutputPacket(Pro2OutputPacket packet, out string error) =>
+        TryWriteOutputReport(packet.Report, out error);
 }

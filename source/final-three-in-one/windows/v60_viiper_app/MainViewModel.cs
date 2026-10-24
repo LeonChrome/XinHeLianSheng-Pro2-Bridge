@@ -229,7 +229,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             AppendLog(StartupProcessGuard.LastSummary);
         }
-        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：长时间显示刷新修复 · 10分钟电量更新 · 内置音频保护。");
+        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：四模式数据修复 · 运动时间适配 · 震动保持与停止保护。");
         AppendLog("[BLE_INIT_POLICY] default=no_pair_finalize pairing_finalize_15_03=blocked comparison_checkbox=skip_usb_init next_connection_only=true");
         AppendLog("[FEATURE_POLICY] gyro_quality=" + Pro2QualityMode.GyroEnabled +
             " haptics_quality=" + Pro2QualityMode.HapticsEnabled +
@@ -237,6 +237,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             " runtime_battery_refresh=" + RuntimeBatteryRefreshEnabled +
             " runtime_battery_interval_s=" + Pro2RuntimeBatteryPolicy.IntervalSeconds +
             " audio_guard=built_in_always_on");
+        AppendLog("[DATA_PATH_POLICY] source_push=fresh_only pro2_usb=4ms_zero_order_hold " +
+            "pro2_usb_repeats_are_not_fd2=true other_modes=source_paced " +
+            "digital_edges=bounded_fifo ps5_invalid_gravity=positive_y " +
+            "stick=source_calibrated_no_extra_center_snap pcm=two_peak_lossy");
         AppendLog("[BLE_COMPATIBILITY] " + BleCompatibilityInspector.Current.Telemetry);
         AppendLog("[LOG_POLICY] previous logs preserved; async bounded manager log limit=" +
                   (SessionLogWriter.MaxLogBytes / 1024 / 1024) +
@@ -250,7 +254,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             AppendLog("[PURE_SOFTWARE_133] enabled=true input_min_hz=" +
                       PureSoftware133Mode.MinimumAcceptedHz.ToString("F1") +
-                      " gameplay_min_hz=60 compatibility_mode=true cadence=source_only repeated_state_limit=" +
+                      " gameplay_min_hz=60 compatibility_mode=true source_push=fresh_only pro2_usb=protocol_resample repeated_state_limit=" +
                       PureSoftware133Mode.MaximumRepeatedStateRatio.ToString("F3"));
         }
         AppendLog("[LINK_TUNING] cadence=" + PushCadenceTelemetry(SelectedPushRateOption) +

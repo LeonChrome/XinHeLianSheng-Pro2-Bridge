@@ -9,7 +9,7 @@ namespace Y700Switch2V60Viiper;
 public sealed class Pro2QualityHapticProcessor
 {
     private const int SampleRate = 48000, Decimation = 16, AnalysisRate = 3000;
-    private const int WindowSize = 64, StartupSize = 32, Hop = 36, MaxAmplitude = 29000;
+    private const int WindowSize = 96, StartupSize = 32, Hop = 36, MaxAmplitude = 29000;
     private const int SilenceLimit = SampleRate * 80 / 1000;
     private static readonly Window FullWindow = new(WindowSize), StartupWindow = new(StartupSize);
     private readonly Channel left = new(), right = new();
@@ -30,41 +30,62 @@ public sealed class Pro2QualityHapticProcessor
         packet = default!; reason = "";
         if (pcm.Length == 0 || pcm.Length % 8 != 0)
         { reason = "DualSense HD audio packet has no complete 4-channel PCM frame"; return false; }
-        bool rawActive = false, ready = false;
+        bool produced = false;
         for (int offset = 0; offset < pcm.Length; offset += 8)
         {
             // Ignore speaker channels 1/2. Preserve the actuator pair 3/4.
             short l = BinaryPrimitives.ReadInt16LittleEndian(pcm.Slice(offset + 4, 2));
             short r = BinaryPrimitives.ReadInt16LittleEndian(pcm.Slice(offset + 6, 2));
-            rawActive |= Math.Abs((int)l) >= 64 || Math.Abs((int)r) >= 64;
+            bool rawActive = Math.Abs((int)l) >= 64 || Math.Abs((int)r) >= 64;
+            silenceFrames = rawActive ? 0 : Math.Min(SilenceLimit, silenceFrames + 1);
+            if (active && silenceFrames >= SilenceLimit)
+            {
+                Reset();
+                packet = Pro2OutputPacketMapper.BuildOrdinaryPacket(0, 0, "dualsense-hd-silence");
+                produced = true;
+            }
             left.Add(l); right.Add(r);
             if (++decimationCount < Decimation) continue;
             decimationCount = 0;
             left.Commit(); right.Commit();
             samples = Math.Min(WindowSize, samples + 1);
             sinceOutput++;
-            ready |= samples >= StartupSize && (!emitted || sinceOutput >= Hop);
+            if (samples >= StartupSize && (!emitted || sinceOutput >= Hop))
+            {
+                // Analyse on the sample clock, not at the end of a transport
+                // batch. USB fragmentation must not shift the spectral window.
+                // For a batch containing several hops return only its freshest
+                // generated state; no delayed PCM backlog is replayed.
+                if (AnalyzeOutput(out var next, out string explanation))
+                {
+                    packet = next;
+                    produced = true;
+                }
+                reason = explanation;
+            }
         }
-        silenceFrames = rawActive ? 0 : Math.Min(SilenceLimit, silenceFrames + pcm.Length / 8);
-        if (active && silenceFrames >= SilenceLimit)
-        {
-            Reset();
-            packet = Pro2OutputPacketMapper.BuildOrdinaryPacket(0, 0, "dualsense-hd-silence");
-            return true;
-        }
-        if (!ready)
-        { reason = "DualSense HD spectral window is accumulating"; return false; }
-        // Consume all input, even if a transport batch spans multiple hops.
-        // Emit only the freshest analysis; no delayed haptic backlog.
+        if (!produced && reason.Length == 0) reason = "DualSense HD spectral window is accumulating";
+        return produced;
+    }
+
+    private bool AnalyzeOutput(out Pro2OutputPacket packet, out string reason)
+    {
+        packet = default!; reason = "";
         var window = samples >= WindowSize ? FullWindow : StartupWindow;
         var lBands = left.Analyze(window);
         var rBands = right.Analyze(window);
         emitted = true; sinceOutput = 0;
-        Telemetry = "processor=quality_stft window=" + window.Size + " startup_ms=10.67 hop_ms=12" +
+        Telemetry = "processor=quality_stft reconstruction=two_peak_lossy window=" + window.Size +
+            " analysis_ms=" + F(window.Size * 1000.0 / AnalysisRate) + " startup_ms=10.67 hop_ms=12" +
+            " frequency_mapping=" + Pro2RumbleFrequencyPolicy.Mapping + " amplitude_reference=pcm_full_scale_32768" +
             " estimated_left_hz=" + F(lBands.LowFrequency) + "," + F(lBands.HighFrequency) +
             " estimated_right_hz=" + F(rBands.LowFrequency) + "," + F(rBands.HighFrequency) +
             " left_rms=" + F(lBands.LowRms) + "," + F(lBands.HighRms) +
-            " right_rms=" + F(rBands.LowRms) + "," + F(rBands.HighRms);
+            " right_rms=" + F(rBands.LowRms) + "," + F(rBands.HighRms) +
+            " retained_peaks=" + lBands.Peaks + "," + rBands.Peaks +
+            " residual_energy_fraction=" + F(lBands.ResidualFraction) + "," + F(rBands.ResidualFraction) +
+            " encoded_left_controls=" + Frequency(lBands.LowFrequency) + "," + Frequency(lBands.HighFrequency) +
+            " encoded_right_controls=" + Frequency(rBands.LowFrequency) + "," + Frequency(rBands.HighFrequency);
         ushort la = Amplitude(lBands.LowRms), lh = Amplitude(lBands.HighRms);
         ushort ra = Amplitude(rBands.LowRms), rh = Amplitude(rBands.HighRms);
         bool hasEnergy = la != 0 || lh != 0 || ra != 0 || rh != 0;
@@ -77,20 +98,27 @@ public sealed class Pro2QualityHapticProcessor
             return true;
         }
         active = true;
+        int frequencyClamps =
+            (la != 0 && Pro2RumbleFrequencyPolicy.WouldClamp(lBands.LowFrequency, 70, 511) ? 1 : 0) +
+            (lh != 0 && Pro2RumbleFrequencyPolicy.WouldClamp(lBands.HighFrequency, 70, 511) ? 1 : 0) +
+            (ra != 0 && Pro2RumbleFrequencyPolicy.WouldClamp(rBands.LowFrequency, 70, 511) ? 1 : 0) +
+            (rh != 0 && Pro2RumbleFrequencyPolicy.WouldClamp(rBands.HighFrequency, 70, 511) ? 1 : 0);
         packet = Pro2OutputPacketMapper.BuildRaw02Packet(
-            Frequency(lBands.LowFrequency, 70, 300), la, Frequency(lBands.HighFrequency, 250, 511), lh,
-            Frequency(rBands.LowFrequency, 70, 300), ra, Frequency(rBands.HighFrequency, 250, 511), rh,
-            "dualsense-hd-audio");
+            Frequency(lBands.LowFrequency), la, Frequency(lBands.HighFrequency), lh,
+            Frequency(rBands.LowFrequency), ra, Frequency(rBands.HighFrequency), rh,
+            "dualsense-hd-audio") with { FrequencyClamps = frequencyClamps };
         return true;
     }
 
     private static string F(double value) => value.ToString("F2", CultureInfo.InvariantCulture);
-    private static ushort Frequency(double value, int minimum, int maximum) =>
-        (ushort)Math.Clamp(Math.Round(value), minimum, maximum);
+    // A measured-Hz to physical oscillator-control calibration is not available.
+    // Keep the bounded legacy proxy explicit rather than labelling it lossless.
+    private static ushort Frequency(double value) => Pro2RumbleFrequencyPolicy.FromEstimatedHz(value, 70, 511);
     private static ushort Amplitude(double rms) => rms < 48 ? (ushort)0 :
-        (ushort)Math.Clamp(Math.Round(rms / 16384 * MaxAmplitude), 0, MaxAmplitude);
+        (ushort)Math.Clamp(Math.Round(rms / 32768.0 * MaxAmplitude), 0, MaxAmplitude);
 
-    private readonly record struct Bands(double LowFrequency, double LowRms, double HighFrequency, double HighRms);
+    private readonly record struct Bands(double LowFrequency, double LowRms, double HighFrequency, double HighRms,
+        int Peaks, double ResidualFraction);
     private sealed class Window
     {
         public int Size { get; }
@@ -98,7 +126,7 @@ public sealed class Pro2QualityHapticProcessor
         public readonly double Energy;
         public Window(int size)
         {
-            Size = size; Hann = new double[size]; Coefficient = new double[17];
+            Size = size; Hann = new double[size]; Coefficient = new double[size / 2 + 1];
             for (int i = 0; i < size; i++)
             { Hann[i] = 0.5 - 0.5 * Math.Cos(2 * Math.PI * i / (size - 1)); Energy += Hann[i] * Hann[i]; }
             for (int bin = 0; bin < Coefficient.Length; bin++)
@@ -126,10 +154,10 @@ public sealed class Pro2QualityHapticProcessor
             for (int i = 0; i < n; i++) mean += ring[(start + i) % WindowSize];
             mean /= n;
             Span<double> data = stackalloc double[WindowSize];
-            Span<double> power = stackalloc double[17];
+            Span<double> power = stackalloc double[WindowSize / 2 + 1];
             power.Clear();
             for (int i = 0; i < n; i++) data[i] = (ring[(start + i) % WindowSize] - mean) * window.Hann[i];
-            int lastBin = Math.Min(15, n / 2 - 1);
+            int lastBin = Math.Min((int)Math.Ceiling(600.0 * n / AnalysisRate), n / 2 - 1);
             for (int bin = 1; bin <= lastBin; bin++)
             {
                 double first = 0, second = 0, coefficient = window.Coefficient[bin];
@@ -137,28 +165,63 @@ public sealed class Pro2QualityHapticProcessor
                 { double current = data[i] + coefficient * first - second; second = first; first = current; }
                 power[bin] = Math.Max(0, first * first + second * second - coefficient * first * second);
             }
-            int split = (int)Math.Floor(250.0 * n / AnalysisRate);
-            int highEnd = Math.Min(lastBin - 1, (int)Math.Ceiling(550.0 * n / AnalysisRate));
-            var low = Band(power, 1, split, n, window.Energy);
-            var high = Band(power, split + 1, highEnd, n, window.Energy);
-            return new(low.Frequency, low.Rms, high.Frequency, high.Rms);
+            return SelectPeaks(power, lastBin, n, window.Energy);
         }
-        private static (double Frequency, double Rms) Band(ReadOnlySpan<double> power, int begin, int end, int n, double energy)
+        private static Bands SelectPeaks(ReadOnlySpan<double> power, int lastBin, int n, double energy)
         {
-            int peak = begin; double total = 0;
-            for (int bin = begin; bin <= end; bin++)
-            { total += power[bin]; if (power[bin] > power[peak]) peak = bin; }
-            // A main lobe crossing the arbitrary band boundary is not a
-            // second oscillator. Reject its descending shoulder rather than
-            // turning a single 237 Hz tone into a spurious high-band effect.
-            if (power[peak - 1] >= power[peak] || power[peak + 1] > power[peak])
-                return (peak * AnalysisRate / (double)n, 0);
+            // Keep the two strongest resolved peaks, not one mandatory peak in
+            // each band. Two genuine low-band tones must not collapse into a
+            // false frequency between them. The finite window remains lossy.
+            int first = -1, second = -1;
+            for (int bin = 1; bin < lastBin; bin++)
+            {
+                if (!IsPeak(power, bin) || PeakHz(power, bin, n) < 70 || PeakHz(power, bin, n) > 550) continue;
+                if (first < 0 || power[bin] > power[first]) first = bin;
+            }
+            if (first < 0) return new(0x112, 0, 0x187, 0, 0, 0);
+            double firstHz = PeakHz(power, first, n);
+            for (int bin = 1; bin < lastBin; bin++)
+            {
+                if (!IsPeak(power, bin) || bin == first || power[bin] < power[first] * .0025) continue;
+                double hz = PeakHz(power, bin, n);
+                // A Hann main lobe / side lobe is not a new oscillator.
+                if (hz < 70 || hz > 550 || Math.Abs(hz - firstHz) < 1.75 * AnalysisRate / n) continue;
+                if (second < 0 || power[bin] > power[second]) second = bin;
+            }
+            double secondHz = second >= 0 ? PeakHz(power, second, n) : 0;
+            double firstPower = 0, secondPower = 0, total = 0;
+            int end = Math.Min(lastBin, (int)Math.Ceiling(550.0 * n / AnalysisRate));
+            for (int bin = 1; bin <= end; bin++)
+            {
+                total += power[bin];
+                double firstDistance = Math.Abs(bin - firstHz * n / AnalysisRate);
+                double secondDistance = second < 0 ? double.MaxValue : Math.Abs(bin - secondHz * n / AnalysisRate);
+                // Assign each bin once. Two peaks must not each receive the
+                // whole band's RMS, which would double-count signal energy.
+                if (firstDistance <= secondDistance && firstDistance <= 2) firstPower += power[bin];
+                else if (secondDistance < firstDistance && secondDistance <= 2) secondPower += power[bin];
+            }
+            double firstRms = Math.Sqrt(2 * firstPower / (n * energy));
+            double secondRms = Math.Sqrt(2 * secondPower / (n * energy));
+            double residual = total > 0 ? Math.Clamp(1 - (firstPower + secondPower) / total, 0, 1) : 0;
+            if (second < 0)
+                return firstHz < 250
+                    ? new(firstHz, firstRms, 0x187, 0, 1, residual)
+                    : new(0x112, 0, firstHz, firstRms, 1, residual);
+            return firstHz < secondHz
+                ? new(firstHz, firstRms, secondHz, secondRms, 2, residual)
+                : new(secondHz, secondRms, firstHz, firstRms, 2, residual);
+        }
+        private static bool IsPeak(ReadOnlySpan<double> power, int peak) =>
+            power[peak] > power[peak - 1] && power[peak] >= power[peak + 1] && power[peak] > 0;
+        private static double PeakHz(ReadOnlySpan<double> power, int peak, int n)
+        {
             double a = Math.Log(Math.Max(power[peak - 1], 1e-20));
             double b = Math.Log(Math.Max(power[peak], 1e-20));
             double c = Math.Log(Math.Max(power[peak + 1], 1e-20));
             double denominator = a - 2 * b + c;
             double delta = Math.Abs(denominator) > 1e-12 ? Math.Clamp(0.5 * (a - c) / denominator, -0.5, 0.5) : 0;
-            return ((peak + delta) * AnalysisRate / n, Math.Sqrt(2 * total / (n * energy)));
+            return (peak + delta) * AnalysisRate / n;
         }
     }
     private sealed class Biquad

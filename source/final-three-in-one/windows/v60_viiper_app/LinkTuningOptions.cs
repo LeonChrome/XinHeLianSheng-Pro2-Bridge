@@ -277,8 +277,8 @@ public sealed record StickProcessingOption(
     [
         new(
             StickProcessingMode.RawDirect,
-            "Raw Direct（推荐）",
-            "真实 Pro2 摇杆原始值直通到虚拟手柄，不做 hold/ramp/filter，最低延迟。"),
+            "直接响应（推荐）",
+            "保留手柄校准，不额外平滑、吸附中心或延迟响应。"),
         new(
             StickProcessingMode.StabilityGuard,
             "Stability Guard（诊断）",

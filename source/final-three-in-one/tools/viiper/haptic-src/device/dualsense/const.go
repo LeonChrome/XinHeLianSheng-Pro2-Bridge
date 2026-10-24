@@ -102,8 +102,8 @@ const (
 
 const (
 	DefaultAccelXRaw int16 = 0
-	DefaultAccelYRaw int16 = 0
-	DefaultAccelZRaw int16 = -8192 // -1g (8192 counts/g)
+	DefaultAccelYRaw int16 = 8192 // SDL canonical +Y gravity, 8192 counts/g
+	DefaultAccelZRaw int16 = 0
 )
 
 // Touchpad dimensions.

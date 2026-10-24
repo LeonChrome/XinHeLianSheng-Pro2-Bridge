@@ -2,7 +2,8 @@ using System;
 
 namespace Y700Switch2V60Viiper;
 
-public sealed record Pro2OutputPacket(byte[] Report, string Source, bool Active, byte? PlayerLedMask);
+public sealed record Pro2OutputPacket(byte[] Report, string Source, bool Active, byte? PlayerLedMask,
+    bool PreserveNativePayload = false, string ConversionTelemetry = "", int FrequencyClamps = 0);
 
 public static class Pro2OutputPacketMapper
 {
@@ -82,10 +83,8 @@ public static class Pro2OutputPacketMapper
         feedback.Slice(0, 16).CopyTo(report.AsSpan(RumbleSideOffsetLeft, 16));
         feedback.Slice(16, 16).CopyTo(report.AsSpan(RumbleSideOffsetRight, 16));
 
-        bool active =
-            SwitchFrameHasEffect(report.AsSpan(RumbleFrameOffsetLeft, RumbleFrameBytes)) ||
-            SwitchFrameHasEffect(report.AsSpan(RumbleFrameOffsetRight, RumbleFrameBytes));
-        packet = new Pro2OutputPacket(report, "ns2pro-hd", active, playerLed);
+        bool active = Pro2NativeRumbleEncoder.HasEffect(report);
+        packet = new Pro2OutputPacket(report, "ns2pro-hd", active, playerLed, PreserveNativePayload: true);
         return true;
     }
 
@@ -95,8 +94,11 @@ public static class Pro2OutputPacketMapper
         string source)
     {
         byte[] report = NewSwitch2OutputReport();
-        BuildOrdinarySide(weak, strong, report.AsSpan(RumbleSideOffsetLeft, 16));
-        BuildOrdinarySide(weak, strong, report.AsSpan(RumbleSideOffsetRight, 16));
+        // XInput and DualSense legacy rumble specify a strong/low-frequency
+        // LEFT motor and a weak/high-frequency RIGHT motor. Do not mix both
+        // values into both physical sides: that discards source spatial cues.
+        BuildOrdinarySide(0, strong, report.AsSpan(RumbleSideOffsetLeft, 16));
+        BuildOrdinarySide(weak, 0, report.AsSpan(RumbleSideOffsetRight, 16));
         return new Pro2OutputPacket(report, source, weak != 0 || strong != 0, null);
     }
 
@@ -124,11 +126,9 @@ public static class Pro2OutputPacketMapper
             lowFrequencyRight,
             lowAmplitudeRight,
             report.AsSpan(RumbleFrameOffsetRight, RumbleFrameBytes));
-        bool active =
-            lowAmplitudeLeft != 0 ||
-            highAmplitudeLeft != 0 ||
-            lowAmplitudeRight != 0 ||
-            highAmplitudeRight != 0;
+        // Inputs smaller than one packed amplitude step quantise to zero.
+        // Report actual encoded activity, not the unquantised input value.
+        bool active = Pro2NativeRumbleEncoder.HasEffect(report);
         return new Pro2OutputPacket(report, source, active, null);
     }
 
@@ -152,8 +152,10 @@ public static class Pro2OutputPacketMapper
     {
         ushort lowAmp = ScaleAmplitude(strong, OrdinaryMaxAmplitude);
         ushort highAmp = ScaleAmplitude(weak, OrdinaryMaxAmplitude);
-        ushort lowFreq = lowAmp == 0 ? (ushort)0x0e1 : MixFrequency(0x0b8, 0x122, strong);
-        ushort highFreq = highAmp == 0 ? (ushort)0x1e1 : MixFrequency(0x160, 0x1f0, weak);
+        // Ordinary rumble supplies intensity only. Reference controls are not
+        // measured Hz, and do not change timbre when the intensity changes.
+        ushort lowFreq = Pro2RumbleFrequencyPolicy.ReferenceLowControl;
+        ushort highFreq = Pro2RumbleFrequencyPolicy.ReferenceHighControl;
 
         EncodeSwitchRumbleFrame(highFreq, highAmp, lowFreq, lowAmp, outFrame);
     }
@@ -165,10 +167,12 @@ public static class Pro2OutputPacketMapper
         ushort lowAmp,
         Span<byte> outFrame)
     {
-        highFreq &= 0x03ff;
-        lowFreq &= 0x03ff;
-        highAmp &= 0xffc0;
-        lowAmp &= 0xffc0;
+        highFreq = (ushort)Math.Min(highFreq, (ushort)0x03ff);
+        lowFreq = (ushort)Math.Min(lowFreq, (ushort)0x03ff);
+        // Clamp before masking: an out-of-range amplitude must not wrap.
+        // Quantise once; final transport applies user gain only to this code.
+        highAmp = (ushort)(Math.Min(highAmp, OrdinaryMaxAmplitude) & 0xffc0);
+        lowAmp = (ushort)(Math.Min(lowAmp, OrdinaryMaxAmplitude) & 0xffc0);
 
         outFrame[0] = (byte)(highFreq & 0xff);
         outFrame[1] = (byte)(((highFreq >> 8) & 0x03) | ((highAmp >> 4) & 0xfc));
@@ -185,11 +189,6 @@ public static class Pro2OutputPacketMapper
         }
 
         return (ushort)((value * (uint)maxAmplitude + 127u) / 255u);
-    }
-
-    private static ushort MixFrequency(ushort low, ushort high, byte value)
-    {
-        return (ushort)(low + (((uint)(high - low) * value + 127u) / 255u));
     }
 
     private static bool SwitchFrameHasEffect(ReadOnlySpan<byte> frame)

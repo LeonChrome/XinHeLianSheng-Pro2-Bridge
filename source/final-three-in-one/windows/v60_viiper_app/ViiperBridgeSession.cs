@@ -22,6 +22,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
     private readonly IGamepadInputSource? inputSource;
     private readonly IGamepadOutputSink? outputSink;
     private readonly RearButtonMapper rearButtonMapper = new();
+    private readonly MotionValidityPolicy motionValidityPolicy = new();
     private RearButtonConfiguration rearButtonConfiguration = new();
     private int rearCancelRequested;
     private readonly IProgress<ProfessionalImuUiSnapshot>? professionalImuUiProgress;
@@ -152,6 +153,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        motionValidityPolicy.Reset();
         string ping = await client.PingAsync(cancellationToken);
         progress.Report("[VIIPER] ping " + ping);
 
@@ -171,7 +173,11 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         if (deviceSpecific.Count > 0)
         {
             progress.Report("[VIIPER_DEVICE_SPECIFIC] profile=\"" + profile.Label +
-                            "\" serial_number=\"" + profile.DeviceSpecificSerialNumber + "\"");
+                            "\" serial_number=\"" + profile.DeviceSpecificSerialNumber + "\"" +
+                            " source_paced=" + profile.SourcePaced +
+                            " usb_motion_policy=" + (profile.Mode == ViiperVirtualMode.Pro2 && profile.SourcePaced
+                                ? "4ms_zero_order_hold_source_repeats_counted" : "source_paced_or_explicit_legacy") +
+                            " physical_input_rate_scope=fd2_notify_only");
         }
         bool identityOk = profile.MatchesIdentity(device);
         progress.Report(
@@ -231,6 +237,10 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         progress.Report(outputSink is { IsOutputReady: true }
             ? "[VIIPER] Pro2 output writeback is enabled for rumble."
             : "[VIIPER] Pro2 output writeback is not ready; host rumble will be logged only.");
+        if (profile.IsPs5Family)
+            progress.Report("[PS5_MOTION_VALIDITY] invalid_accel=session_last_valid_gravity" +
+                " no_cache_gravity=0,8192,0 invalid_gyro=zero cache=session_local" +
+                " cache_reset=start_stop source_state_mutation=false");
         if (profile.IsProfessionalImuTest && professionalImuOptions.Enabled)
         {
             professionalImuRuntime = new ProfessionalImuRuntime(professionalImuOptions, profile.Mode.ToString(), progress);
@@ -263,6 +273,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         await DrainTaskAsync(inputTask);
         await DrainTaskAsync(feedbackTask);
         rearButtonMapper.Reset();
+        motionValidityPolicy.Reset();
         // Stop the physical actuators only after the feedback loop has drained,
         // so no late game frame can overwrite this neutral during mode switch.
         if (outputSink?.IsOutputReady == true)
@@ -379,8 +390,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
             {
                 // An exceptional control-release frame, not a new measured FD2
                 // input. Do not add it to frames/Hz/IMU telemetry counters.
-                await current.WriteAsync(VirtualPadPackets.FromGamepad(profile, pendingRearRelease,
-                    gyroAxisInversion, ps5ImuMapping, ps5OutputImuTuning), cancellationToken).ConfigureAwait(false);
+                await current.WriteAsync(MapInputPacket(pendingRearRelease), cancellationToken).ConfigureAwait(false);
                 pendingRearRelease = null;
                 progress.Report("[REAR_SAFETY_RELEASE] mapped_controls_only=true physical_keys_preserved=true counted_as_fd2=false");
                 return true;
@@ -615,12 +625,8 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 else
                     rearButtonMapper.Reset();
                 packetSourceState = continuous;
-                packet = VirtualPadPackets.FromGamepad(
-                    profile,
+                packet = MapInputPacket(
                     continuous,
-                    gyroAxisInversion,
-                    ps5ImuMapping,
-                    ps5OutputImuTuning,
                     professionalFrame.DualSenseRaw,
                     ReferenceEquals(physicalControls, continuous) ? professionalFrame.XboxState :
                         RearButtonMapper.MergeProfessionalControls(continuous, professionalFrame.XboxState));
@@ -629,7 +635,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
             {
                 rearButtonMapper.Reset();
                 currentSameStatePushes = 0;
-                packet = VirtualPadPackets.NeutralInput(profile);
+                packet = MapInputPacket(null);
                 source = "neutral";
             }
 
@@ -641,6 +647,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
 
             if (profile.Mode == ViiperVirtualMode.DualSenseProfessionalImuTest &&
                 professionalImuRuntime != null &&
+                packetSourceState is { GyroValid: true, AccelValid: true } &&
                 professionalFrame.DualSenseRaw is { } professionalDualSenseRaw)
             {
                 ProfessionalHidAuditControlState auditControl =
@@ -868,6 +875,25 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                                 " frames " + rateSummary + inputMetrics);
             }
         }
+    }
+
+    private byte[] MapInputPacket(
+        GamepadState? source,
+        DualSenseImuRawSample? professionalDualSenseImu = null,
+        GamepadState? professionalXboxState = null)
+    {
+        GamepadState? output = source;
+        if (profile.IsPs5Family)
+        {
+            output = motionValidityPolicy.Resolve(source);
+            // An independently cached/diagnostic raw sample must not bypass
+            // the invalid-gyro stop or session-local gravity policy.
+            if (source == null || !source.GyroValid || !source.AccelValid)
+                professionalDualSenseImu = null;
+        }
+        return VirtualPadPackets.FromGamepad(
+            profile, output, gyroAxisInversion, ps5ImuMapping, ps5OutputImuTuning,
+            professionalDualSenseImu, professionalXboxState);
     }
 
     private static double TicksToMilliseconds(long ticks)
@@ -1105,7 +1131,9 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         progress.Report("[QUALITY_PIPELINE] gyro_quality=" + Pro2QualityMode.GyroEnabled +
             " haptics_quality=" + Pro2QualityMode.HapticsEnabled +
             " native_pcm_supported=" + profile.UsesDualSenseHaptics +
-            " input_rate_path=unchanged rumble_writer=unchanged");
+            " input_rate_path=unchanged native_pro2=payload_preserving_ordered" +
+            " pcm_idle_guard=independent_120ms guard_check_max_wait_ms=40" +
+            " host_sensor_enable=not_observable_in_feedback_stream");
         ulong writes = 0;
         ulong failures = 0;
         Dictionary<byte, string> lastFeedbackSummaryByKind = new();
@@ -1113,8 +1141,34 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         string lastOutputState = "";
         HashSet<string> reportedSkipReasons = new(StringComparer.Ordinal);
         Task<byte[]>? pendingRead = null;
+        long lastHapticTelemetry = Stopwatch.GetTimestamp();
+        void QueueFeedbackStop(string source, bool idleOnly)
+        {
+            Pro2OutputPacket stop = default!;
+            bool needed = dualSenseScheduler != null && (idleOnly
+                ? dualSenseScheduler.TryStopIdle(out stop)
+                : dualSenseScheduler.TryStop(source, out stop));
+            if (!needed) return;
+            Volatile.Write(ref feedbackSource, "触觉音频通道 · 待信号");
+            bool queued = outputSink?.IsOutputReady == true &&
+                outputSink.TryWriteOutputPacket(stop, out _);
+            if (queued) Interlocked.Increment(ref feedbackQueued);
+            progress.Report("[HAPTIC_STOP] source=" + stop.Source + " queued=" + queued +
+                " " + dualSenseScheduler!.StateTelemetry);
+        }
+        try
+        {
         while (!cancellationToken.IsCancellationRequested)
         {
+            // Check the PCM clock on every pass, even while LED/HID traffic is
+            // continuous. Unrelated host messages must not postpone PCM stop.
+            QueueFeedbackStop("dualsense-hd-idle-stop", idleOnly: true);
+            if (dualSenseScheduler != null &&
+                Stopwatch.GetElapsedTime(lastHapticTelemetry).TotalSeconds >= 5)
+            {
+                lastHapticTelemetry = Stopwatch.GetTimestamp();
+                progress.Report("[PS5_FEEDBACK_STATE] " + dualSenseScheduler.StateTelemetry);
+            }
             ViiperDeviceStream? current = GetStream();
             if (current == null)
             {
@@ -1130,18 +1184,13 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                     try
                     {
                         feedback = await pendingRead.WaitAsync(
-                            TimeSpan.FromMilliseconds(120), cancellationToken).ConfigureAwait(false);
+                            TimeSpan.FromMilliseconds(40), cancellationToken).ConfigureAwait(false);
                     }
                     catch (TimeoutException)
                     {
                         // Do not cancel or replace the outstanding read: otherwise
                         // the next frame could be consumed by an abandoned task.
-                        if (dualSenseScheduler.TryStopIdle(out Pro2OutputPacket stop))
-                        {
-                            Volatile.Write(ref feedbackSource, "触觉音频通道 · 待信号");
-                            if (outputSink?.IsOutputReady == true)
-                                outputSink.TryWriteOutputReport(stop.Report, out _);
-                        }
+                        QueueFeedbackStop("dualsense-hd-idle-stop", idleOnly: true);
                         continue;
                     }
                 }
@@ -1152,6 +1201,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 pendingRead = null;
+                QueueFeedbackStop("dualsense-feedback-stream-lost-stop", idleOnly: false);
                 if (await RecoverStreamAsync("feedback", current, ex, cancellationToken).ConfigureAwait(false))
                 {
                     continue;
@@ -1187,7 +1237,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 if (mapped)
                     Volatile.Write(ref feedbackSource, profile.Mode switch
                     {
-                        ViiperVirtualMode.Pro2 => "Pro2 原始震动反馈",
+                        ViiperVirtualMode.Pro2 => "Pro2 原始震动",
                         ViiperVirtualMode.Pro1 => "Pro1 震动 · 转换中",
                         _ => "普通震动 · 游戏反馈"
                     });
@@ -1245,7 +1295,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 continue;
             }
 
-            if (outputSink.TryWriteOutputReport(packet.Report, out string error))
+            if (outputSink.TryWriteOutputPacket(packet, out string error))
             {
                 writes++;
                 Interlocked.Increment(ref feedbackQueued);
@@ -1254,6 +1304,8 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 {
                     lastOutputState = state;
                     progress.Report("[PRO2_OUTPUT] queued " + state + " count=" + writes);
+                    if (!string.IsNullOrEmpty(packet.ConversionTelemetry))
+                        progress.Report("[RUMBLE_CONVERSION] source=" + packet.Source + " " + packet.ConversionTelemetry);
                 }
             }
             else
@@ -1266,6 +1318,13 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                     progress.Report("[PRO2_OUTPUT] write failed count=" + failures + " error=" + error);
                 }
             }
+        }
+        }
+        finally
+        {
+            // This loop is the sole owner of the scheduler: reset DSP/history
+            // before recovery, mode replacement, shutdown or a cancelled read.
+            QueueFeedbackStop("dualsense-feedback-loop-stop", idleOnly: false);
         }
     }
 
@@ -1550,7 +1609,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 " physical_pro2=" + physicalPro2 +
                 " mapped_ds=" + mappedDs +
                 " ds_raw=" + dsRaw +
-                " neutral_accel=0,0,-8192" +
+                " neutral_accel=0,8192,0" +
                 " gyro_raw_per_dps=" + Format(dsGyroRawPerDps) +
                 " pro2_accel_raw_per_g=" + Format(pro2AccelRawPerG) +
                 " ds_accel_raw_per_g=" + Format(dsAccelRawPerG);

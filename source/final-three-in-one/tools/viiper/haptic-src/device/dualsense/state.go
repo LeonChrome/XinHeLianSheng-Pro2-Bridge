@@ -128,6 +128,7 @@ func (f *OutputState) UnmarshalBinary(data []byte) error {
 }
 
 type MetaState struct {
+	SourcePaced  bool      `json:"source_paced"`
 	SerialNumber string    `json:"serial_number"`
 	MACAddress   string    `json:"mac_address"` // "XX:XX:XX:XX:XX:XX"
 	Board        string    `json:"board"`

@@ -18,7 +18,7 @@ import (
 )
 
 type DualSense struct {
-	inputCh    chan *InputState
+	inputQueue *device.InputQueue[queuedInput]
 	inputState *InputState
 	metaState  *MetaState
 
@@ -35,10 +35,26 @@ type DualSense struct {
 
 	subcommand [2]byte
 
-	seqCounter    uint8
-	timestampBase time.Time
+	seqCounter             uint8
+	timestampBase          time.Time
+	sourcePaced            bool
+	lastSampleTS           uint64
+	clockMu                sync.Mutex
+	reportMu               sync.Mutex
+	lastOutputTS           uint64
+	outputClockInitialized bool
 
 	mtx sync.Mutex
+}
+
+type queuedInput struct {
+	State     InputState
+	Timestamp uint64
+}
+
+func sameInputDigital(a, b queuedInput) bool {
+	x, y := a.State, b.State
+	return x.Buttons == y.Buttons && x.DPad == y.DPad && (x.L2 > 0) == (y.L2 > 0) && (x.R2 > 0) == (y.R2 > 0) && x.Touch1Active == y.Touch1Active && x.Touch2Active == y.Touch2Active
 }
 
 func New(o *device.CreateOptions) (*DualSense, error) {
@@ -92,12 +108,14 @@ func new(o *device.CreateOptions, edge bool) (*DualSense, error) {
 			metaState.BatteryVoltage = newMeta.BatteryVoltage
 		}
 		metaState.ShellColor = newMeta.ShellColor
+		metaState.SourcePaced = newMeta.SourcePaced
 	}
 
 	d := &DualSense{
-		descriptor: defaultDescriptor,
-		metaState:  metaState,
-		deviceType: "dualsense",
+		descriptor:  defaultDescriptor,
+		metaState:   metaState,
+		deviceType:  "dualsense",
+		sourcePaced: metaState.SourcePaced,
 	}
 	d.descriptor.Device.IDProduct = DefaultPIDDS
 	if edge {
@@ -122,9 +140,11 @@ func new(o *device.CreateOptions, edge bool) (*DualSense, error) {
 		"interfaces", len(d.descriptor.Interfaces))
 
 	d.inputState = NewInputState()
-	d.inputCh = make(chan *InputState, 1)
-	d.inputCh <- d.inputState
 	d.timestampBase = time.Now()
+	d.inputQueue = device.NewInputQueue[queuedInput](64, sameInputDigital)
+	d.inputQueue.SetTelemetry("ps5", "sample_arrival_3ticks_per_us")
+	d.inputQueue.Seed(queuedInput{State: *d.inputState, Timestamp: 1})
+	d.lastSampleTS = 1
 
 	return d, nil
 }
@@ -158,15 +178,26 @@ func (d *DualSense) SetHapticAudioCallback(f func([]byte)) {
 }
 
 func (d *DualSense) UpdateInputState(state *InputState) {
-	d.mtx.Lock()
-	d.inputState = state
-	d.mtx.Unlock()
-	select {
-	case <-d.inputCh:
-	default:
+	if state == nil {
+		return
 	}
-	d.inputCh <- state
+	owned := *state
+	d.mtx.Lock()
+	d.inputState = &owned
+	d.mtx.Unlock()
+	d.clockMu.Lock()
+	ts := uint64(time.Since(d.timestampBase).Microseconds() * 3)
+	if ts <= d.lastSampleTS {
+		ts = d.lastSampleTS + 1
+	}
+	d.lastSampleTS = ts
+	d.clockMu.Unlock()
+	d.inputQueue.Push(queuedInput{State: owned, Timestamp: ts})
 }
+
+func (d *DualSense) SourcePacedInput() bool                     { return d.sourcePaced }
+func (d *DualSense) InputTransferStats() device.InputQueueStats { return d.inputQueue.Stats() }
+func (d *DualSense) RecordInputRepeat()                         { d.inputQueue.RecordRepeat() }
 
 func (d *DualSense) GetDescriptor() *usb.Descriptor {
 	return &d.descriptor
@@ -185,6 +216,8 @@ func (d *DualSense) GetDeviceSpecificArgs() map[string]any {
 	if err != nil {
 		return map[string]any{}
 	}
+	res["input_transfer"] = d.inputQueue.Stats()
+	res["source_paced"] = d.sourcePaced
 	return res
 }
 
@@ -192,21 +225,29 @@ func (d *DualSense) HandleTransfer(ctx context.Context, ep uint32, dir uint32, o
 	if dir == usbip.DirIn {
 		switch ep {
 		case 4:
-			select {
-			case <-ctx.Done():
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			for {
+				if ctx.Err() != nil && d.sourcePaced {
+					return nil
+				}
+				if sample, ok := d.inputQueue.Pop(); ok {
 					d.mtx.Lock()
-					is := d.inputState
 					ms := *d.metaState
 					d.mtx.Unlock()
-					return d.buildUSBInputReport(is, &ms)
+					return d.buildUSBInputReportAt(&sample.State, &ms, sample.Timestamp)
 				}
-				return nil
-			case is := <-d.inputCh:
-				d.mtx.Lock()
-				ms := *d.metaState
-				d.mtx.Unlock()
-				return d.buildUSBInputReport(is, &ms)
+				select {
+				case <-ctx.Done():
+					if !d.sourcePaced && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+						d.mtx.Lock()
+						is := d.inputState
+						ms := *d.metaState
+						d.mtx.Unlock()
+						d.inputQueue.RecordRepeat()
+						return d.buildUSBInputReport(is, &ms)
+					}
+					return nil
+				case <-d.inputQueue.Wake():
+				}
 			}
 		default:
 			return nil
@@ -514,6 +555,18 @@ func (d *DualSense) featureReportCommandResponse() []byte {
 }
 
 func (d *DualSense) buildUSBInputReport(s *InputState, m *MetaState) []byte {
+	return d.buildUSBInputReportAt(s, m, uint64(time.Since(d.timestampBase).Microseconds()*3))
+}
+func (d *DualSense) buildUSBInputReportAt(s *InputState, m *MetaState, timestamp uint64) []byte {
+	d.reportMu.Lock()
+	defer d.reportMu.Unlock()
+	// SDL's 32-bit parser treats an equal tick as a full wrap. Preserve strict
+	// modulo ordering even for a concurrent HID GET_REPORT and a queued sample.
+	if d.outputClockInitialized && timestamp <= d.lastOutputTS {
+		timestamp = d.lastOutputTS + 1
+	}
+	d.lastOutputTS = timestamp
+	d.outputClockInitialized = true
 	b := make([]byte, InputReportSize)
 
 	b[0] = ReportIDInput
@@ -560,8 +613,7 @@ func (d *DualSense) buildUSBInputReport(s *InputState, m *MetaState) []byte {
 	binary.LittleEndian.PutUint16(b[24:26], uint16(s.AccelY))
 	binary.LittleEndian.PutUint16(b[26:28], uint16(s.AccelZ))
 
-	ts := uint32(time.Since(d.timestampBase).Microseconds() * 3)
-	binary.LittleEndian.PutUint32(b[28:32], ts)
+	binary.LittleEndian.PutUint32(b[28:32], uint32(timestamp))
 
 	touch1 := uint8(0)
 	if !s.Touch1Active {

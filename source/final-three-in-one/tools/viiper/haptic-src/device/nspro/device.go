@@ -25,6 +25,7 @@ type Pro struct {
 	mu              sync.Mutex
 	wake            chan struct{}
 	state           ns2pro.InputState // shared 28-byte internal wire, not a Pro2 USB identity
+	inputQueue      *device.InputQueue[ns2pro.InputState]
 	pending         bool
 	replies         [][]byte
 	mode            byte
@@ -55,6 +56,9 @@ func New(o *device.CreateOptions) (*Pro, error) {
 	}
 	p := &Pro{wake: make(chan struct{}, 1), state: *ns2pro.NewInputState(), pending: true,
 		mode: 0x3F, mac: mac, started: time.Now(), meta: meta, descriptor: makeDescriptor(meta.SerialNumber)}
+	p.inputQueue = device.NewInputQueue[ns2pro.InputState](64, func(a, b ns2pro.InputState) bool { return a.Buttons == b.Buttons })
+	p.inputQueue.Seed(p.state)
+	p.inputQueue.SetTelemetry("pro1", "source_reports_three_held_imu_slots")
 	return p, nil
 }
 
@@ -62,12 +66,16 @@ func (p *Pro) GetDescriptor() *usb.Descriptor { return &p.descriptor }
 func (p *Pro) GetDeviceSpecificArgs() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return map[string]any{"serial_number": p.meta.SerialNumber, "source_paced": true}
+	return map[string]any{"serial_number": p.meta.SerialNumber, "source_paced": true, "input_transfer": p.inputQueue.Stats()}
 }
+func (p *Pro) SourcePacedInput() bool                     { return true }
+func (p *Pro) InputTransferStats() device.InputQueueStats { return p.inputQueue.Stats() }
+func (p *Pro) RecordInputRepeat()                         { p.inputQueue.RecordRepeat() }
 func (p *Pro) UpdateInputState(s ns2pro.InputState) {
 	p.mu.Lock()
 	p.state = s
 	p.pending = true
+	p.inputQueue.Push(s)
 	p.mu.Unlock()
 	p.signal()
 }
@@ -112,6 +120,13 @@ func (p *Pro) HandleTransfer(ctx context.Context, ep, dir uint32, out []byte) []
 		if len(p.replies) > 0 {
 			r := p.replies[0]
 			p.replies = p.replies[1:]
+			p.mu.Unlock()
+			return r
+		}
+		if st, ok := p.inputQueue.Pop(); ok {
+			p.state = st
+			p.pending = false
+			r := p.inputLocked(p.mode)
 			p.mu.Unlock()
 			return r
 		}
@@ -368,8 +383,10 @@ func (p *Pro) spiReplyLocked(out, r []byte) {
 	}
 }
 func flashByte(address uint32) byte {
-	// Centre 2048, symmetric 1600 ranges match the app's normalized stick range.
-	stick := []byte{0x40, 0x06, 0x64, 0, 0x08, 0x80, 0x40, 0x06, 0x64, 0, 0x08, 0x80, 0x40, 0x06, 0x64, 0x40, 0x06, 0x64}
+	// The app supplies the complete normalized 12-bit range. Advertise the
+	// same endpoints: centre=2048, positive=2047, negative=2048. A 1600
+	// calibration here clipped the last 22% of valid travel in SDL/Steam.
+	stick := []byte{0xFF, 0xF7, 0x7F, 0, 0x08, 0x80, 0, 0x08, 0x80, 0, 0x08, 0x80, 0, 0x08, 0x80, 0xFF, 0xF7, 0x7F}
 	if address >= 0x603D && address < 0x603D+18 {
 		return stick[address-0x603D]
 	}

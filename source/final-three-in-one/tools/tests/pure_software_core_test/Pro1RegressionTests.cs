@@ -21,9 +21,10 @@ internal static class Pro1RegressionTests
             AccelValid = true, GyroValid = true, AccelZ = 4096, GyroX = 1638, MotionTimestampUs = 7500, Updates = 9 };
         byte[] wire = VirtualPadPackets.FromGamepad(profile, state);
         check(BinaryPrimitives.ReadUInt32LittleEndian(wire) == 2 &&
-            BinaryPrimitives.ReadInt16LittleEndian(wire.AsSpan(18)) == 1638 &&
+            BinaryPrimitives.ReadInt16LittleEndian(wire.AsSpan(18)) == 0 &&
+            BinaryPrimitives.ReadInt16LittleEndian(wire.AsSpan(20)) == -1638 &&
             BinaryPrimitives.ReadUInt32LittleEndian(wire.AsSpan(24)) == 7500 && state.Updates == 9,
-            "Pro1 forwards true source units/clock, drops unsupported raw keys");
+            "Pro1 rotates physical axes, retains true source units/clock, drops unsupported raw keys");
         var nintendo = RearButtonChoice.Choices(false, true);
         check(nintendo.Single(c => c.Key == GamepadButtons.East).Label == "A" &&
             nintendo.Single(c => c.Key == GamepadButtons.South).Label == "B" &&
@@ -39,8 +40,8 @@ internal static class Pro1RegressionTests
         {
             var decoded = Switch1RumbleConverter.Decode(new byte[] { 0, (byte)code, 0x40, (byte)code });
             check(decoded.LowAmplitude <= 29000 && decoded.HighAmplitude <= 29000 &&
-                decoded.LowHz is >= 40 and <= 511 && decoded.HighHz is >= 40 and <= 511,
-                "bounded legacy rumble decoding " + code);
+                decoded.LowHz is >= 40 and <= 1253 && decoded.HighHz is >= 40 and <= 1253,
+                "source frequency decoding is separate from bounded Pro2 control " + code);
         }
         var neutral = Switch1RumbleConverter.Decode(new byte[] { 0, 1, 0x40, 0x40 });
         check(neutral.LowHz == 160 && neutral.HighHz == 320 && neutral.LowAmplitude == 0 && neutral.HighAmplitude == 0,

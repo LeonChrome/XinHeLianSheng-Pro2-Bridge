@@ -4,17 +4,22 @@ namespace Y700Switch2V60Viiper;
 
 // Decode first-generation Nintendo 4-byte low/high tones, then encode the
 // existing physical Pro2 5-byte frame. This is parameter conversion, not PCM
-// passthrough; frequency is bounded to the physical output's supported range.
+// passthrough. Source Hz and Pro2 protocol controls are deliberately separate;
+// the current bounded variable-control proxy still needs physical calibration.
 public static class Switch1RumbleConverter
 {
-    // Existing repository switch1_protocol.cpp amplitude table (milli-units).
+    // Independent inverse of SDL_hidapi_switch.c hfa[101] (0..65535).
+    // Do not use rounded milli-units: the first nonzero code is 514/65535,
+    // not 10/1003. Source codes above SDL's safe 1.0 endpoint saturate here.
     private static readonly ushort[] Amplitudes =
-    [0,10,12,14,17,20,24,28,33,40,47,56,67,80,95,112,117,123,128,134,140,146,
-     152,159,166,173,181,189,198,206,215,225,230,235,240,245,251,256,262,268,273,
-     279,286,292,298,305,311,318,325,332,340,347,355,362,370,378,387,395,404,413,
-     422,431,440,450,460,470,480,491,501,512,524,535,547,559,571,584,596,609,623,
-     636,650,665,679,694,709,725,741,757,773,790,808,825,843,862,881,900,920,940,
-     960,981,1003];
+    [0,514,775,921,1096,1303,1550,1843,2192,2606,3100,3686,4383,5213,6199,7372,
+     7698,8039,8395,8767,9155,9560,9984,10426,10887,11369,11873,12398,12947,13520,
+     14119,14744,15067,15397,15734,16079,16431,16790,17158,17534,17918,18310,18711,
+     19121,19540,19967,20405,20851,21308,21775,22251,22739,23236,23745,24265,24797,
+     25340,25894,26462,27041,27633,28238,28856,29488,30134,30794,31468,32157,32861,
+     33581,34316,35068,35836,36620,37422,38242,39079,39935,40809,41703,42616,43549,
+     44503,45477,46473,47491,48531,49593,50679,51789,52923,54082,55266,56476,57713,
+     58977,60268,61588,62936,64315,65535];
 
     public readonly record struct Tones(ushort LowHz, ushort LowAmplitude, ushort HighHz, ushort HighAmplitude);
 
@@ -30,9 +35,9 @@ public static class Switch1RumbleConverter
     }
 
     private static ushort Frequency(int code) =>
-        (ushort)Math.Clamp(Math.Round(10 * Math.Pow(2, code / 32.0)), 40, 511);
+        (ushort)Math.Clamp(Math.Round(10 * Math.Pow(2, code / 32.0)), 40, 1253);
     private static ushort Amplitude(int code) =>
-        (ushort)((Amplitudes[Math.Clamp(code, 0, Amplitudes.Length - 1)] * 29000u + 501u) / 1003u);
+        (ushort)((Amplitudes[Math.Clamp(code, 0, Amplitudes.Length - 1)] * 29000u + 32767u) / 65535u);
 
     public static bool TryMap(ReadOnlySpan<byte> feedback, out Pro2OutputPacket packet, out string reason)
     {
@@ -42,8 +47,23 @@ public static class Switch1RumbleConverter
         if ((feedback[8] & 1) == 0)
         { reason = led.HasValue ? "led-only feedback has no physical Pro2 rumble payload" : "feedback has no rumble flag"; return false; }
         var left = Decode(feedback[..4]); var right = Decode(feedback.Slice(4, 4));
-        packet = Pro2OutputPacketMapper.BuildRaw02Packet(left.LowHz, left.LowAmplitude, left.HighHz, left.HighAmplitude,
-            right.LowHz, right.LowAmplitude, right.HighHz, right.HighAmplitude, "switch1-hd-converted") with { PlayerLedMask = led };
+        int frequencyClamps =
+            (left.LowAmplitude != 0 && Pro2RumbleFrequencyPolicy.WouldClamp(left.LowHz) ? 1 : 0) +
+            (left.HighAmplitude != 0 && Pro2RumbleFrequencyPolicy.WouldClamp(left.HighHz) ? 1 : 0) +
+            (right.LowAmplitude != 0 && Pro2RumbleFrequencyPolicy.WouldClamp(right.LowHz) ? 1 : 0) +
+            (right.HighAmplitude != 0 && Pro2RumbleFrequencyPolicy.WouldClamp(right.HighHz) ? 1 : 0);
+        packet = Pro2OutputPacketMapper.BuildRaw02Packet(
+            Pro2RumbleFrequencyPolicy.FromEstimatedHz(left.LowHz), left.LowAmplitude,
+            Pro2RumbleFrequencyPolicy.FromEstimatedHz(left.HighHz), left.HighAmplitude,
+            Pro2RumbleFrequencyPolicy.FromEstimatedHz(right.LowHz), right.LowAmplitude,
+            Pro2RumbleFrequencyPolicy.FromEstimatedHz(right.HighHz), right.HighAmplitude,
+            "switch1-hd-converted") with
+        {
+            PlayerLedMask = led,
+            FrequencyClamps = frequencyClamps,
+            ConversionTelemetry = $"frequency_mapping={Pro2RumbleFrequencyPolicy.Mapping} frequency_clamps={frequencyClamps}" +
+                $" source_left_hz={left.LowHz},{left.HighHz} source_right_hz={right.LowHz},{right.HighHz}"
+        };
         return true;
     }
 }

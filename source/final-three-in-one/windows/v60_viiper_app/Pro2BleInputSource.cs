@@ -138,6 +138,15 @@ public sealed partial class Pro2BleInputSource :
         }
         connectionProgress?.Report(windowMessage);
         connectionProgress?.Report(protocolAudit.Summary(Stopwatch.GetTimestamp()));
+        if (rumbleTransportMetrics.TrySnapshot(Stopwatch.GetTimestamp(), out string rumbleWindow))
+        {
+            connectionProgress?.Report("[PRO2_RUMBLE_TRANSPORT] " + rumbleWindow +
+                " pacer=" + rumblePacerBackend +
+                " fd2_hz=" + liveFd2RateHz.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+            connectionProgress?.Report("[PRO2_RUMBLE_QUEUE] " + rumbleQueue.Telemetry);
+            lock (writeGate)
+                connectionProgress?.Report("[PRO2_RUMBLE_HOLD] " + ordinaryRumbleHold.Telemetry);
+        }
         if (downgraded) SetConnectionPhase(Pro2ConnectionPhase.RateLimited);
         if (recovered)
         {
@@ -256,7 +265,14 @@ public sealed partial class Pro2BleInputSource :
         Pro2InitialBatterySnapshot.IsRequested(Environment.GetCommandLineArgs());
     private Pro2ChargeStatus? chargeStatus;
     private long chargeStatusTicks;
-    private byte[]? pendingRumblePacket;
+    private readonly Pro2RumbleOutputQueue rumbleQueue = new();
+    private readonly NativeRumbleTransportMetrics rumbleTransportMetrics = new();
+    private readonly OrdinaryRumbleHoldState ordinaryRumbleHold = new();
+    private volatile string rumblePacerBackend = "not_started";
+    private uint rumbleNativeQueuedCount;
+    private uint rumbleNativeWrittenCount;
+    private uint rumbleNativeMismatchCount;
+    private uint rumbleNativeScaledCount;
     private GamepadState rawState = GamepadState.Neutral();
     private GamepadState filteredState = GamepadState.Neutral();
     private DateTimeOffset rawStateAt;
@@ -476,7 +492,16 @@ public sealed partial class Pro2BleInputSource :
         }
         lock (writeGate)
         {
-            rumbleGain = Math.Clamp(value, 0.0, 3.0);
+            double nextGain = Math.Clamp(value, 0.0, 3.0);
+            if (rumbleGain == nextGain) return;
+            rumbleGain = nextGain;
+            ordinaryRumbleHold.Invalidate();
+            if (rumbleWriterTask is { IsCompleted: false } && rumbleSignal != null &&
+                rumbleQueue.StopForGainChange(Stopwatch.GetTimestamp()))
+            {
+                rumbleQueuedCount++;
+                try { rumbleSignal.Release(); } catch (SemaphoreFullException) { }
+            }
         }
     }
 
@@ -1027,6 +1052,13 @@ public sealed partial class Pro2BleInputSource :
     }
 
     public bool TryWriteOutputReport(ReadOnlySpan<byte> report, out string error)
+        => QueueOutputReport(report, native: false, out error, "raw02");
+
+    public bool TryWriteOutputPacket(Pro2OutputPacket packet, out string error)
+        => QueueOutputReport(packet.Report, packet.PreserveNativePayload, out error, packet.Source, packet.FrequencyClamps);
+
+    private bool QueueOutputReport(ReadOnlySpan<byte> report, bool native, out string error, string source,
+        int frequencyClamps = 0)
     {
         error = "";
         if (!IsOutputReady || rumbleCharacteristic == null)
@@ -1045,19 +1077,6 @@ public sealed partial class Pro2BleInputSource :
         {
             lock (writeGate)
             {
-                byte[] packet = new byte[Pro2BleRumblePacketEncoder.BlePacketSize];
-                byte packetId = (byte)(rumblePacketId++ & 0x0f);
-                if (!Pro2BleRumblePacketEncoder.TryEncodeRaw02(
-                        report,
-                        packetId,
-                        packet,
-                        out _,
-                        out error,
-                        rumbleGain))
-                {
-                    return false;
-                }
-
                 if (rumbleWriterTask is not { IsCompleted: false } ||
                     rumbleSignal == null)
                 {
@@ -1065,24 +1084,47 @@ public sealed partial class Pro2BleInputSource :
                     return false;
                 }
 
-                bool coalesced = pendingRumblePacket != null;
-                pendingRumblePacket = packet;
-                rumbleQueuedCount++;
-                if (coalesced)
+                byte[] packet;
+                bool encoded;
+                long received = Stopwatch.GetTimestamp();
+                rumbleTransportMetrics.ObserveSource(report, received, source, native, frequencyClamps);
+                if (native)
                 {
-                    rumbleCoalescedCount++;
+                    encoded = rumbleQueue.TryEnqueueNative(report, rumbleGain,
+                        received, out packet, out error, source);
                 }
                 else
                 {
-                    try
+                    packet = new byte[Pro2BleRumblePacketEncoder.BlePacketSize];
+                    encoded = Pro2BleRumblePacketEncoder.TryEncodeRaw02(report,
+                        (byte)(rumblePacketId++ & 0x0f), packet, out _, out error, rumbleGain);
+                    if (!encoded)
                     {
-                        rumbleSignal.Release();
+                        packet = Pro2NativeRumbleEncoder.Neutralize(report);
+                        rumbleFailureCount++;
+                        error += "; safety_stop_queued=true";
                     }
-                    catch (SemaphoreFullException)
-                    {
-                    }
+                    rumbleQueue.Enqueue(packet, false, received, source, safetyStop: !encoded);
                 }
-                return true;
+                ordinaryRumbleHold.Observe(packet, source, native, encoded);
+                rumbleQueuedCount++;
+                rumbleCoalescedCount = (uint)(rumbleQueue.Replaced + rumbleQueue.AdaptiveDropped);
+                if (native)
+                {
+                    rumbleNativeQueuedCount++;
+                    if (!encoded) rumbleFailureCount++;
+                    else if (rumbleGain != 1.0) rumbleNativeScaledCount++;
+                    else if (!report.Slice(1, 32).SequenceEqual(packet.AsSpan(1, 32)))
+                        rumbleNativeMismatchCount++;
+                }
+                try
+                {
+                    rumbleSignal.Release();
+                }
+                catch (SemaphoreFullException)
+                {
+                }
+                return encoded;
             }
         }
         catch (Exception ex)
@@ -3403,7 +3445,11 @@ public sealed partial class Pro2BleInputSource :
         rumbleSignal = new SemaphoreSlim(0, 1);
         lock (writeGate)
         {
-            pendingRumblePacket = null;
+            rumbleQueue.Reset();
+            ordinaryRumbleHold.Reset();
+            rumbleTransportMetrics.Reset();
+            rumbleNativeQueuedCount = rumbleNativeWrittenCount = 0;
+            rumbleNativeMismatchCount = rumbleNativeScaledCount = 0;
             rumbleQueuedCount = 0;
             rumbleWrittenCount = 0;
             rumbleCoalescedCount = 0;
@@ -3411,7 +3457,7 @@ public sealed partial class Pro2BleInputSource :
         }
         rumbleWriterTask = Task.Run(
             () => RumbleWriterLoopAsync(progress, rumbleWriterCts.Token));
-        progress.Report("[PRO2_OUTPUT] asynchronous coalescing BLE writer started.");
+        progress.Report("[PRO2_OUTPUT] BLE writer started: native_pro2=adaptive_original_events; converted=adaptive_ordered_events; all_modes_max_queue_ms=30; overload=measured_lossy_event_selection; native_payload_preserved=true; converted_frequency_mapping=legacy_hz_proxy_unvalidated; minimum_write_ms=7.5; ordinary_state_refresh_target_ms=12; refresh_clock=write_start; refresh_scope=xbox_ps5_only; refresh_not_source_event=true.");
     }
 
     private async Task RumbleWriterLoopAsync(
@@ -3419,6 +3465,12 @@ public sealed partial class Pro2BleInputSource :
         CancellationToken cancellationToken)
     {
         long lastWriteTicks = 0;
+        long previousNativeStarted = 0, previousNativeCompleted = 0;
+        double observedNativeServiceMs = 0;
+        using var nativePacer = new NativeRumblePacer();
+        rumblePacerBackend = nativePacer.Backend;
+        progress.Report("[PRO2_RUMBLE_PACER] backend=" + rumblePacerBackend +
+            " scope=all_modes global_timer_resolution_changed=false scheduling_not_air_delivery=true");
         while (!cancellationToken.IsCancellationRequested)
         {
             SemaphoreSlim? signal = rumbleSignal;
@@ -3427,14 +3479,23 @@ public sealed partial class Pro2BleInputSource :
                 return;
             }
 
-            await signal.WaitAsync(cancellationToken);
-            double minimumWriteIntervalMs;
-            lock (gate)
+            bool refreshActive;
+            double refreshDueMs;
+            lock (writeGate)
             {
-                minimumWriteIntervalMs = connectionIntervalUnits == 0
-                    ? 8
-                    : Math.Clamp(connectionIntervalUnits * 1.25, 7.5, 15);
+                refreshActive = ordinaryRumbleHold.Active;
+                refreshDueMs = ordinaryRumbleHold.MillisecondsUntilDue(Stopwatch.GetTimestamp());
             }
+            // One timed wake in the existing writer, not an independent timer
+            // producer. Cancel and join the loser so a leftover signal waiter
+            // cannot steal a later source command. Due is from write START.
+            await RumbleWriterWake.WaitAsync(signal, refreshDueMs, nativePacer, cancellationToken);
+            if (rumblePacerBackend != nativePacer.Backend)
+            {
+                rumblePacerBackend = nativePacer.Backend;
+                progress.Report("[PRO2_RUMBLE_PACER] backend=" + rumblePacerBackend);
+            }
+            const double minimumWriteIntervalMs = Pro2RumblePacingPolicy.MinimumWriteIntervalMs;
             if (lastWriteTicks != 0)
             {
                 double elapsedMs =
@@ -3444,19 +3505,29 @@ public sealed partial class Pro2BleInputSource :
                 double remainingMs = minimumWriteIntervalMs - elapsedMs;
                 if (remainingMs > 0)
                 {
-                    await Task.Delay(
-                        TimeSpan.FromMilliseconds(remainingMs),
-                        cancellationToken);
+                    if (rumbleQueue.Count > 0 || refreshActive)
+                    {
+                        await nativePacer.DelayAsync(TimeSpan.FromMilliseconds(remainingMs), cancellationToken);
+                        if (rumblePacerBackend != nativePacer.Backend)
+                        {
+                            rumblePacerBackend = nativePacer.Backend;
+                            progress.Report("[PRO2_RUMBLE_PACER] backend=" + rumblePacerBackend);
+                        }
+                    }
+                    else await Task.Delay(TimeSpan.FromMilliseconds(remainingMs), cancellationToken);
                 }
             }
 
-            byte[]? packet;
+            Pro2QueuedRumble? queued;
             lock (writeGate)
             {
-                packet = pendingRumblePacket;
-                pendingRumblePacket = null;
+                rumbleQueue.ConfigureServiceBudget(Math.Max(minimumWriteIntervalMs, observedNativeServiceMs));
+                rumbleQueue.TryDequeue(Stopwatch.GetTimestamp(), out queued);
+                if (queued == null)
+                    ordinaryRumbleHold.TryCreate(Stopwatch.GetTimestamp(), sourcePending: false,
+                        (byte)(rumblePacketId++ & 15), out queued);
             }
-            if (packet == null)
+            if (queued == null)
             {
                 continue;
             }
@@ -3467,16 +3538,53 @@ public sealed partial class Pro2BleInputSource :
                 continue;
             }
 
+            long writeStarted = Stopwatch.GetTimestamp();
             try
             {
-                GattCommunicationStatus status =
-                    await WriteCharacteristicAsync(characteristic, packet);
-                lastWriteTicks = Stopwatch.GetTimestamp();
+                Task<GattCommunicationStatus> writeTask;
+                lock (writeGate)
+                {
+                    if (queued.GeneratedKind == "refresh" && !ordinaryRumbleHold.IsCurrent(queued))
+                    {
+                        ordinaryRumbleHold.RefreshSuperseded();
+                        continue;
+                    }
+                    // Start the GATT call while holding the producer lock.
+                    // A stop accepted after this point cannot retract an already
+                    // in-flight write, but it cancels every not-yet-started refresh.
+                    writeStarted = Stopwatch.GetTimestamp();
+                    writeTask = WriteCharacteristicAsync(characteristic, queued.Data, cancellationToken);
+                }
+                GattCommunicationStatus status = await writeTask;
+                long completed = Stopwatch.GetTimestamp();
+                bool success = status == GattCommunicationStatus.Success;
+                rumbleQueue.MarkWriteResult(queued, success);
+                rumbleTransportMetrics.ObserveWrite(queued.EnqueuedTicks, writeStarted, completed, success,
+                    queued.Native, queued.Data, queued.GeneratedKind);
+                lock (writeGate) ordinaryRumbleHold.Written(queued, success, completed, writeStarted);
+                if (!success) rumbleQueue.TryEnqueueFailureStop(queued, completed);
+                {
+                    // Estimate service cadence only when work was already waiting.
+                    // Idle source gaps must not be mistaken for slow radio capacity.
+                    if (previousNativeStarted != 0 && queued.EnqueuedTicks <= previousNativeCompleted)
+                    {
+                        double activeGapMs = Stopwatch.GetElapsedTime(previousNativeStarted, writeStarted).TotalMilliseconds;
+                        if (activeGapMs > 0 && activeGapMs <= 250)
+                            observedNativeServiceMs = observedNativeServiceMs == 0 ? activeGapMs :
+                                observedNativeServiceMs * 0.8 + activeGapMs * 0.2;
+                    }
+                    else observedNativeServiceMs *= 0.8;
+                    previousNativeStarted = writeStarted; previousNativeCompleted = completed;
+                }
+                // All streams already wait inside the GATT write. Pace from
+                // its start, not completion, to avoid adding another BLE interval.
+                lastWriteTicks = writeStarted;
                 lock (writeGate)
                 {
                     if (status == GattCommunicationStatus.Success)
                     {
                         rumbleWrittenCount++;
+                        if (queued.Native) rumbleNativeWrittenCount++;
                     }
                     else
                     {
@@ -3487,6 +3595,19 @@ public sealed partial class Pro2BleInputSource :
                 {
                     progress.Report("[PRO2_OUTPUT] BLE writer status=" + status);
                 }
+                if (queued.Native && (rumbleNativeWrittenCount <= 3 || rumbleNativeWrittenCount % 100 == 0))
+                    progress.Report("[PRO2_RUMBLE_NATIVE] queued=" + rumbleNativeQueuedCount +
+                        " written=" + rumbleNativeWrittenCount + " scaled=" + rumbleNativeScaledCount +
+                        " unity_payload_mismatch=" + rumbleNativeMismatchCount +
+                        " gain=" + RumbleGain.ToString("F1") + " " + rumbleQueue.Telemetry +
+                        " write_status=" + status + " ble=" + Convert.ToHexString(queued.Data));
+                uint convertedWritten = rumbleWrittenCount - rumbleNativeWrittenCount;
+                if (!queued.Native && (convertedWritten <= 3 || convertedWritten % 100 == 0))
+                    progress.Report("[PRO2_RUMBLE_CONVERTED] source=" + queued.Source +
+                        " written=" + convertedWritten + " gain=" + RumbleGain.ToString("F1") +
+                        " " + rumbleQueue.Telemetry + " write_status=" + status +
+                        " generated_kind=" + queued.GeneratedKind + " " + ordinaryRumbleHold.Telemetry +
+                        " ble=" + Convert.ToHexString(queued.Data));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -3494,27 +3615,39 @@ public sealed partial class Pro2BleInputSource :
             }
             catch (Exception ex)
             {
+                rumbleQueue.MarkWriteResult(queued, false);
+                rumbleTransportMetrics.ObserveWrite(queued.EnqueuedTicks, writeStarted,
+                    Stopwatch.GetTimestamp(), false, queued.Native, queued.Data, queued.GeneratedKind);
                 lock (writeGate)
                 {
+                    ordinaryRumbleHold.Written(queued, false, Stopwatch.GetTimestamp());
+                    rumbleQueue.TryEnqueueFailureStop(queued, Stopwatch.GetTimestamp());
                     rumbleFailureCount++;
                 }
                 progress.Report("[PRO2_OUTPUT] BLE writer exception=" + ex.Message);
+            }
+            finally
+            {
+                // A capacity-one wake signal is a notification, not a packet
+                // counter. Re-arm while FIFO still has work, even without a new producer.
+                if (rumbleQueue.Count > 0)
+                {
+                    try { signal.Release(); }
+                    catch (SemaphoreFullException) { }
+                }
             }
         }
     }
 
     private async Task StopRumbleWriterAsync()
     {
+        lock (writeGate) ordinaryRumbleHold.Invalidate();
         CancellationTokenSource? writerCts = rumbleWriterCts;
         Task? writerTask = rumbleWriterTask;
         SemaphoreSlim? signal = rumbleSignal;
         rumbleWriterCts = null;
         rumbleWriterTask = null;
         rumbleSignal = null;
-        lock (writeGate)
-        {
-            pendingRumblePacket = null;
-        }
 
         if (writerCts != null)
         {
@@ -3540,19 +3673,54 @@ public sealed partial class Pro2BleInputSource :
             {
             }
         }
+        // After the single writer is joined, make one bounded final neutral
+        // attempt before releasing the GATT service. Never replay old effects.
+        GattCharacteristic? stoppingCharacteristic = rumbleCharacteristic;
+        if (writerTask != null && stoppingCharacteristic != null &&
+            (rumbleQueue.LastWrittenActive || rumbleQueuedCount > 0))
+        {
+            long started = Stopwatch.GetTimestamp();
+            byte[] neutral = rumbleQueue.LastWrittenNeutral;
+            try
+            {
+                using var stopDeadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+                var status = await WriteCharacteristicAsync(stoppingCharacteristic, neutral, stopDeadline.Token);
+                rumbleTransportMetrics.ObserveWrite(started, started, Stopwatch.GetTimestamp(),
+                    status == GattCommunicationStatus.Success, false, neutral, "shutdown_stop");
+                connectionProgress?.Report("[PRO2_RUMBLE_SHUTDOWN] neutral_attempted=true status=" + status +
+                    " playback_confirmed=false");
+            }
+            catch (Exception ex)
+            {
+                rumbleTransportMetrics.ObserveWrite(started, started, Stopwatch.GetTimestamp(),
+                    false, false, neutral, "shutdown_stop");
+                connectionProgress?.Report("[PRO2_RUMBLE_SHUTDOWN] neutral_attempted=true error=" + ex.GetType().Name +
+                    " playback_confirmed=false");
+            }
+        }
+        if (rumbleTransportMetrics.TrySnapshot(Stopwatch.GetTimestamp(), out string finalRumble, force: true))
+        {
+            connectionProgress?.Report("[PRO2_RUMBLE_TRANSPORT] final=true " + finalRumble +
+                " pacer=" + rumblePacerBackend);
+            connectionProgress?.Report("[PRO2_RUMBLE_QUEUE] final=true " + rumbleQueue.Telemetry);
+            lock (writeGate)
+                connectionProgress?.Report("[PRO2_RUMBLE_HOLD] final=true " + ordinaryRumbleHold.Telemetry);
+        }
+        lock (writeGate) { rumbleQueue.Reset(); ordinaryRumbleHold.Reset(); }
         signal?.Dispose();
         writerCts?.Dispose();
     }
 
     private static async Task<GattCommunicationStatus> WriteCharacteristicAsync(
         GattCharacteristic characteristic,
-        byte[] data)
+        byte[] data,
+        CancellationToken cancellationToken = default)
     {
         GattWriteOption option =
             (characteristic.CharacteristicProperties & GattCharacteristicProperties.WriteWithoutResponse) != 0
                 ? GattWriteOption.WriteWithoutResponse
                 : GattWriteOption.WriteWithResponse;
-        return await characteristic.WriteValueAsync(ToBuffer(data), option);
+        return await characteristic.WriteValueAsync(ToBuffer(data), option).AsTask(cancellationToken);
     }
 
     private async Task<GattCommunicationStatus> WriteCharacteristicWithRetryAsync(
@@ -3906,6 +4074,11 @@ public sealed partial class Pro2BleInputSource :
                " rumble_w=" + rumbleWrittenCount +
                " rumble_merge=" + rumbleCoalescedCount +
                " rumble_fail=" + rumbleFailureCount +
+               " rumble_native_q=" + rumbleNativeQueuedCount +
+               " rumble_native_w=" + rumbleNativeWrittenCount +
+               " rumble_native_scaled=" + rumbleNativeScaledCount +
+               " rumble_native_mismatch=" + rumbleNativeMismatchCount +
+               " " + rumbleQueue.Telemetry +
                " rumble_gain=" + RumbleGain.ToString("F1") +
                " parse_fail=" + parseFailCount;
     }

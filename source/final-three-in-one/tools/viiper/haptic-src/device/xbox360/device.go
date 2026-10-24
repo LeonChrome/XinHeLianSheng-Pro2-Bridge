@@ -13,14 +13,16 @@ import (
 )
 
 type Xbox360 struct {
-	tick       uint64
-	inputCh    chan InputState
-	rumbleFunc func(XRumbleState)
-	descriptor usb.Descriptor
+	tick        uint64
+	inputQueue  *device.InputQueue[InputState]
+	sourcePaced bool
+	rumbleFunc  func(XRumbleState)
+	descriptor  usb.Descriptor
 }
 
 type Xbox360CreateOptions struct {
-	SubType *uint8 `json:"subType"`
+	SubType     *uint8 `json:"subType"`
+	SourcePaced bool   `json:"source_paced"`
 }
 
 // New returns a new Xbox360 device.
@@ -44,10 +46,14 @@ func New(o *device.CreateOptions) (*Xbox360, error) {
 			if args.SubType != nil {
 				d.descriptor.Interfaces[0].ClassDescriptors[0].Payload[2] = *args.SubType
 			}
+			d.sourcePaced = args.SourcePaced
 		}
 	}
-	d.inputCh = make(chan InputState, 1)
-	d.inputCh <- *NewInputState()
+	d.inputQueue = device.NewInputQueue[InputState](64, func(a, b InputState) bool {
+		return a.Buttons == b.Buttons && (a.LT > 0) == (b.LT > 0) && (a.RT > 0) == (b.RT > 0)
+	})
+	d.inputQueue.Seed(*NewInputState())
+	d.inputQueue.SetTelemetry("xbox", "source_edges_no_imu")
 	return d, nil
 }
 
@@ -58,12 +64,11 @@ func (x *Xbox360) SetRumbleCallback(f func(XRumbleState)) {
 
 // UpdateInputState updates the device's current input state (thread-safe).
 func (x *Xbox360) UpdateInputState(state InputState) {
-	select {
-	case <-x.inputCh:
-	default:
-	}
-	x.inputCh <- state
+	x.inputQueue.Push(state)
 }
+func (x *Xbox360) SourcePacedInput() bool                     { return x.sourcePaced }
+func (x *Xbox360) InputTransferStats() device.InputQueueStats { return x.inputQueue.Stats() }
+func (x *Xbox360) RecordInputRepeat()                         { x.inputQueue.RecordRepeat() }
 
 // HandleTransfer implements interrupt IN/OUT for Xbox360.
 func (x *Xbox360) HandleTransfer(ctx context.Context, ep uint32, dir uint32, out []byte) []byte {
@@ -71,11 +76,18 @@ func (x *Xbox360) HandleTransfer(ctx context.Context, ep uint32, dir uint32, out
 		switch ep {
 		case 1: // 0x81 - main input reports
 			atomic.AddUint64(&x.tick, 1)
-			select {
-			case <-ctx.Done():
-				return nil
-			case st := <-x.inputCh:
-				return st.BuildReport()
+			for {
+				if ctx.Err() != nil {
+					return nil
+				}
+				if st, ok := x.inputQueue.Pop(); ok {
+					return st.BuildReport()
+				}
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-x.inputQueue.Wake():
+				}
 			}
 		default:
 			return nil
@@ -220,7 +232,7 @@ func (x *Xbox360) GetDescriptor() *usb.Descriptor {
 }
 
 func (x *Xbox360) GetDeviceSpecificArgs() map[string]any {
-	return map[string]any{"subType": x.descriptor.Interfaces[0].ClassDescriptors[0].Payload[2]}
+	return map[string]any{"subType": x.descriptor.Interfaces[0].ClassDescriptors[0].Payload[2], "source_paced": x.sourcePaced, "input_transfer": x.inputQueue.Stats()}
 }
 
 func (x *Xbox360) HandleControl(bmRequestType, bRequest uint8, wValue, wIndex, wLength uint16, _ []byte) ([]byte, bool) {

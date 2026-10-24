@@ -1019,10 +1019,25 @@ byte[] xboxProfessionalPacket = VirtualPadPackets.FromGamepad(
     motionState);
 Expect(xboxProfessionalPacket.AsSpan().SequenceEqual(VirtualPadPackets.FromGamepad(ViiperDeviceProfile.Xbox, motionState)), "professional Xbox defaults to diagnostic-only output");
 
-var motionParser = new Pro2HidReportParser();
+// Preserve the historical frame-count calibration regression in the explicit
+// fallback. The shipping parser now requires real stationary time instead.
+var motionParser = new Pro2HidReportParser(false);
 byte[] flatFd2 = new byte[60];
 Pack12(flatFd2, 10, 2048, 2048);
 Pack12(flatFd2, 13, 2048, 2048);
+var releaseMotionParser = new Pro2HidReportParser();
+Expect(releaseMotionParser.GyroCalibrationSummary.Contains("mode=quality", StringComparison.Ordinal) ==
+    Pro2QualityMode.GyroEnabled, "default parser follows release quality policy");
+if (Pro2QualityMode.GyroEnabled)
+{
+    for (int i = 0; i < 64; i++)
+    {
+        WriteMotion(flatFd2, 48, 120, -500, 4150, 90, -120, 70);
+        Expect(releaseMotionParser.TryParse(flatFd2, out var rawMotion, out _) &&
+            rawMotion.GyroX == 90 && rawMotion.GyroY == -120 && rawMotion.GyroZ == 70,
+            "release parser never learns a moving sixty-four-frame batch as zero");
+    }
+}
 for (int i = 0; i < 64; i++)
 {
     WriteMotion(flatFd2, 48, 120, -500, 4150, 90, -120, 70);
@@ -1586,6 +1601,14 @@ IReadOnlyList<int> wrongServerPorts = ControllerEnumerationDiagnostics.FindUsbip
     1,
     "1");
 Expect(wrongServerPorts.Count == 0, "orderly USBIP detach never matches another VIIPER USB server port");
+IReadOnlyList<int> duplicatePortsToDetach =
+    ControllerEnumerationDiagnostics.SelectPortsToDetachForSingleton([1, 2, 2]);
+Expect(
+    duplicatePortsToDetach.SequenceEqual([1, 2]),
+    "duplicate USBIP singleton repair detaches every duplicate before one clean reattach");
+Expect(
+    ControllerEnumerationDiagnostics.SelectPortsToDetachForSingleton([2]).Count == 0,
+    "healthy single USBIP attachment is left untouched");
 
 const string steamIfHidFixture = """
 [2026-07-14 22:04:03] Local Device Found

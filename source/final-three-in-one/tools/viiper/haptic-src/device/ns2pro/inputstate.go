@@ -34,13 +34,14 @@ func NewInputState() *InputState {
 func defaultInputState() *InputState { return NewInputState() }
 
 type MetaState struct {
-	SerialNumber    string `json:"serial_number"`
-	BatteryLevel    uint8  `json:"battery_level"`
-	Charging        bool   `json:"charging"`
-	ExternalPower   bool   `json:"external_power"`
-	BatteryVolts    uint16 `json:"battery_volts"`
-	InputIntervalMs uint8  `json:"input_interval_ms"`
-	SourcePaced     bool   `json:"source_paced"`
+	SerialNumber          string `json:"serial_number"`
+	BatteryLevel          uint8  `json:"battery_level"`
+	Charging              bool   `json:"charging"`
+	ExternalPower         bool   `json:"external_power"`
+	BatteryVolts          uint16 `json:"battery_volts"`
+	InputIntervalMs       uint8  `json:"input_interval_ms"`
+	SourcePaced           bool   `json:"source_paced"`
+	ProtocolClockResample bool   `json:"protocol_clock_resample"`
 }
 
 func defaultMetaState() *MetaState {

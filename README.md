@@ -1,14 +1,14 @@
 # PRO2 手柄助手
 
-让 **Nintendo Switch 2 Pro（Pro2）手柄无线连接 Windows**，在 Steam 和其他 PC 游戏中使用。利用电脑的 BLE 蓝牙，无需专用接收器。
+让 **Nintendo Switch 2 Pro（Pro2）手柄无线连接 Windows**，直接用于 Steam，也能切换成 Pro1、Xbox 或 PS5 兼容手柄。纯软件连接，无需专用接收器。
 
-**[推荐下载：v1.3.23 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v1.3.23/PRO2ControllerAssistant-v1.3.23-win-x64.exe)** · [版本说明](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v1.3.23)
+**[推荐下载：v2.0 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.0/PRO2ControllerAssistant-v2.0-win-x64.exe)** · [版本说明](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v2.0)
 
 ## 能做什么
 
 - **四种模式**：Steam / Pro2、Pro1、Xbox、PS5 兼容输出。
 - **背键 / C 键自定义**：Pro1、Xbox、PS5 模式支持单键、组合键、连发、顺序动作和延迟；没连接手柄也能设置。
-- **震动与陀螺仪**：震动强度调节、PS5 普通震动与原生触觉转换、陀螺仪校准。
+- **震动与体感**：震动强度调节、PS5 普通震动与触觉转换、陀螺仪校准；Xbox 模式不含原生体感。
 - **手柄状态**：真实输入频率、电量档位、固件版本、耳机插入状态；安全检查通过时每 10 分钟更新电量。
 - **连接与诊断**：自动重连、首页低速提示、系统与蓝牙信息、逐组优化结果；设置中可手动重启蓝牙。
 
@@ -24,8 +24,12 @@
 
 目标是真实 **133Hz**，达到 **60Hz** 也允许游玩；低速时首页给出诊断和优化建议。Win11 自动尝试连接参数；Win10 在首页点击“优化蓝牙 · Win10”授权测试，修改前备份，支持恢复。Win10 优化会改变系统全局 BLE 参数，可能影响其他蓝牙设备或需要重启。
 
-实际速率受系统、适配器和驱动影响，不保证所有电脑达到 133Hz，以实测为准。PS5 模式提供兼容输出与触觉转换，不等于完整复刻 DualSense；无线耳机音频和跨设备蓝牙转发尚不支持。
+实际速率受系统、适配器和驱动影响，不保证所有电脑达到 133Hz。首页显示真实 FD2 输入，虚拟 USB 重复报告不计入其中。PS5 触觉为转换输出，不承诺物理无损；无线耳机音频和跨设备蓝牙转发尚不支持。
 
-v1.3.23 修复 PS5 模式部分普通震动指令漏接，保留原生触觉转换；沿用每 10 分钟电量更新、内置默认音频保护和托盘恢复刷新。
+## v2.0 更新
+
+修复 USB 输入重复、短按覆盖和卡顿后的旧按键补播；校正运动时间戳与 Pro1 摇杆范围；完善普通震动的持续、停止及切换保护。内置后端同步更新，保留原有连接、电量和音频保护功能。
+
+768,314 项离线检查、7 个后端测试包及最终 EXE 启动检查通过；这些不代替实体手柄与具体游戏验收。[详细更新说明](docs/RELEASE_v2.0_ZH.md)
 
 [反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [源码与构建](source/final-three-in-one/README.md) · [许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [历史三合一版本](docs/HISTORICAL_THREE_IN_ONE_README.md)

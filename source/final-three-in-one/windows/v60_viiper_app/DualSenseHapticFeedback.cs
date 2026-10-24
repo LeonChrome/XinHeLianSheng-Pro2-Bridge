@@ -49,27 +49,62 @@ public readonly record struct DualSenseHapticFrame(
 public sealed class DualSenseHapticRumbleScheduler
 {
     private readonly DualSenseHapticAudioProcessor audioProcessor;
+    private readonly Func<long> timestamp;
     public DualSenseHapticRumbleScheduler() : this(false) { }
-    public DualSenseHapticRumbleScheduler(bool qualityMode) => audioProcessor = new(qualityMode);
+    public DualSenseHapticRumbleScheduler(bool qualityMode, Func<long>? timestampProvider = null)
+    {
+        audioProcessor = new(qualityMode);
+        timestamp = timestampProvider ?? Stopwatch.GetTimestamp;
+    }
     public string ConversionTelemetry => audioProcessor.ConversionTelemetry;
     private bool compatibilityMode;
     private bool modeKnown;
     private long lastAudioTicks;
+    private bool hasAudioTimestamp;
     private bool nativeOutputActive;
+    private bool ordinaryOutputActive;
     public bool CompatibilityMode => compatibilityMode;
     public bool HasNativeAudio { get; private set; }
     public bool NativeOutputActive => nativeOutputActive;
+    public long AudioFrames { get; private set; }
+    public long HidFrames { get; private set; }
+    public long BlockedAudioFrames { get; private set; }
+    public long IdleStops { get; private set; }
+    public long ForcedStops { get; private set; }
+    public double AudioAgeMilliseconds => hasAudioTimestamp
+        ? Math.Max(0, (timestamp() - lastAudioTicks) * 1000.0 / Stopwatch.Frequency) : -1;
+    public string StateTelemetry => "host_mode=" + (compatibilityMode ? "compatibility" : "audio_haptics") +
+        " pcm_frames=" + AudioFrames + " hid_frames=" + HidFrames + " blocked_pcm=" + BlockedAudioFrames +
+        " pcm_age_ms=" + AudioAgeMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) +
+        " pcm_active=" + nativeOutputActive + " ordinary_active=" + ordinaryOutputActive +
+        " idle_stops=" + IdleStops + " forced_stops=" + ForcedStops;
 
     public bool TryStopIdle(out Pro2OutputPacket packet)
     {
         packet = default!;
-        if (!nativeOutputActive || lastAudioTicks == 0 ||
-            Stopwatch.GetElapsedTime(lastAudioTicks).TotalMilliseconds < 120)
+        if (!nativeOutputActive || !hasAudioTimestamp || AudioAgeMilliseconds < 120)
             return false;
-        nativeOutputActive = false;
-        audioProcessor.ResetOutputState();
+        IdleStops++;
+        ClearOutputState();
         packet = Pro2OutputPacketMapper.BuildOrdinaryPacket(0, 0, "dualsense-hd-idle-stop");
         return true;
+    }
+
+    public bool TryStop(string source, out Pro2OutputPacket packet)
+    {
+        bool wasActive = nativeOutputActive || ordinaryOutputActive;
+        ClearOutputState();
+        packet = Pro2OutputPacketMapper.BuildOrdinaryPacket(0, 0, source);
+        if (wasActive) ForcedStops++;
+        return wasActive;
+    }
+
+    private void ClearOutputState()
+    {
+        nativeOutputActive = ordinaryOutputActive = false;
+        hasAudioTimestamp = false;
+        lastAudioTicks = 0;
+        audioProcessor.ResetOutputState();
     }
 
     public bool TryProcess(
@@ -96,6 +131,7 @@ public sealed class DualSenseHapticRumbleScheduler
         var kind = (DualSenseHapticFrameKind)wire[0];
         if (kind == DualSenseHapticFrameKind.HidOutput)
         {
+            HidFrames++;
             return ProcessHid(payload, out packet, out summary, out reason);
         }
         if (kind == DualSenseHapticFrameKind.AudioPcm)
@@ -104,6 +140,7 @@ public sealed class DualSenseHapticRumbleScheduler
                       " host_mode=" + (compatibilityMode ? "compatibility" : "audio_haptics");
             if (compatibilityMode)
             {
+                BlockedAudioFrames++;
                 reason = "HD audio blocked while DualSense compatibility vibration is selected";
                 return false;
             }
@@ -111,7 +148,9 @@ public sealed class DualSenseHapticRumbleScheduler
             if (payload.Length > 0 && payload.Length % 8 == 0)
             {
                 HasNativeAudio = true;
-                lastAudioTicks = Stopwatch.GetTimestamp();
+                AudioFrames++;
+                hasAudioTimestamp = true;
+                lastAudioTicks = timestamp();
             }
             bool mapped = audioProcessor.TryProcess(payload, out packet, out reason);
             if (mapped) nativeOutputActive = packet.Active;
@@ -153,8 +192,7 @@ public sealed class DualSenseHapticRumbleScheduler
         modeKnown = true;
         if (modeChanged)
         {
-            audioProcessor.ResetOutputState();
-            nativeOutputActive = false;
+            ClearOutputState();
         }
         summary =
             "DualSense HID output: host_mode=" +
@@ -170,6 +208,7 @@ public sealed class DualSenseHapticRumbleScheduler
                 weak,
                 strong,
                 "dualsense-ordinary");
+            ordinaryOutputActive = packet.Active;
             return true;
         }
 

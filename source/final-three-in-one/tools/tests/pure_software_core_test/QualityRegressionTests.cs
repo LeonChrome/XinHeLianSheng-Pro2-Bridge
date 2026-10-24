@@ -208,9 +208,9 @@ internal static class QualityRegressionTests
             return value;
         }
         ulong lb = Group(2), rb = Group(18);
-        check((lb & 511) == (ulong)left.LowFrequency && ((lb >> 20) & 511) == (ulong)left.HighFrequency &&
-            ((rb >> 20) & 511) == (ulong)right.HighFrequency, "tone frequency fields survive HID-to-BLE packing");
-        check(((lb >> 10) & 1023) > 0 && ((lb >> 30) & 1023) > 0 && ((rb >> 10) & 1023) == 0,
+        check((lb & 511) == (ulong)left.HighFrequency && ((lb >> 20) & 511) == (ulong)left.LowFrequency &&
+            (rb & 511) == (ulong)right.HighFrequency, "tone frequency fields preserve native HID-to-BLE order");
+        check(((lb >> 10) & 1023) > 0 && ((lb >> 30) & 1023) > 0 && ((rb >> 30) & 1023) == 0,
             "independent amplitude bands survive physical BLE packing");
         var scheduler = new DualSenseHapticRumbleScheduler(true);
         bool schedulerActive = false;

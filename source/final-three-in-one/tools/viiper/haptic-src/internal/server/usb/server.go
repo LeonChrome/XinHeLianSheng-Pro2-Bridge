@@ -843,6 +843,10 @@ func (s *Server) handleUrbStream(conn net.Conn, dev usb.Device) error {
 			pending[seq] = urbCancel
 			pendingMu.Unlock()
 			interval := endpointInterval(dev.GetDescriptor(), ep)
+			sourcePaced := false
+			if paced, ok := dev.(interface{ SourcePacedInput() bool }); ok {
+				sourcePaced = paced.SourcePacedInput()
+			}
 
 			go func(seq, ep, dir uint32) {
 				defer urbCancel()
@@ -855,7 +859,7 @@ func (s *Server) handleUrbStream(conn net.Conn, dev usb.Device) error {
 				var respData []byte
 				for {
 					attemptCtx, attemptCancel := urbCtx, context.CancelFunc(func() {})
-					if interval > 0 {
+					if interval > 0 && !sourcePaced {
 						attemptCtx, attemptCancel = context.WithTimeout(urbCtx, interval)
 					}
 					respData = s.processSubmit(attemptCtx, dev, ep, dir, nil, nil)
@@ -872,11 +876,19 @@ func (s *Server) handleUrbStream(conn net.Conn, dev usb.Device) error {
 						break
 					}
 					if expired {
+						// A source-paced controller must wait for its next measurement.
+						// Replaying a cached IMU report turns USB polls into false samples.
+						if sourcePaced {
+							continue
+						}
 						respMu.Lock()
 						cached, ok := lastInResp[ep]
 						respMu.Unlock()
 						if ok {
 							respData = cached
+							if recorder, ok := dev.(interface{ RecordInputRepeat() }); ok {
+								recorder.RecordInputRepeat()
+							}
 							break
 						}
 						continue
@@ -1084,6 +1096,13 @@ func endpointInterval(desc *usb.Descriptor, ep uint32) time.Duration {
 		for _, epDesc := range desc.Interfaces[i].Endpoints {
 			if epDesc.BEndpointAddress != epAddr || epDesc.BMAttributes&0x03 != 0x03 {
 				continue
+			}
+			if desc.Device.Speed >= 3 {
+				if epDesc.BInterval == 0 {
+					return 0
+				}
+				exponent := min(int(epDesc.BInterval), 16) - 1
+				return time.Duration(1<<exponent) * 125 * time.Microsecond
 			}
 			return time.Duration(epDesc.BInterval) * time.Millisecond
 		}

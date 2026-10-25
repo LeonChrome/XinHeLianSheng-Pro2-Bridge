@@ -225,6 +225,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
         AppendLog("[SESSION_LOG] " + sessionLog.FilePath);
         AppendLog("[SESSION_RECENT_LOG] " + sessionLog.RecentFilePath);
+        AppendLog("[UI_RENDERING] " + StartupRenderingPolicy.Telemetry);
         if (!string.IsNullOrWhiteSpace(StartupProcessGuard.LastSummary))
         {
             AppendLog(StartupProcessGuard.LastSummary);

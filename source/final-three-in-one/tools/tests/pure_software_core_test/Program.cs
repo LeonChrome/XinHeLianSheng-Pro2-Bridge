@@ -25,6 +25,7 @@ internal static class Program
         Directory.CreateDirectory(output);
         try
         {
+            StartupRenderingRegressionTests.Run(Check);
             if (args.Contains("--native-rumble-only"))
             {
                 NativeRumbleRegressionTests.Run(Check);

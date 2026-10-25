@@ -20,6 +20,8 @@ dotnet publish windows/v60_viiper_app/Y700Switch2V60Viiper.csproj -c Release -r 
 
 发布时内嵌 VIIPER 和仓库保留的 USBIP 安装器 / 许可证。最终 EXE 自带 .NET；USBIP 内核驱动仍需在首次使用时按提示安装。
 
+兼容启动备用包：在 publish 命令中增加 `-p:CompatibilityRendering=true`，并使用不同输出目录（如 `artifacts/pure-software-compatible`）。仅将本程序界面选择为软件渲染，不改手柄逻辑或全局图形设置；标准构建默认关闭。对应源码标签为 `pro2-v2.0-ui-compatible`。[说明](../../docs/RELEASE_v2.0_UI_COMPATIBLE_ZH.md)
+
 v2.0 默认嵌入 `viiper-haptic-v2.exe`，不能用旧后端替代。真实 FD2、上游状态、协议报告和保持重复分别统计；Pro2 使用显式4ms协议重采样适配有线接收端，重复不算新物理采样。
 
 ## 离线检查

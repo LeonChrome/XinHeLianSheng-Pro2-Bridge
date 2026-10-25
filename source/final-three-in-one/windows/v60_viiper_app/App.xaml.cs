@@ -9,6 +9,14 @@ public partial class App : System.Windows.Application
     private Mutex? singleInstanceMutex;
     private bool ownsSingleInstanceMutex;
 
+    public App()
+    {
+        // Before OnStartup, MainWindow.InitializeComponent, or tray creation.
+        // A dedicated compatibility EXE enables this without asking a user whose
+        // normal window crashes to find an in-app setting.
+        StartupRenderingPolicy.Apply(Environment.GetCommandLineArgs());
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         if (BluetoothAdapterRestart.IsCommand(e.Args))
@@ -116,6 +124,7 @@ public partial class App : System.Windows.Application
                 "UI_LOADED=true\r\n" +
                 "VERSION=" + System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(
                     typeof(App).Assembly)?.InformationalVersion + "\r\n" +
+                "UI_RENDERING=" + StartupRenderingPolicy.Telemetry + "\r\n" +
                 "GYRO_QUALITY=" + Pro2QualityMode.GyroEnabled + "\r\n" +
                 "HAPTICS_QUALITY=" + Pro2QualityMode.HapticsEnabled + "\r\n" +
                 "BATTERY_INIT_SNAPSHOT=" + Pro2InitialBatterySnapshot.IsRequested(Environment.GetCommandLineArgs()) + "\r\n" +

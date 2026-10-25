@@ -24,6 +24,7 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;artifacts\**</DefaultItemExcludes>
     <ApplicationIcon>Assets\AppIcon-v2.ico</ApplicationIcon>
     <PureSoftwareRelease Condition="'$(PureSoftwareRelease)' == ''">false</PureSoftwareRelease>
+    <CompatibilityRendering Condition="'$(CompatibilityRendering)' == ''">false</CompatibilityRendering>
     <BatteryReadExperiment Condition="'$(BatteryReadExperiment)' == ''">false</BatteryReadExperiment>
     <OutputIsolationExperiment Condition="'$(OutputIsolationExperiment)' == ''">false</OutputIsolationExperiment>
     <EmbedUsbipInstaller Condition="'$(EmbedUsbipInstaller)' == ''">true</EmbedUsbipInstaller>
@@ -32,6 +33,12 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(PureSoftwareRelease)' == 'true'">
     <DefineConstants>$(DefineConstants);PURE_SOFTWARE_RELEASE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(CompatibilityRendering)' == 'true'">
+    <DefineConstants>$(DefineConstants);PRO2_COMPATIBILITY_RENDERING</DefineConstants>
+    <InformationalVersion>2.0.0-data-fidelity-ui-compatible</InformationalVersion>
+    <AssemblyTitle>PRO2 手柄助手 · 兼容启动版</AssemblyTitle>
+    <Product>PRO2 手柄助手 · 兼容启动版</Product>
   </PropertyGroup>
   <PropertyGroup Condition="'$(BatteryReadExperiment)' == 'true'">
     <DefineConstants>$(DefineConstants);PRO2_BATTERY_READ_EXPERIMENT</DefineConstants>

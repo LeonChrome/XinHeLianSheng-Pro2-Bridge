@@ -4,6 +4,8 @@
 
 **[推荐下载：v2.0 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.0/PRO2ControllerAssistant-v2.0-win-x64.exe)** · [版本说明](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v2.0)
 
+启动即闪退、窗口不显示时：[尝试兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.0/PRO2ControllerAssistant-v2.0-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能不变；正常使用无需更换。先退出旧版再打开。[说明](docs/RELEASE_v2.0_UI_COMPATIBLE_ZH.md)
+
 ## 能做什么
 
 - **四种模式**：Steam / Pro2、Pro1、Xbox、PS5 兼容输出。

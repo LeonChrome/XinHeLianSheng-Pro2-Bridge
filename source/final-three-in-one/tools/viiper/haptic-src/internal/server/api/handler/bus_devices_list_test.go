@@ -112,7 +112,7 @@ func TestBusDevicesList(t *testing.T) {
 			line, err := c.Do("bus/{id}/list", nil, tt.pathParams)
 			assert.NoError(t, err)
 			if tt.expectedResponse[0] == '{' {
-				assert.JSONEq(t, tt.expectedResponse, line)
+				assert.JSONEq(t, initialInputTelemetryResponse(t, tt.expectedResponse), line)
 			} else {
 				assert.Equal(t, tt.expectedResponse, line)
 			}

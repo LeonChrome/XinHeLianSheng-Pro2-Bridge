@@ -29,6 +29,7 @@ type DualSense struct {
 	descriptor            usb.Descriptor
 	hapticEnabled         bool
 	audioStreaming        bool
+	microphoneStreaming   bool
 	hapticAudioFrames     uint64
 	interruptOutputFrames uint64
 	controlOutputFrames   uint64
@@ -36,6 +37,8 @@ type DualSense struct {
 	subcommand [2]byte
 
 	seqCounter             uint8
+	packetSequence         uint32
+	hostControlRequests    map[uint64]uint64
 	timestampBase          time.Time
 	sourcePaced            bool
 	lastSampleTS           uint64
@@ -118,6 +121,11 @@ func new(o *device.CreateOptions, edge bool) (*DualSense, error) {
 		sourcePaced: metaState.SourcePaced,
 	}
 	d.descriptor.Device.IDProduct = DefaultPIDDS
+	// Own descriptor slices: a second device must not mutate the first one.
+	d.descriptor.Interfaces = append([]usb.InterfaceConfig(nil), defaultDescriptor.Interfaces...)
+	if !edge {
+		d.descriptor.Interfaces[0].HID = nativeHIDFunction(defaultDescriptor.Interfaces[0].HID)
+	}
 	if edge {
 		d.deviceType = "dualsenseedge"
 		d.descriptor.Device.IDProduct = DefaultPIDDSEdge
@@ -218,12 +226,30 @@ func (d *DualSense) GetDeviceSpecificArgs() map[string]any {
 	}
 	res["input_transfer"] = d.inputQueue.Stats()
 	res["source_paced"] = d.sourcePaced
+	res["host_hid_interrupt_output"] = d.interruptOutputFrames
+	res["host_hid_control_output"] = d.controlOutputFrames
+	res["host_pcm_packets"] = d.hapticAudioFrames
+	res["host_audio_streaming"] = d.audioStreaming
+	res["virtual_mic_silence_only"] = true
 	return res
 }
 
 func (d *DualSense) HandleTransfer(ctx context.Context, ep uint32, dir uint32, out []byte) []byte {
 	if dir == usbip.DirIn {
 		switch ep {
+		case 2:
+			if d.hapticEnabled {
+				// There is no physical microphone in this bridge. Complete the
+				// advertised UAC capture transfer with silence rather than an
+				// empty isochronous endpoint that can fail a native audio open.
+				d.mtx.Lock()
+				active := d.microphoneStreaming
+				d.mtx.Unlock()
+				if active {
+					return make([]byte, HapticMicPacketSize)
+				}
+			}
+			return nil
 		case 4:
 			for {
 				if ctx.Err() != nil && d.sourcePaced {
@@ -318,7 +344,12 @@ func (d *DualSense) routeOutputReport(report []byte, control bool) bool {
 	return true
 }
 
-func (d *DualSense) HandleControl(bmRequestType, bRequest uint8, wValue, wIndex, wLength uint16, data []byte) ([]byte, bool) {
+func (d *DualSense) HandleControl(bmRequestType, bRequest uint8, wValue, wIndex, wLength uint16, data []byte) (response []byte, handled bool) {
+	// Bounded, metadata-only trace. It distinguishes failed native handshakes
+	// from a game that simply never opens the audio endpoint.
+	if d.hapticEnabled {
+		defer func() { d.traceHostControl(bmRequestType, bRequest, wValue, wIndex, wLength, len(response), handled) }()
+	}
 	if d.hapticEnabled {
 		switch {
 		case bmRequestType == 0x01 && bRequest == 0x0b:
@@ -327,6 +358,11 @@ func (d *DualSense) HandleControl(bmRequestType, bRequest uint8, wValue, wIndex,
 			if iface == 1 {
 				d.mtx.Lock()
 				d.audioStreaming = alt != 0
+				d.mtx.Unlock()
+			}
+			if iface == 2 {
+				d.mtx.Lock()
+				d.microphoneStreaming = alt != 0
 				d.mtx.Unlock()
 			}
 			return nil, true
@@ -581,6 +617,8 @@ func (d *DualSense) buildUSBInputReportAt(s *InputState, m *MetaState, timestamp
 
 	d.seqCounter++
 	b[7] = d.seqCounter
+	d.packetSequence++
+	binary.LittleEndian.PutUint32(b[12:16], d.packetSequence)
 
 	usbDPad := uint8(DPadUSBNeutral)
 	switch {
@@ -614,6 +652,9 @@ func (d *DualSense) buildUSBInputReportAt(s *InputState, m *MetaState, timestamp
 	binary.LittleEndian.PutUint16(b[26:28], uint16(s.AccelZ))
 
 	binary.LittleEndian.PutUint32(b[28:32], uint32(timestamp))
+	// Match the wired device's secondary clock and USB connection flag.
+	// These clocks do not create additional physical Pro2 samples.
+	binary.LittleEndian.PutUint32(b[49:53], uint32(timestamp))
 
 	touch1 := uint8(0)
 	if !s.Touch1Active {
@@ -629,8 +670,30 @@ func (d *DualSense) buildUSBInputReportAt(s *InputState, m *MetaState, timestamp
 	b[37] = touch2
 	encodeTouchCoords(b[38:41], s.Touch2X, s.Touch2Y)
 
-	b[49] = 0x10
 	b[53] = m.BatteryStatus
+	b[54] = 0x08
 
 	return b
+}
+
+func (d *DualSense) traceHostControl(bm, request uint8, value, index, length uint16, responseLength int, handled bool) {
+	key := uint64(bm)<<40 | uint64(request)<<32 | uint64(value)<<16 | uint64(index)
+	d.mtx.Lock()
+	if d.hostControlRequests == nil {
+		d.hostControlRequests = make(map[uint64]uint64)
+	}
+	count, known := d.hostControlRequests[key]
+	if !known && len(d.hostControlRequests) >= 32 {
+		d.mtx.Unlock()
+		return
+	}
+	d.hostControlRequests[key] = count + 1
+	d.mtx.Unlock()
+	if count != 0 {
+		return
+	}
+	slog.Info("[PS5_HOST_CONTROL]", "request_type", fmt.Sprintf("0x%02X", bm),
+		"request", fmt.Sprintf("0x%02X", request), "value", fmt.Sprintf("0x%04X", value),
+		"interface_or_endpoint", index, "requested_bytes", length,
+		"response_bytes", responseLength, "handled", handled)
 }

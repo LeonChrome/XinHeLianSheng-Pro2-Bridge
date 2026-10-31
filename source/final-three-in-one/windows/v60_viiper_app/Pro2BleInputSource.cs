@@ -798,6 +798,10 @@ public sealed partial class Pro2BleInputSource :
             return;
         }
 
+        long connectionAttemptStarted = Stopwatch.GetTimestamp();
+        try
+        {
+        cancellationToken.ThrowIfCancellationRequested();
         await StopAsync();
         win11BeforeParameters = null;
         win11AfterCustomParameters = null;
@@ -823,6 +827,7 @@ public sealed partial class Pro2BleInputSource :
             foreach (string address in preferredAddresses) preferred.Add(address);
         }
         TimeSpan scanDuration = TimeSpan.FromSeconds(customConnectionParameterExperiment ? 20 : 8);
+        long discoveryStarted = Stopwatch.GetTimestamp();
         List<BleCandidate> candidates;
         if (manualCandidate != null)
         {
@@ -833,7 +838,13 @@ public sealed partial class Pro2BleInputSource :
             progress.Report("[BLE_MANUAL] selected=" + manualCandidate.AddressDetail +
                 " score=" + manualCandidate.Score + " exclusive=true exact_uuid_gate=true");
         }
-        else candidates = await ScanCandidatesAsync(progress, scanDuration, cancellationToken);
+        else candidates = await ScanCandidatesAsync(progress, scanDuration, cancellationToken,
+            Pro2DiscoveryPolicy.AllowsEarlyCompletion(Environment.GetCommandLineArgs(), customConnectionParameterExperiment)
+                ? new Pro2DiscoveryPolicy(preferred, excludedAddresses, onlyPreferredAddresses) : null);
+        progress.Report("[PRO2_CONNECT_TIMING] stage=discovery discovery_ms=" +
+            Stopwatch.GetElapsedTime(discoveryStarted).TotalMilliseconds.ToString("F0") +
+            " total_ms=" + Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0") +
+            " candidates=" + candidates.Count + " manual=" + (manualCandidate != null));
         if (customConnectionParameterExperiment && candidates.Count == 0)
         {
             foreach (string address in preferred)
@@ -851,6 +862,8 @@ public sealed partial class Pro2BleInputSource :
         {
             Status = "没有扫描到 Pro2 BLE 候选。请长按配对/唤醒手柄，确认未连接到主机、手机或 ESP32。";
             progress.Report("[PRO2_BLE] scan none");
+            progress.Report("[PRO2_CONNECT_TIMING] stage=complete result=no_candidate total_ms=" +
+                Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0"));
             return;
         }
 
@@ -895,6 +908,7 @@ public sealed partial class Pro2BleInputSource :
             }
 
             progress.Report("[PRO2_BLE] trying " + DescribeCandidate(candidate));
+            long candidateStarted = Stopwatch.GetTimestamp();
             try
             {
                 Pro2StickCalibrationProfile? stickCalibration =
@@ -920,11 +934,18 @@ public sealed partial class Pro2BleInputSource :
                                  ? ""
                                  : " / 警告：" + lastPerformanceWarning);
                     IsRunning = true;
+                    progress.Report("[PRO2_CONNECT_TIMING] stage=complete result=live candidate_ms=" +
+                        Stopwatch.GetElapsedTime(candidateStarted).TotalMilliseconds.ToString("F0") +
+                        " total_ms=" + Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0") +
+                        " rate_accepted=" + rateAccepted + " address=" + candidateAddress);
                     return;
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                progress.Report("[PRO2_CONNECT_TIMING] stage=candidate result=cancelled candidate_ms=" +
+                    Stopwatch.GetElapsedTime(candidateStarted).TotalMilliseconds.ToString("F0") +
+                    " total_ms=" + Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0"));
                 await CloseCurrentAsync("已取消 Pro2 连接。");
                 throw;
             }
@@ -933,6 +954,10 @@ public sealed partial class Pro2BleInputSource :
                 progress.Report("[PRO2_BLE] connect failed " + DescribeCandidate(candidate) + " / " + ex.Message);
             }
 
+            progress.Report("[PRO2_CONNECT_TIMING] stage=candidate result=not_live candidate_ms=" +
+                Stopwatch.GetElapsedTime(candidateStarted).TotalMilliseconds.ToString("F0") +
+                " total_ms=" + Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0") +
+                " address=" + candidateAddress);
             await CloseCurrentAsync("候选 BLE 未确认 live，继续尝试下一项。");
         }
 
@@ -945,6 +970,15 @@ public sealed partial class Pro2BleInputSource :
             : string.IsNullOrWhiteSpace(lastPerformanceFailure)
                 ? "未能连接到真实 Pro2 BLE。请确保手柄处于可连接状态，并且没有被 ESP32、Switch、手机或旧进程占用。"
                 : lastPerformanceFailure;
+        progress.Report("[PRO2_CONNECT_TIMING] stage=complete result=no_live_candidate total_ms=" +
+            Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0"));
+        }
+        finally
+        {
+            progress.Report("[PRO2_CONNECT_TIMING] stage=finished result=" + (IsRunning ? "live" : "not_live") +
+                " cancelled=" + cancellationToken.IsCancellationRequested +
+                " total_ms=" + Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0"));
+        }
     }
 
     public bool TryGetLatest(out GamepadState state, out TimeSpan age)
@@ -1834,15 +1868,17 @@ public sealed partial class Pro2BleInputSource :
     private async Task<List<BleCandidate>> ScanCandidatesAsync(
         IProgress<string> progress,
         TimeSpan duration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Pro2DiscoveryPolicy? discoveryPolicy = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         await ReportBluetoothAdapterDiagnosticsAsync(progress);
         List<BleCandidate> active = await ScanCandidatesCoreAsync(
             progress,
             duration,
             BluetoothLEScanningMode.Active,
             "active",
-            cancellationToken);
+            cancellationToken, discoveryPolicy: discoveryPolicy);
         if (active.Count > 0 || cancellationToken.IsCancellationRequested)
         {
             return active;
@@ -1855,7 +1891,7 @@ public sealed partial class Pro2BleInputSource :
             passiveDuration,
             BluetoothLEScanningMode.Passive,
             "passive",
-            cancellationToken);
+            cancellationToken, discoveryPolicy: discoveryPolicy);
     }
 
     private async Task<List<BleCandidate>> ScanCandidatesCoreAsync(
@@ -1865,8 +1901,10 @@ public sealed partial class Pro2BleInputSource :
         string scanLabel,
         CancellationToken cancellationToken,
         bool includeUnmatched = false,
-        IProgress<Pro2ManualCandidate>? manualProgress = null)
+        IProgress<Pro2ManualCandidate>? manualProgress = null,
+        Pro2DiscoveryPolicy? discoveryPolicy = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         Dictionary<(ulong Address, BluetoothAddressType Type), BleCandidate> found = new();
         HashSet<ulong> seenAdvertisements = [];
         List<string> rejectedSamples = [];
@@ -1876,6 +1914,9 @@ public sealed partial class Pro2BleInputSource :
         int nameMatchAdvertisementCount = 0;
         int rejectedAdvertisementCount = 0;
         TaskCompletionSource scanDone = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<string> earlyCandidate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        long scanStarted = Stopwatch.GetTimestamp();
+        string scanStopReason = "full_window";
         BluetoothError stopError = BluetoothError.Success;
         BluetoothLEAdvertisementWatcher localWatcher = new()
         {
@@ -1884,7 +1925,7 @@ public sealed partial class Pro2BleInputSource :
         watcher = localWatcher;
         LastScanDiagnostic = scanLabel + " scan started.";
 
-        localWatcher.Received += (_, args) =>
+        Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs> receivedHandler = (_, args) =>
         {
             string name = args.Advertisement.LocalName ?? "";
             bool nintendo = args.Advertisement.ManufacturerData.Any(m => m.CompanyId == NintendoCompanyId);
@@ -1908,6 +1949,10 @@ public sealed partial class Pro2BleInputSource :
             }
 
             BleCandidate? candidate = CandidateFromAdvertisement(args);
+            string addressText = FormatAddress(args.BluetoothAddress);
+            if (candidate == null && discoveryPolicy?.IsFreshSavedTarget(addressText) == true)
+                candidate = new(args.BluetoothAddress, args.BluetoothAddressType, name,
+                    args.RawSignalStrengthInDBm, nintendo, 0) { IsKnownAddressProbe = true };
             if (candidate == null && includeUnmatched)
                 candidate = new(args.BluetoothAddress, args.BluetoothAddressType, name,
                     args.RawSignalStrengthInDBm, nintendo, 0);
@@ -1942,14 +1987,18 @@ public sealed partial class Pro2BleInputSource :
                     manualProgress?.Report(ToManualCandidate(candidate));
                 }
             }
+            string? earlyReason = discoveryPolicy?.EarlyCompletionReason(addressText, name, nintendo);
+            if (earlyReason != null) earlyCandidate.TrySetResult(earlyReason);
         };
-        localWatcher.Stopped += (_, args) =>
+        Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementWatcherStoppedEventArgs> stoppedHandler = (_, args) =>
         {
             stopError = args.Error;
             progress.Report("[PRO2_BLE] " + scanLabel + " watcher stopped status=" +
                             localWatcher.Status + " error=" + args.Error);
             scanDone.TrySetResult();
         };
+        localWatcher.Received += receivedHandler;
+        localWatcher.Stopped += stoppedHandler;
 
         progress.Report("[PRO2_BLE] " + scanLabel + " scan start duration_ms=" +
                         duration.TotalMilliseconds.ToString("F0"));
@@ -1960,25 +2009,49 @@ public sealed partial class Pro2BleInputSource :
         catch (Exception ex)
         {
             progress.Report("[PRO2_BLE] " + scanLabel + " scan start failed: " + ex.GetType().Name + ": " + ex.Message);
-            watcher = null;
+            localWatcher.Received -= receivedHandler;
+            localWatcher.Stopped -= stoppedHandler;
+            if (ReferenceEquals(watcher, localWatcher)) watcher = null;
+            progress.Report("[PRO2_DISCOVERY_TIMING] scan=" + scanLabel +
+                " elapsed_ms=" + Stopwatch.GetElapsedTime(scanStarted).TotalMilliseconds.ToString("F0") +
+                " full_window_ms=" + duration.TotalMilliseconds.ToString("F0") + " stop_reason=start_failed" +
+                " fast_discovery=" + (discoveryPolicy != null) + " unseen_address_probe=false");
             return [];
         }
         progress.Report("[PRO2_BLE] " + scanLabel + " watcher status=" + localWatcher.Status);
         try
         {
-            await Task.WhenAny(Task.Delay(duration, cancellationToken), scanDone.Task);
+            scanStopReason = await Pro2DiscoveryPolicy.WaitForScanCompletionAsync(
+                duration, earlyCandidate.Task, scanDone.Task, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            scanStopReason = "cancelled";
+            throw;
         }
         finally
         {
-            if (localWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Started ||
-                localWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Created)
+            localWatcher.Received -= receivedHandler;
+            try
             {
-                localWatcher.Stop();
+                if (localWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Started ||
+                    localWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Created)
+                    localWatcher.Stop();
             }
-            watcher = null;
+            finally
+            {
+                localWatcher.Stopped -= stoppedHandler;
+                if (ReferenceEquals(watcher, localWatcher)) watcher = null;
+                progress.Report("[PRO2_DISCOVERY_TIMING] scan=" + scanLabel +
+                    " elapsed_ms=" + Stopwatch.GetElapsedTime(scanStarted).TotalMilliseconds.ToString("F0") +
+                    " full_window_ms=" + duration.TotalMilliseconds.ToString("F0") +
+                    " stop_reason=" + scanStopReason + " fast_discovery=" + (discoveryPolicy != null) +
+                    " unseen_address_probe=false");
+            }
         }
 
         await Task.Delay(150, CancellationToken.None);
+        cancellationToken.ThrowIfCancellationRequested();
         lock (found)
         {
             List<BleCandidate> result = found.Values

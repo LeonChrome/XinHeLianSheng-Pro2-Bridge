@@ -33,7 +33,7 @@ func TestSDLMotionCompositeHIDContract(t *testing.T) {
 		hid.Endpoints[0].WMaxPacketSize != 64 {
 		t.Fatal("64-byte interrupt IN endpoint missing")
 	}
-	wire, err := hid.HID.ReportDescriptor.Bytes()
+	wire, err := hid.HID.ReportBytes()
 	if err != nil {
 		t.Fatal(err)
 	}

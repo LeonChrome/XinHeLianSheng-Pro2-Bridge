@@ -13,6 +13,8 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
     private const ulong PerformanceLogIntervalFrames = 1000;
     private string feedbackSource = "等待游戏反馈";
     public string FeedbackSource => Volatile.Read(ref feedbackSource);
+    private string nativeHidDiagnostic = "";
+    public string NativeHidDiagnostic => Volatile.Read(ref nativeHidDiagnostic);
     private long feedbackQueued;
     public long FeedbackQueued => Interlocked.Read(ref feedbackQueued);
     private readonly ViiperProtocolClient client;
@@ -251,6 +253,22 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
 
         inputTask = Task.Run(() => RunLoopAsync("input", InputLoopAsync, cts.Token));
         feedbackTask = Task.Run(() => RunLoopAsync("feedback", FeedbackLoopAsync, cts.Token));
+        if(profile.UsesDualSenseHaptics)
+        {
+            CancellationToken diagnosticToken=cts.Token;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(1200,diagnosticToken).ConfigureAwait(false);
+                    string diagnostic=Ps5NativeHidDiagnostics.Capture();
+                    if(diagnosticToken.IsCancellationRequested) return;
+                    Volatile.Write(ref nativeHidDiagnostic,diagnostic);
+                    progress.Report("[PS5_NATIVE_HID_CAPS] " + diagnostic.Replace('\n',' '));
+                }
+                catch(OperationCanceledException) { }
+            });
+        }
     }
 
     private void ReportProfessionalSnapshot()

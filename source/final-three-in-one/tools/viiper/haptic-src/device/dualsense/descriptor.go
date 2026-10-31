@@ -101,7 +101,7 @@ var defaultDescriptor = usb.Descriptor{
 
 							hid.ReportID{ID: ReportIDOutput},
 							hid.Usage{Usage: 0x23},
-							hid.ReportCount{Count: 63},
+							hid.ReportCount{Count: OutputReportSize - 1},
 							hid.Output{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
 
 							hid.ReportID{ID: featureIDCalibration}, hid.Usage{Usage: 0x33}, hid.ReportCount{Count: 40}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},

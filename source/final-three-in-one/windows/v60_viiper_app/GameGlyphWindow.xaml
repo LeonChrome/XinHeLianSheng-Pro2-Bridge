@@ -1,0 +1,54 @@
+<Window x:Class="Y700Switch2V60Viiper.GameGlyphWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="游戏按键图标" Width="760" Height="640" MinWidth="520" MinHeight="440"
+        WindowStartupLocation="CenterOwner" Background="#F5F7F6" Foreground="#192824"
+        FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="14" UseLayoutRounding="True">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="14,9"/><Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#DFE7E2"/>
+            <Setter Property="Foreground" Value="#253C32"/><Setter Property="Cursor" Value="Hand"/>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="游戏按键图标" FontSize="24" FontWeight="SemiBold"/>
+            <TextBlock Text="影之刃零 · 保持 PS5 模式，按实际位置显示 Pro2 键名。" Foreground="#667870" Margin="0,8,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,20,0,16">
+            <StackPanel>
+                <Border Background="White" BorderBrush="#DFE7E2" BorderThickness="1" CornerRadius="12" Padding="18">
+                    <StackPanel x:Name="PathControls">
+                        <DockPanel Margin="0,0,0,8">
+                            <Button Content="自动查找" Click="Discover_Click" DockPanel.Dock="Right" Padding="12,6" Margin="0"/>
+                            <TextBlock Text="Steam 游戏目录" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <ComboBox x:Name="InstallationsBox" DisplayMemberPath="GameRoot" SelectionChanged="Installation_Changed" Margin="0,0,0,10" MinHeight="32" Visibility="Collapsed"/>
+                        <DockPanel>
+                            <Button Content="选择目录…" Click="Browse_Click" DockPanel.Dock="Right" Padding="12,7" Margin="8,0,0,0"/>
+                            <TextBox x:Name="GamePathBox" MinHeight="34" Padding="8,6" TextChanged="Path_Changed" VerticalContentAlignment="Center"/>
+                        </DockPanel>
+                        <TextBlock Text="可选择游戏根目录；支持不同盘符、中文路径和多个 Steam 库。" FontSize="12" Foreground="#667870" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
+                <Border Background="White" BorderBrush="#DFE7E2" BorderThickness="1" CornerRadius="12" Padding="18" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock x:Name="StatusHeading" Text="等待检测" FontSize="17" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="StatusMessage" Text="自动查找后检测游戏版本。" Foreground="#52685D" TextWrapping="Wrap" Margin="0,7,0,0"/>
+                        <TextBlock Text="上 X　右 A　下 B　左 Y" FontSize="16" FontWeight="SemiBold" Foreground="#245344" Margin="0,14,0,0"/>
+                        <TextBlock Text="含面键、L / R、ZL / ZR、+ / − 与截图提示。整张手柄示意图和触摸板方向手势保留。" FontSize="12" Foreground="#667870" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                        <TextBlock Text="修改前请退出游戏。只添加独立图标补丁，不覆盖原游戏包；游戏更新后需重新检查兼容性。" FontSize="12" Foreground="#667870" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+        <WrapPanel Grid.Row="2">
+            <Button x:Name="InspectButton" Content="检测" Click="Inspect_Click"/>
+            <Button x:Name="ApplyButton" Content="使用 Pro2 图标" IsEnabled="False" Click="Apply_Click" Background="#234E40" Foreground="White"/>
+            <Button x:Name="RestoreButton" Content="恢复原图标" IsEnabled="False" Click="Restore_Click"/>
+            <Button x:Name="CloseButton" Content="返回" Click="Return_Click"/>
+        </WrapPanel>
+    </Grid>
+</Window>

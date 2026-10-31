@@ -374,6 +374,15 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="0,0,4,0">
                         <Border Style="{StaticResource Card}" Padding="16">
+                            <DockPanel>
+                                <Button x:Name="GameGlyphsButton" Content="管理游戏图标…" Click="GameGlyphs_Click" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="16,0,0,0"/>
+                                <StackPanel>
+                                    <TextBlock Text="游戏按键图标" FontWeight="SemiBold" FontSize="17" Margin="0,0,0,6"/>
+                                    <TextBlock Text="已适配《影之刃零》：保持 PS5 模式，按实际位置显示 Pro2 键名。" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Padding="16">
                             <StackPanel>
                                 <TextBlock Text="USBIP" FontWeight="SemiBold" FontSize="17" Margin="0,0,0,6"/>
                                 <TextBlock Text="{Binding UsbipLocationText}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>

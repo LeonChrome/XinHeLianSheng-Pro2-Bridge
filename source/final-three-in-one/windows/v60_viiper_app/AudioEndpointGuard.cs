@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Y700Switch2V60Viiper;
 
@@ -13,6 +14,8 @@ public static class AudioEndpointGuard
     private static readonly PropertyKey DeviceFriendlyNameKey = new(
         Guid.Parse("a45c254e-df1c-4efd-8020-67d146a850e0"),
         14);
+    private static readonly PropertyKey DeviceInstanceIdKey = new(
+        Guid.Parse("78c34fc8-104a-4aca-9ea4-524d52996e57"), 256);
 
     public static IReadOnlyList<string> EnsureDualSenseIsNotDefault()
     {
@@ -186,7 +189,16 @@ public static class AudioEndpointGuard
     {
         string id = GetDeviceId(device);
         string name = GetFriendlyName(device);
-        return new AudioEndpoint(id, name, flow, LooksLikeDualSenseEndpoint(id, name));
+        bool dualSense = LooksLikeDualSenseEndpoint(id, name);
+        if (!dualSense)
+        {
+            // The physical USB product string is "Wireless Controller".
+            // Resolve its PnP ancestry rather than treating that generic name
+            // as proof, or disabling the audio interface used by native haptics.
+            string instance = GetStringProperty(device, DeviceInstanceIdKey);
+            dualSense = HasDualSenseAncestor(instance);
+        }
+        return new AudioEndpoint(id, name, flow, dualSense);
     }
 
     private static string GetDeviceId(IMMDevice device)
@@ -212,6 +224,9 @@ public static class AudioEndpointGuard
     }
 
     private static string GetFriendlyName(IMMDevice device)
+        => GetStringProperty(device, DeviceFriendlyNameKey);
+
+    private static string GetStringProperty(IMMDevice device, PropertyKey key)
     {
         IPropertyStore? store = null;
         PropVariant value = default;
@@ -223,7 +238,6 @@ public static class AudioEndpointGuard
                 return "";
             }
 
-            PropertyKey key = DeviceFriendlyNameKey;
             hr = store.GetValue(ref key, out value);
             if (hr != 0)
             {
@@ -238,6 +252,29 @@ public static class AudioEndpointGuard
             ReleaseComObject(store);
         }
     }
+
+    private static bool HasDualSenseAncestor(string instanceId)
+    {
+        if (string.IsNullOrWhiteSpace(instanceId) ||
+            CM_Locate_DevNode(out uint node, instanceId, 0) != 0) return false;
+        var id = new StringBuilder(512);
+        for (int i = 0; i < 8; i++)
+        {
+            id.Clear();
+            if (CM_Get_Device_ID(node, id, id.Capacity, 0) == 0 &&
+                id.ToString().Contains("VID_054C&PID_0CE6", StringComparison.OrdinalIgnoreCase)) return true;
+            if (CM_Get_Parent(out uint parent, node, 0) != 0) break;
+            node = parent;
+        }
+        return false;
+    }
+
+    [DllImport("cfgmgr32.dll", EntryPoint = "CM_Locate_DevNodeW", CharSet = CharSet.Unicode)]
+    private static extern uint CM_Locate_DevNode(out uint node, string id, uint flags);
+    [DllImport("cfgmgr32.dll")]
+    private static extern uint CM_Get_Parent(out uint parent, uint node, uint flags);
+    [DllImport("cfgmgr32.dll", EntryPoint = "CM_Get_Device_IDW", CharSet = CharSet.Unicode)]
+    private static extern uint CM_Get_Device_ID(uint node, StringBuilder id, int length, uint flags);
 
     private static bool LooksLikeDualSenseEndpoint(string id, string name)
     {

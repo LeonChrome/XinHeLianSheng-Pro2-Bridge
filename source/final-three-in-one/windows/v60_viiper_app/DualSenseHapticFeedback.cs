@@ -69,6 +69,7 @@ public sealed class DualSenseHapticRumbleScheduler
     public long AudioFrames { get; private set; }
     public long HidFrames { get; private set; }
     public long BlockedAudioFrames { get; private set; }
+    public long PreservedPartialHidUpdates { get; private set; }
     public long IdleStops { get; private set; }
     public long ForcedStops { get; private set; }
     public double AudioAgeMilliseconds => hasAudioTimestamp
@@ -77,7 +78,8 @@ public sealed class DualSenseHapticRumbleScheduler
         " pcm_frames=" + AudioFrames + " hid_frames=" + HidFrames + " blocked_pcm=" + BlockedAudioFrames +
         " pcm_age_ms=" + AudioAgeMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) +
         " pcm_active=" + nativeOutputActive + " ordinary_active=" + ordinaryOutputActive +
-        " idle_stops=" + IdleStops + " forced_stops=" + ForcedStops;
+        " idle_stops=" + IdleStops + " forced_stops=" + ForcedStops +
+        " partial_hid_preserved=" + PreservedPartialHidUpdates;
 
     public bool TryStopIdle(out Pro2OutputPacket packet)
     {
@@ -147,6 +149,9 @@ public sealed class DualSenseHapticRumbleScheduler
 
             if (payload.Length > 0 && payload.Length % 8 == 0)
             {
+                // A real PCM frame is evidence of the default audio path. A
+                // later unrelated LED update must not clear its DSP history.
+                modeKnown = true;
                 HasNativeAudio = true;
                 AudioFrames++;
                 hasAudioTimestamp = true;
@@ -179,6 +184,7 @@ public sealed class DualSenseHapticRumbleScheduler
 
         ReadOnlySpan<byte> payload = report.Slice(1);
         byte validFlag0 = payload[0];
+        byte validFlag1 = payload[1];
         byte validFlag2 = payload.Length > 38 ? payload[38] : (byte)0;
         byte weak = payload[2];
         byte strong = payload[3];
@@ -187,6 +193,26 @@ public sealed class DualSenseHapticRumbleScheduler
         bool compatibilityV2 = (validFlag2 & 0x04) != 0;
         bool selectedCompatibility =
             hapticsSelect || compatibilityV1 || compatibilityV2;
+        // These are independent controls, not an instruction to reset the
+        // currently selected vibration mode. Linux hid-playstation and the
+        // Microsoft GameInput DualSense helper send such partial LED/mic/
+        // trigger reports with no vibration bits and zero motor fields.
+        // Keep all-zero output semantics unchanged: SDL deliberately clears
+        // the emulated-rumble bits to restore audio haptics / stop rumble.
+        bool unrelatedPartialUpdate = !selectedCompatibility &&
+            ((validFlag0 & 0x0c) != 0 || (validFlag1 & 0x1f) != 0 || (validFlag2 & 0x03) != 0) &&
+            (validFlag0 & ~0x0c) == 0 && (validFlag1 & ~0x1d) == 0 &&
+            (validFlag2 & ~0x03) == 0;
+        if (unrelatedPartialUpdate)
+        {
+            PreservedPartialHidUpdates++;
+            summary = "DualSense HID output: host_mode=" +
+                (compatibilityMode ? "compatibility" : "audio_haptics") +
+                " haptic_update=partial_preserved flag0=0x" + validFlag0.ToString("X2") +
+                " flag1=0x" + validFlag1.ToString("X2") + " flag2=0x" + validFlag2.ToString("X2");
+            reason = "non-vibration HID update preserves the current haptic state";
+            return false;
+        }
         bool modeChanged = !modeKnown || compatibilityMode != selectedCompatibility;
         compatibilityMode = selectedCompatibility;
         modeKnown = true;
@@ -199,7 +225,9 @@ public sealed class DualSenseHapticRumbleScheduler
             (compatibilityMode ? "compatibility" : "audio_haptics") +
             " small=" + weak +
             " large=" + strong +
+            " haptic_update=explicit_mode" +
             " flag0=0x" + validFlag0.ToString("X2") +
+            " flag1=0x" + validFlag1.ToString("X2") +
             " flag2=0x" + validFlag2.ToString("X2");
 
         if (compatibilityMode)

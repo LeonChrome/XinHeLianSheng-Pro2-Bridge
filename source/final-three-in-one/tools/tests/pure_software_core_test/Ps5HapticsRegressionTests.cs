@@ -8,6 +8,7 @@ internal static class Ps5HapticsRegressionTests
     public static void Run(Action<bool, string> check)
     {
         IdleAndTransitions(check);
+        PartialHidUpdates(check);
         SpectralRange(check);
     }
 
@@ -25,6 +26,12 @@ internal static class Ps5HapticsRegressionTests
         byte[] report = new byte[48];
         report[0] = 2; report[1] = flags; report[3] = weak; report[4] = strong;
         report[2] = 4; report[45] = 22; // continuous LED traffic is not PCM.
+        return Wire(DualSenseHapticFrameKind.HidOutput, report);
+    }
+
+    private static byte[] AudioMode()
+    {
+        byte[] report = new byte[48]; report[0] = 2;
         return Wire(DualSenseHapticFrameKind.HidOutput, report);
     }
 
@@ -87,7 +94,8 @@ internal static class Ps5HapticsRegressionTests
         check(scheduler.TryStop("stream-lost", out var forced) && !forced.Active && forced.Source == "stream-lost",
             "stream loss explicitly stops ordinary output and clears DSP");
         check(!scheduler.TryStop("exit", out _), "subsequent shutdown cannot replay stopped output");
-        check(scheduler.TryProcess(Hid(), out var transition, out _, out _) && !transition.Active,
+        check(scheduler.TryProcess(AudioMode(), out var transition, out _, out _) && !transition.Active &&
+            !scheduler.CompatibilityMode,
             "ordinary to PCM transition starts neutral");
         scheduler.TryProcess(Wire(DualSenseHapticFrameKind.AudioPcm, new byte[7]), out _, out _, out _);
         check(scheduler.AudioAgeMilliseconds < 0 && !scheduler.NativeOutputActive,
@@ -95,6 +103,66 @@ internal static class Ps5HapticsRegressionTests
         var startedAtZero = new DualSenseHapticRumbleScheduler(true, () => 0);
         startedAtZero.TryProcess(Wire(DualSenseHapticFrameKind.AudioPcm, Wave(0, 48, 160, 10000)), out _, out _, out _);
         check(startedAtZero.AudioAgeMilliseconds == 0, "zero monotonic clock value is a valid PCM timestamp");
+    }
+
+    private static void PartialHidUpdates(Action<bool, string> check)
+    {
+        foreach (bool quality in new[] { false, true })
+        foreach (int size in new[] { 48, 64 })
+        {
+            long ticks = 0;
+            var scheduler = new DualSenseHapticRumbleScheduler(quality, () => ticks);
+            scheduler.TryProcess(Hid(3, 100, 150), out _, out _, out _);
+            foreach (var flags in new[] { (First: (byte)0, Second: (byte)4, Third: (byte)0),
+                         (First: (byte)0, Second: (byte)16, Third: (byte)0),
+                         (First: (byte)0, Second: (byte)1, Third: (byte)0),
+                         (First: (byte)4, Second: (byte)0, Third: (byte)0),
+                         (First: (byte)8, Second: (byte)0, Third: (byte)0),
+                         (First: (byte)0, Second: (byte)0, Third: (byte)2) })
+            {
+                byte[] report = new byte[size]; report[0] = 2;
+                report[1] = flags.First; report[2] = flags.Second; report[39] = flags.Third;
+                report[45] = 100;
+                check(!scheduler.TryProcess(Wire(DualSenseHapticFrameKind.HidOutput, report),
+                    out _, out var summary, out _) && scheduler.CompatibilityMode &&
+                    summary.Contains("haptic_update=partial_preserved"),
+                    $"partial PS5 update preserves ordinary mode quality={quality} size={size} flags={flags}");
+            }
+            check(scheduler.PreservedPartialHidUpdates == 6 &&
+                scheduler.TryStop("fixture-stop", out var heldStop) && !heldStop.Active,
+                "partial PS5 updates do not clear the active ordinary state");
+            check(!scheduler.TryProcess(Wire(DualSenseHapticFrameKind.AudioPcm, Wave(0, 48, 160, 10000)),
+                out _, out _, out _) && scheduler.BlockedAudioFrames == 1,
+                "PCM cannot silently override an explicit ordinary selection");
+
+            scheduler.TryProcess(Hid(3, 80, 120), out _, out _, out _);
+            check(scheduler.TryProcess(AudioMode(), out var nativeTransition, out var modeSummary, out _) &&
+                !scheduler.CompatibilityMode && !nativeTransition.Active &&
+                modeSummary.Contains("haptic_update=explicit_mode"),
+                "SDL all-zero restore-audio report still stops held ordinary output");
+            for (int i = 0; i < 100; i++)
+            {
+                ticks += Stopwatch.Frequency / 1000;
+                scheduler.TryProcess(Wire(DualSenseHapticFrameKind.AudioPcm, Wave(i * 48, 48, 160, 10000)),
+                    out _, out _, out _);
+            }
+            check(scheduler.NativeOutputActive, "native PCM can resume after explicit restore-audio report");
+            long before = scheduler.AudioFrames;
+            check(!scheduler.TryProcess(Hid(), out _, out _, out _) && scheduler.NativeOutputActive &&
+                !scheduler.CompatibilityMode && scheduler.AudioFrames == before,
+                "LED-only report does not clear active PCM or create a PCM source event");
+            check(scheduler.TryProcess(Hid(3), out var explicitStop, out _, out _) && !explicitStop.Active &&
+                scheduler.CompatibilityMode && !scheduler.NativeOutputActive,
+                "explicit ordinary zero command still clears native output and stops");
+            check(!scheduler.TryStop("fixture-end", out _), "partial-update fixture leaves no active vibration");
+        }
+
+        // Missing flags plus arbitrary old motor bytes are not a valid ordinary
+        // update and must not fabricate vibration, even at first use.
+        var fresh = new DualSenseHapticRumbleScheduler(true);
+        byte[] stale = new byte[48]; stale[0] = 2; stale[3] = 255; stale[4] = 255;
+        check(fresh.TryProcess(Wire(DualSenseHapticFrameKind.HidOutput, stale), out var neutral, out _, out _) &&
+            !neutral.Active && !fresh.CompatibilityMode, "unflagged motor bytes remain guarded on a fresh scheduler");
     }
 
     private readonly record struct Tones(int FirstFrequency, int FirstAmplitude, int SecondFrequency, int SecondAmplitude);

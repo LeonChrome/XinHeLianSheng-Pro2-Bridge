@@ -33,6 +33,15 @@ public partial class MainWindow : Window
     }
     private ManualConnectWindow? manualConnectWindow;
     private EnvironmentInfoWindow? environmentInfoWindow;
+    private GameGlyphWindow? gameGlyphWindow;
+
+    private void GameGlyphs_Click(object sender, RoutedEventArgs e)
+    {
+        if (gameGlyphWindow != null) { gameGlyphWindow.Activate(); return; }
+        gameGlyphWindow = new GameGlyphWindow { Owner = this };
+        gameGlyphWindow.Closed += (_, _) => gameGlyphWindow = null;
+        gameGlyphWindow.Show();
+    }
     private readonly DispatcherTimer presentationTimer = new(DispatcherPriority.Background)
     { Interval = TimeSpan.FromSeconds(1) };
 
@@ -453,6 +462,11 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
+        if (gameGlyphWindow?.IsOperationBusy == true)
+        {
+            e.Cancel = true;
+            return; // Let a short patch transaction finish before exiting the process.
+        }
         if (shutdownComplete)
         {
             return;

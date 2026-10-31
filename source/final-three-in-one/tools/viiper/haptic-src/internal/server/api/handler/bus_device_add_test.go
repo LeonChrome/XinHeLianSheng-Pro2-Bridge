@@ -189,7 +189,7 @@ func TestBusDeviceAdd(t *testing.T) {
 			assert.NoError(t, err)
 
 			if tt.expectedResponse != "" {
-				assert.JSONEq(t, tt.expectedResponse, line)
+				assert.JSONEq(t, initialInputTelemetryResponse(t, tt.expectedResponse), line)
 			}
 
 			if tt.extraChecks != nil {

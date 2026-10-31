@@ -1,0 +1,82 @@
+{
+  "version": "0.2.0",
+  "displayName": "PBZ Pro2 positional button glyphs",
+  "steamAppId": "4115450",
+  "targetDirectory": "ProjectPBZ/Content/Paks",
+  "testedGameExeSha256": "7B4FCD286A350780FAF0824D73AA150B21CBF1BCCDE883E6A96386CBE09973B4",
+  "testedGameUtocSha256": "266D1B345E9EBDB1C89AE4E4CACF72D9143D774B37C4347E4ED80C1B18B61964",
+  "files": [
+    {
+      "name": "PRO2_PBZ_Glyphs_0_P.pak",
+      "length": 347,
+      "sha256": "75E7144577253917F6DA7312EF5E585B12FB728226A22B0938323751A6B555CD"
+    },
+    {
+      "name": "PRO2_PBZ_Glyphs_0_P.ucas",
+      "length": 55759,
+      "sha256": "9B272ED7A13C9D5D07F65BBB7D09A5B1C34476BBD0B55165B5D71D6B04E412ED"
+    },
+    {
+      "name": "PRO2_PBZ_Glyphs_0_P.utoc",
+      "length": 1033,
+      "sha256": "77485E40D06FFE29FA31E36BF7E0FE36819103A64ABB63CB38F0BEDE2FAAAD59"
+    }
+  ],
+  "previousFileSets": [
+    {
+      "version": "0.1.0",
+      "files": [
+        {
+          "name": "PRO2_PBZ_Glyphs_0_P.pak",
+          "length": 347,
+          "sha256": "75E7144577253917F6DA7312EF5E585B12FB728226A22B0938323751A6B555CD"
+        },
+        {
+          "name": "PRO2_PBZ_Glyphs_0_P.ucas",
+          "length": 55726,
+          "sha256": "7A20B86A8DF8338A612732EE542B9E74A9568AC2DF1E68910E1C94B83EDE8240"
+        },
+        {
+          "name": "PRO2_PBZ_Glyphs_0_P.utoc",
+          "length": 1033,
+          "sha256": "4D6DC7548F592C1F3DF6BAF5B8E6B8F391708231394CA81B5C849B9E42F2544D"
+        }
+      ]
+    }
+  ],
+  "offlineRoundtrip": [
+    {
+      "asset": "ProjectPBZ\\Content\\PBZContent\\UI\\Foundation\\Platform\\Input\\GamepadPS5\\CommonInput_Gamepad_PS5.uasset",
+      "export_payload_unchanged": true,
+      "four_positional_texture_imports_verified": true
+    },
+    {
+      "asset": "ProjectPBZ\\Content\\PBZContent\\UI\\Foundation\\Platform\\Input\\GamepadPS5\\CommonInput_Gamepad_PS5_Black.uasset",
+      "export_payload_unchanged": true,
+      "four_positional_texture_imports_verified": true
+    },
+    {
+      "asset": "ProjectPBZ\\Content\\PBZContent\\UI\\Foundation\\Platform\\Input\\GamepadPS5\\CommonInput_Gamepad_PS5_Black_Tutorial.uasset",
+      "export_payload_unchanged": true,
+      "four_positional_texture_imports_verified": true
+    },
+    {
+      "asset": "ProjectPBZ\\Content\\PBZContent\\UI\\Foundation\\Platform\\Input\\GamepadPS5\\CommonInput_Gamepad_PS5_QTE.uasset",
+      "export_payload_unchanged": true,
+      "four_positional_texture_imports_verified": true
+    },
+    {
+      "asset": "ProjectPBZ\\Content\\PBZContent\\UI\\Foundation\\Platform\\Input\\GamepadPS5\\CommonInput_Gamepad_PS5_Interact.uasset",
+      "export_payload_unchanged": true,
+      "four_positional_texture_imports_verified": true
+    }
+  ],
+  "scope": "button_image_imports_only",
+  "positionMap": {
+    "Triangle": "X",
+    "Circle": "A",
+    "Cross": "B",
+    "Square": "Y"
+  },
+  "gameplayVerified": false
+}

@@ -19,6 +19,13 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        if (GameGlyphPatchCommand.IsCommand(e.Args))
+        {
+            base.OnStartup(e);
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = RunGameGlyphHelperAsync(e.Args);
+            return; // File-only helper must not acquire the assistant mutex or touch BLE.
+        }
         if (BluetoothAdapterRestart.IsCommand(e.Args))
         {
             base.OnStartup(e);
@@ -139,6 +146,13 @@ public partial class App : System.Windows.Application
         int exitCode = await BleDiagnosticCli.RunAsync(args);
         Shutdown(exitCode);
         Environment.Exit(exitCode);
+    }
+
+    private async System.Threading.Tasks.Task RunGameGlyphHelperAsync(string[] args)
+    {
+        int code = await GameGlyphPatchCommand.ExecuteAsync(args);
+        Shutdown(code);
+        Environment.Exit(code);
     }
 
     private async System.Threading.Tasks.Task RunBluetoothRestartHelperAsync(string[] args)

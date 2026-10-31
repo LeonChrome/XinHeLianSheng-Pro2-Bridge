@@ -2,9 +2,9 @@
 
 让 **Nintendo Switch 2 Pro（Pro2）手柄无线连接 Windows**，直接用于 Steam，也能切换成 Pro1、Xbox 或 PS5 兼容手柄。纯软件连接，无需专用接收器。
 
-**[推荐下载：v2.0 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.0/PRO2ControllerAssistant-v2.0-win-x64.exe)** · [版本说明](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v2.0)
+**[推荐下载：v2.4 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.4/PRO2ControllerAssistant-v2.4-win-x64.exe)** · [版本说明](docs/RELEASE_v2.4_ZH.md)
 
-启动即闪退、窗口不显示时：[尝试兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.0/PRO2ControllerAssistant-v2.0-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能不变；正常使用无需更换。先退出旧版再打开。[说明](docs/RELEASE_v2.0_UI_COMPATIBLE_ZH.md)
+启动即闪退、窗口不显示时：[尝试 v2.4 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.4/PRO2ControllerAssistant-v2.4-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
 
 ## 能做什么
 
@@ -13,6 +13,7 @@
 - **震动与体感**：震动强度调节、PS5 普通震动与触觉转换、陀螺仪校准；Xbox 模式不含原生体感。
 - **手柄状态**：真实输入频率、电量档位、固件版本、耳机插入状态；安全检查通过时每 10 分钟更新电量。
 - **连接与诊断**：自动重连、首页低速提示、系统与蓝牙信息、逐组优化结果；设置中可手动重启蓝牙。
+- **游戏按键图标**：已适配《影之刃零》Steam 版。保持 PS5 模式，按实际位置显示 Pro2 键名；自动查找多 Steam 库，支持安装、更新和还原。
 
 ## 怎么用
 
@@ -28,10 +29,12 @@
 
 实际速率受系统、适配器和驱动影响，不保证所有电脑达到 133Hz。首页显示真实 FD2 输入，虚拟 USB 重复报告不计入其中。PS5 触觉为转换输出，不承诺物理无损；无线耳机音频和跨设备蓝牙转发尚不支持。
 
-## v2.0 更新
+## v2.4 更新
 
-修复 USB 输入重复、短按覆盖和卡顿后的旧按键补播；校正运动时间戳与 Pro1 摇杆范围；完善普通震动的持续、停止及切换保护。内置后端同步更新，保留原有连接、电量和音频保护功能。
+- 自动连接发现可信目标广播后提前结束扫描；Windows 断线事件直接唤醒重连，减少固定等待。保留初始化、真实速率验收和连续失败保护。
+- 合入 PS5 原生识别修复。《影之刃零》已实测关闭 Steam Input 可操作；游戏仍需支持原生 DualSense。
+- 设置中新增游戏图标管理：上 X、右 A、下 B、左 Y，并补齐肩键等提示。只添加独立补丁，游戏版本不匹配时不安装，已有补丁可还原。
 
-768,314 项离线检查、7 个后端测试包及最终 EXE 启动检查通过；这些不代替实体手柄与具体游戏验收。[详细更新说明](docs/RELEASE_v2.0_ZH.md)
+首次连接遇到身份不明确的广播仍会完整扫描，不承诺秒连。图标按游戏分别适配，触摸板方向手势和整张手柄图保留。[详细说明](docs/RELEASE_v2.4_ZH.md)
 
 [反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [源码与构建](source/final-three-in-one/README.md) · [许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [历史三合一版本](docs/HISTORICAL_THREE_IN_ONE_README.md)

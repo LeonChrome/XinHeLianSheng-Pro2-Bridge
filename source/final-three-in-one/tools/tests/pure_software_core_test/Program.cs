@@ -131,9 +131,13 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.0.0.0", "v2 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.4.0.0", "v2.4 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.0.0-data-fidelity", "v2 release metadata");
+            "2.4.0-connection-discovery", "v2.4 release metadata");
+        Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
+            !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
+            !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
+            "native PS5 metadata accepts USB 64/48/64 and rejects expanded output or Bluetooth input");
         Check(assembly.GetType("Y700Switch2V60Viiper.Pro2LiveBatteryReadPolicy") == null,
             "formal release excludes experimental battery query policy");
         Check(assembly.GetType("Y700Switch2V60Viiper.BleOutputIsolationExperiment") == null,
@@ -928,7 +932,7 @@ internal static class Program
             Save(window, "ui-home-win10-optimization-closed.png");
         }
         Check(vm.IsPro2Selected && !vm.Running, "new settings default Steam/Pro2, no hardware start");
-        Check(vm.CompactSystemText.EndsWith("v2.0.0") &&
+        Check(vm.CompactSystemText.EndsWith("v2.1.1") &&
             (vm.CompactSystemText.Contains("Windows 10") || vm.CompactSystemText.Contains("Windows 11")), "UI system family/version follows runtime metadata");
         Check(vm.CompactCanConnect && vm.CompactConnectText == "连接 Pro2", "offline connection button remains usable");
         var settingsTabs = Descendants<TabControl>(window).First();

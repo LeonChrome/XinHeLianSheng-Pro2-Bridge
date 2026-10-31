@@ -37,6 +37,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         new(4, false)
     ];
     private readonly long[] lastDisconnectNoticeSequence = [-1, -1, -1, -1];
+    private readonly InputFrameSignal[] reconnectWake = [new(), new(), new(), new()];
+    private readonly long[] reconnectObservedTicks = new long[4];
     private readonly SynchronizationContext? uiContext = SynchronizationContext.Current;
     private readonly Pro2BleInputSource inputSource;
     private readonly ProfessionalHidAuditController professionalHidAuditController = new();
@@ -230,7 +232,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             AppendLog(StartupProcessGuard.LastSummary);
         }
-        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：四模式数据修复 · 运动时间适配 · 震动保持与停止保护。");
+        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：Pro2 / Pro1 / Xbox / PS5 · 游戏按键图标安装与还原。");
         AppendLog("[BLE_INIT_POLICY] default=no_pair_finalize pairing_finalize_15_03=blocked comparison_checkbox=skip_usb_init next_connection_only=true");
         AppendLog("[FEATURE_POLICY] gyro_quality=" + Pro2QualityMode.GyroEnabled +
             " haptics_quality=" + Pro2QualityMode.HapticsEnabled +
@@ -1509,6 +1511,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task TryConnectPro2InputOnceAsync(CancellationToken cancellationToken)
     {
+        long attemptStarted = Stopwatch.GetTimestamp();
         Status = "正在扫描并连接 Pro2 BLE；将依次验证 GATT、初始化命令和 live 输入。";
         InputStatus = "正在连接 Pro2 BLE...";
         var progress = new DirectProgress<string>(AppendLog);
@@ -1532,6 +1535,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         finally
         {
             bleOperationGate.Release();
+            AppendLog("[PRO2_CONNECT_TIMING] phase=ble_attempt slot=1 elapsed_ms=" +
+                Stopwatch.GetElapsedTime(attemptStarted).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) +
+                " transport_connected=" + inputSource.IsTransportConnected + " source_running=" + inputSource.IsRunning +
+                " high_rate_ready=" + inputSource.IsHighRateReady + " validation_unchanged=true");
         }
         InputStatus = inputSource.Status;
         if (inputSource.IsRunning)
@@ -1631,6 +1638,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task EnterGameAsync(CancellationToken cancellationToken, bool allowAutomaticConnect)
     {
+        long enterStarted = Stopwatch.GetTimestamp();
         if (!allowAutomaticConnect && !inputSource.IsRunning)
         {
             Status = "所选地址的连接已中断，请在手动列表重试；不会自动切换到其他地址。";
@@ -1684,6 +1692,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             StartAutoReconnect();
         }
+        AppendLog("[PRO2_CONNECT_TIMING] phase=game_ready elapsed_ms=" +
+            Stopwatch.GetElapsedTime(enterStarted).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) +
+            " mode=" + ModeKey(selectedMode) + " input_running=" + inputSource.IsRunning +
+            " output_running=" + Running + " high_rate_ready=" + inputSource.IsHighRateReady);
     }
 
     private async Task SwitchModeAsync(
@@ -1870,7 +1882,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                         RaiseConnectionStateChanged();
                     }
 
-                    await Task.Delay(750, cancellationToken);
+                    ReportReconnectRecovery(1);
+                    await WaitForReconnectCheckAsync(1, cancellationToken);
                     continue;
                 }
 
@@ -2094,7 +2107,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                         UpdateMultiSlotInputStatus();
                     }
 
-                    await Task.Delay(750, cancellationToken);
+                    ReportReconnectRecovery(slot.Index);
+                    await WaitForReconnectCheckAsync(slot.Index, cancellationToken);
                     continue;
                 }
 
@@ -2422,6 +2436,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         int slotIndex,
         Pro2BleDisconnectSignal signal)
     {
+        // Wake the guard on the native event thread; UI dispatch latency must
+        // not add a full 750ms polling interval before cleanup/re-discovery.
+        int index = Math.Clamp(slotIndex - 1, 0, reconnectWake.Length - 1);
+        Interlocked.CompareExchange(ref reconnectObservedTicks[index], Stopwatch.GetTimestamp(), 0);
+        reconnectWake[index].Notify();
         void Notify()
         {
             if (shuttingDown)
@@ -2452,6 +2471,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         bool autoReconnectContinues)
     {
         int noticeIndex = Math.Clamp(slotIndex - 1, 0, lastDisconnectNoticeSequence.Length - 1);
+        if (autoReconnectContinues)
+            Interlocked.CompareExchange(ref reconnectObservedTicks[noticeIndex], Stopwatch.GetTimestamp(), 0);
         if (signal.ConnectionSequence > 0 &&
             lastDisconnectNoticeSequence[noticeIndex] == signal.ConnectionSequence)
         {

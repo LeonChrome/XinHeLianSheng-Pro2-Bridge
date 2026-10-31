@@ -3,34 +3,37 @@ package dualsense
 import "github.com/Alia5/VIIPER/usb"
 
 const (
-	HapticAudioOutEndpoint  = 0x01
-	HapticAudioInEndpoint   = 0x82
-	HapticAudioPacketSize   = 384
-	HapticMicPacketSize     = 192
-	HapticFeedbackFrameSize = 388
+	HapticAudioOutEndpoint   = 0x01
+	HapticAudioInEndpoint    = 0x82
+	HapticAudioPacketSize    = 384
+	HapticAudioMaxPacketSize = 392 // physical adaptive UAC endpoint: up to 49 sample frames
+	HapticMicPacketSize      = 192
+	HapticMicMaxPacketSize   = 196
+	HapticFeedbackFrameSize  = 388
 )
 
 func hapticDescriptor() usb.Descriptor {
 	hid := defaultDescriptor.Interfaces[0]
+	hid.HID = nativeHIDFunction(hid.HID)
 	hid.Descriptor.BInterfaceNumber = 3
-	hid.Descriptor.IInterface = 4
+	hid.Descriptor.IInterface = 0
 	hid.Endpoints = append([]usb.EndpointDescriptor(nil), hid.Endpoints...)
 	hid.Endpoints[0].BInterval = 6
 	hid.Endpoints[1].BInterval = 6
 
 	acDescriptors := []usb.ClassSpecificDescriptor{
-		cs(0x24, 0x01, 0x00, 0x01, 0x4a, 0x00, 0x02, 0x01, 0x02),
+		cs(0x24, 0x01, 0x00, 0x01, 0x49, 0x00, 0x02, 0x01, 0x02),
 		cs(0x24, 0x02, 0x01, 0x01, 0x01, 0x06, 0x04, 0x33, 0x00, 0x00, 0x00),
 		cs(0x24, 0x06, 0x02, 0x01, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00),
 		cs(0x24, 0x03, 0x03, 0x01, 0x03, 0x04, 0x02, 0x00),
 		cs(0x24, 0x02, 0x04, 0x02, 0x04, 0x03, 0x02, 0x03, 0x00, 0x00, 0x00),
-		cs(0x24, 0x06, 0x05, 0x04, 0x01, 0x03, 0x00, 0x00, 0x00),
+		cs(0x24, 0x06, 0x05, 0x04, 0x01, 0x03, 0x00, 0x00),
 		cs(0x24, 0x03, 0x06, 0x01, 0x01, 0x01, 0x05, 0x00),
 	}
 
-	outGeneral := cs(0x24, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00)
+	outGeneral := cs(0x24, 0x01, 0x01, 0x01, 0x01, 0x00)
 	outFormat := cs(0x24, 0x02, 0x01, 0x04, 0x02, 0x10, 0x01, 0x80, 0xbb, 0x00)
-	inGeneral := cs(0x24, 0x01, 0x06, 0x01, 0x01, 0x00, 0x00)
+	inGeneral := cs(0x24, 0x01, 0x06, 0x01, 0x01, 0x00)
 	inFormat := cs(0x24, 0x02, 0x01, 0x02, 0x02, 0x10, 0x01, 0x80, 0xbb, 0x00)
 	endpointGeneral := cs(0x25, 0x01, 0x00, 0x00, 0x00, 0x00)
 
@@ -43,7 +46,7 @@ func hapticDescriptor() usb.Descriptor {
 			BMaxPacketSize0:    0x40,
 			IDVendor:           DefaultVID,
 			IDProduct:          DefaultPIDDS,
-			BcdDevice:          0x0103,
+			BcdDevice:          0x0100,
 			IManufacturer:      0x01,
 			IProduct:           0x02,
 			ISerialNumber:      0x00,
@@ -78,8 +81,9 @@ func hapticDescriptor() usb.Descriptor {
 				Endpoints: []usb.EndpointDescriptor{{
 					BEndpointAddress: HapticAudioOutEndpoint,
 					BMAttributes:     0x09,
-					WMaxPacketSize:   HapticAudioPacketSize,
+					WMaxPacketSize:   HapticAudioMaxPacketSize,
 					BInterval:        4,
+					Trailing:         usb.Data{0, 0},
 					ClassDescriptors: []usb.ClassSpecificDescriptor{endpointGeneral},
 				}},
 			},
@@ -98,8 +102,9 @@ func hapticDescriptor() usb.Descriptor {
 				Endpoints: []usb.EndpointDescriptor{{
 					BEndpointAddress: HapticAudioInEndpoint,
 					BMAttributes:     0x05,
-					WMaxPacketSize:   HapticMicPacketSize,
+					WMaxPacketSize:   HapticMicMaxPacketSize,
 					BInterval:        4,
+					Trailing:         usb.Data{0, 0},
 					ClassDescriptors: []usb.ClassSpecificDescriptor{endpointGeneral},
 				}},
 			},
@@ -108,7 +113,7 @@ func hapticDescriptor() usb.Descriptor {
 		Strings: map[uint8]string{
 			0: "\u0409",
 			1: "Sony Interactive Entertainment",
-			2: "DualSense Wireless Controller",
+			2: "Wireless Controller",
 			3: "Wireless Controller Audio",
 			4: "Wireless Controller",
 		},

@@ -11,10 +11,10 @@
     <AssemblyTitle>PRO2 手柄助手</AssemblyTitle>
     <Product>PRO2 手柄助手</Product>
     <Description>适用于 Windows 10 / 11 x64 的 Pro2 纯软件手柄助手，支持 Pro2、Pro1、Xbox 与 PS5 兼容模式</Description>
-    <Version>2.0.0</Version>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
-    <InformationalVersion>2.0.0-data-fidelity</InformationalVersion>
+    <Version>2.4.0</Version>
+    <AssemblyVersion>2.4.0.0</AssemblyVersion>
+    <FileVersion>2.4.0.0</FileVersion>
+    <InformationalVersion>2.4.0-connection-discovery</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>true</PublishSingleFile>
@@ -28,7 +28,7 @@
     <BatteryReadExperiment Condition="'$(BatteryReadExperiment)' == ''">false</BatteryReadExperiment>
     <OutputIsolationExperiment Condition="'$(OutputIsolationExperiment)' == ''">false</OutputIsolationExperiment>
     <EmbedUsbipInstaller Condition="'$(EmbedUsbipInstaller)' == ''">true</EmbedUsbipInstaller>
-    <ViiperBinaryPath Condition="'$(ViiperBinaryPath)' == ''">..\..\tools\viiper\haptic-v0.8.0\viiper-haptic-v2.exe</ViiperBinaryPath>
+    <ViiperBinaryPath Condition="'$(ViiperBinaryPath)' == ''">..\..\tools\viiper\haptic-v0.8.0\viiper-haptic-v2.1.1.exe</ViiperBinaryPath>
     <UsbipInstallerPath Condition="'$(UsbipInstallerPath)' == ''">..\..\tools\usbip-win2\v0.9.7.7\USBip-0.9.7.7-x64.exe</UsbipInstallerPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(PureSoftwareRelease)' == 'true'">
@@ -36,7 +36,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(CompatibilityRendering)' == 'true'">
     <DefineConstants>$(DefineConstants);PRO2_COMPATIBILITY_RENDERING</DefineConstants>
-    <InformationalVersion>2.0.0-data-fidelity-ui-compatible</InformationalVersion>
+    <InformationalVersion>2.4.0-connection-discovery-ui-compatible</InformationalVersion>
     <AssemblyTitle>PRO2 手柄助手 · 兼容启动版</AssemblyTitle>
     <Product>PRO2 手柄助手 · 兼容启动版</Product>
   </PropertyGroup>
@@ -54,6 +54,10 @@
     <Compile Remove="Pro2LiveBatteryReadPolicy.cs;Pro2BleInputSource.BatteryReadExperiment.cs;Pro2BleInputSource.BatteryFollowupExperiment.cs" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Assets\GameGlyphs\PBZ\patch-manifest.json" LogicalName="Embedded.GameGlyph.PBZ.Manifest" />
+    <EmbeddedResource Include="Assets\GameGlyphs\PBZ\PRO2_PBZ_Glyphs_0_P.pak" LogicalName="Embedded.GameGlyph.PBZ.File.PRO2_PBZ_Glyphs_0_P.pak" />
+    <EmbeddedResource Include="Assets\GameGlyphs\PBZ\PRO2_PBZ_Glyphs_0_P.utoc" LogicalName="Embedded.GameGlyph.PBZ.File.PRO2_PBZ_Glyphs_0_P.utoc" />
+    <EmbeddedResource Include="Assets\GameGlyphs\PBZ\PRO2_PBZ_Glyphs_0_P.ucas" LogicalName="Embedded.GameGlyph.PBZ.File.PRO2_PBZ_Glyphs_0_P.ucas" />
     <Resource Include="Assets\AppIcon-v2.ico" />
     <Resource Include="Assets\AppIcon-v2.png" />
     <EmbeddedResource Include="$(ViiperBinaryPath)" LogicalName="Embedded.viiper.haptic.exe" />

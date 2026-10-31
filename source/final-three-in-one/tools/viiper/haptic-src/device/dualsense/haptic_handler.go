@@ -36,6 +36,9 @@ func (h *hapticHandler) CreateDevice(o *device.CreateOptions) (usb.Device, error
 	d.descriptor = hapticDescriptor()
 	d.deviceType = "dualsensehaptic"
 	d.hapticEnabled = true
+	slog.Info("[PS5_USB_NATIVE_CONTRACT]", "hid_descriptor_bytes", len(nativeUSBReportDescriptor),
+		"input_report_bytes", 64, "output_report_bytes", 48, "feature_report_bytes", 64,
+		"edge_feature_superset", false, "physical_fd2_rate_unchanged", true)
 	return d, nil
 }
 
@@ -83,7 +86,10 @@ func (h *hapticHandler) StreamHandler() api.StreamHandlerFunc {
 			writeFrame(hapticFrameHIDOutput, report)
 		})
 		ds.SetHapticAudioCallback(func(pcm []byte) {
-			writeFrame(hapticFrameAudioPCM, pcm)
+			// A physical adaptive UAC packet may contain 49 rather than 48
+			// four-channel frames. Preserve every whole sample frame without
+			// changing the existing 388-byte client transport.
+			forEachHapticPCMChunk(pcm, func(chunk []byte) { writeFrame(hapticFrameAudioPCM, chunk) })
 		})
 		defer ds.SetRawOutputCallback(nil)
 		defer ds.SetHapticAudioCallback(nil)
@@ -103,6 +109,20 @@ func (h *hapticHandler) StreamHandler() api.StreamHandlerFunc {
 			}
 			ds.UpdateInputState(&state)
 		}
+	}
+}
+
+func forEachHapticPCMChunk(pcm []byte, emit func([]byte)) {
+	for len(pcm) > 0 {
+		n := len(pcm)
+		if n > HapticAudioPacketSize {
+			n = HapticAudioPacketSize
+		}
+		if n%8 != 0 {
+			return
+		} // incomplete four-channel sample cannot be decoded
+		emit(pcm[:n])
+		pcm = pcm[n:]
 	}
 }
 

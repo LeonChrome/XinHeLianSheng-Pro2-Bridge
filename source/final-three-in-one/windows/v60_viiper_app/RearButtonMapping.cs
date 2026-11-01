@@ -9,12 +9,15 @@ public enum RearButtonAction { Hold, Tap, Repeat, Sequence }
 public sealed record RearButtonStep
 {
     public GamepadButtons Buttons { get; init; }
+    public Ps5TouchGesture TouchGesture { get; init; }
     public int DelayMs { get; init; }
     public int PressMs { get; init; } = 80;
     public RearButtonStep Normalize() => this with
     {
         Buttons = RearButtonBinding.SafeButtons(Buttons),
-        DelayMs = Math.Clamp(DelayMs, 0, 30000), PressMs = Math.Clamp(PressMs, 30, 30000)
+        TouchGesture = Enum.IsDefined(TouchGesture) ? TouchGesture : Ps5TouchGesture.None,
+        DelayMs = Math.Clamp(DelayMs, 0, 30000), PressMs = Math.Clamp(PressMs,
+            Enum.IsDefined(TouchGesture) && TouchGesture != Ps5TouchGesture.None ? Ps5TouchGestures.MinDurationMs : 30, 30000)
     };
 }
 
@@ -24,6 +27,7 @@ public sealed record RearButtonBinding
     public bool Enabled { get; init; }
     public RearButtonAction Action { get; init; }
     public GamepadButtons Buttons { get; init; }
+    public Ps5TouchGesture TouchGesture { get; init; }
     public int DelayMs { get; init; }
     public int PressMs { get; init; } = 80;
     public int GapMs { get; init; } = 80;
@@ -33,7 +37,9 @@ public sealed record RearButtonBinding
     {
         Action = Enum.IsDefined(Action) ? Action : RearButtonAction.Hold,
         Buttons = SafeButtons(Buttons),
-        DelayMs = Math.Clamp(DelayMs, 0, 30000), PressMs = Math.Clamp(PressMs, 30, 30000),
+        TouchGesture = Enum.IsDefined(TouchGesture) ? TouchGesture : Ps5TouchGesture.None,
+        DelayMs = Math.Clamp(DelayMs, 0, 30000), PressMs = Math.Clamp(PressMs,
+            Enum.IsDefined(TouchGesture) && TouchGesture != Ps5TouchGesture.None ? Ps5TouchGestures.MinDurationMs : 30, 30000),
         GapMs = Math.Clamp(GapMs, 30, 30000), RepeatCount = Math.Clamp(RepeatCount, 0, 1000),
         Steps = (Steps ?? []).Where(s => s != null).Take(16).Select(s => s.Normalize()).ToArray()
     };
@@ -97,17 +103,22 @@ public sealed class RearButtonMapper
     private long lastTicks;
     private GamepadState? lastPhysical;
     private GamepadButtons lastMapped;
-    public bool HasPendingAction => left.Active || right.Active || c.Active || lastMapped != GamepadButtons.None;
+    private bool lastTouchActive;
+    private int touchOwner = -1;
+    private ulong touchStarts, touchReleases, touchSuppressed;
+    public string TouchMetrics => $"touch_starts={touchStarts} touch_releases={touchReleases} touch_conflicts_ignored={touchSuppressed} touch_owner={touchOwner} touch_cadence=fresh_source_frames";
+    public bool HasPendingAction => left.Active || right.Active || c.Active || lastMapped != GamepadButtons.None || lastTouchActive;
     public void Reset()
     {
         current = null; lastTicks = 0; left.Reset(); right.Reset(); c.Reset(); lastPhysical = null; lastMapped = GamepadButtons.None;
+        lastTouchActive = false; touchOwner = -1;
     }
 
     // Called by the single output consumer. Only remove this mapper's additions;
     // never release an independently held physical key or manufacture FD2 input.
     public bool TryCancelOutput(out GamepadState release, bool forceRelease = false)
     {
-        bool needed = lastPhysical != null && (lastMapped != GamepadButtons.None ||
+        bool needed = lastPhysical != null && (lastMapped != GamepadButtons.None || lastTouchActive ||
             (forceRelease && current?.ForMode(currentMode) != null));
         release = lastPhysical?.Clone() ?? GamepadState.Neutral();
         var profile = current?.ForMode(currentMode);
@@ -122,15 +133,16 @@ public sealed class RearButtonMapper
         ReferenceEquals(a, b) || (a != null && b != null && BindingEquivalent(a.Left, b.Left) &&
             BindingEquivalent(a.Right, b.Right) && BindingEquivalent(a.C, b.C));
     private static bool BindingEquivalent(RearButtonBinding a, RearButtonBinding b) =>
-        a.Enabled == b.Enabled && a.Action == b.Action && a.Buttons == b.Buttons && a.DelayMs == b.DelayMs &&
+        a.Enabled == b.Enabled && a.Action == b.Action && a.Buttons == b.Buttons && a.TouchGesture == b.TouchGesture && a.DelayMs == b.DelayMs &&
         a.PressMs == b.PressMs && a.GapMs == b.GapMs && a.RepeatCount == b.RepeatCount && a.Steps.SequenceEqual(b.Steps);
 
     public static GamepadState? MergeProfessionalControls(GamepadState mapped, GamepadState? professional)
     {
         if (professional == null || (professional.Buttons == mapped.Buttons &&
-            professional.L2 == mapped.L2 && professional.R2 == mapped.R2)) return professional;
+            professional.L2 == mapped.L2 && professional.R2 == mapped.R2 && professional.Ps5Touch == mapped.Ps5Touch)) return professional;
         var result = professional.Clone();
         result.Buttons = mapped.Buttons; result.L2 = mapped.L2; result.R2 = mapped.R2;
+        result.Ps5Touch = mapped.Ps5Touch;
         return result;
     }
 
@@ -144,16 +156,43 @@ public sealed class RearButtonMapper
             (current != null && ticks - lastTicks > Stopwatch.Frequency / 10))
         {
             left.Reset(); right.Reset(); c.Reset();
+            touchOwner = -1;
         }
         current = configuration; currentMode = mode;
         lastTicks = ticks;
         lastPhysical = physical;
         lastMapped = GamepadButtons.None;
+        lastTouchActive = false;
         if (profile == null || (!profile.Left.Enabled && !profile.Right.Enabled && !profile.C.Enabled))
             return physical;
-        GamepadButtons mapped = left.Get(profile.Left, physical.IsPressed(GamepadButtons.PaddleLeft), ticks) |
-            right.Get(profile.Right, physical.IsPressed(GamepadButtons.PaddleRight), ticks) |
-            c.Get(profile.C, physical.IsPressed(GamepadButtons.Aux), ticks);
+        bool ps5 = mode is ViiperVirtualMode.DualSenseLike or ViiperVirtualMode.DualSenseProfessionalImuTest;
+        GamepadButtons mapped = left.Get(profile.Left, physical.IsPressed(GamepadButtons.PaddleLeft), ticks, ps5) |
+            right.Get(profile.Right, physical.IsPressed(GamepadButtons.PaddleRight), ticks, ps5) |
+            c.Get(profile.C, physical.IsPressed(GamepadButtons.Aux), ticks, ps5);
+        Ps5TouchPoint touch = physical.Ps5Touch;
+        // A gesture owns the single synthetic finger until it lifts. Concurrent
+        // requests are discarded, never queued or resumed halfway through.
+        Ps5TouchFrame l = left.Touch, r = right.Touch, center = c.Touch;
+        if (ps5)
+        {
+            if (touchOwner < 0)
+            {
+                if (l.Started) touchOwner = 0;
+                else if (r.Started) touchOwner = 1;
+                else if (center.Started) touchOwner = 2;
+            }
+            if (l.Started && touchOwner != 0) touchSuppressed++;
+            if (r.Started && touchOwner != 1) touchSuppressed++;
+            if (center.Started && touchOwner != 2) touchSuppressed++;
+            if (touchOwner >= 0)
+            {
+                var frame = touchOwner == 0 ? l : touchOwner == 1 ? r : center;
+                touch = frame.Point;
+                if (frame.Started) touchStarts++;
+                if (!touch.Active) { touchReleases++; touchOwner = -1; }
+            }
+        }
+        lastTouchActive = touch.Active && touch != physical.Ps5Touch;
         // A physical direction wins over an opposing macro; opposing rear macros
         // neutralize each other instead of producing an invalid D-pad chord.
         if (physical.IsPressed(GamepadButtons.DPadUp)) mapped &= ~GamepadButtons.DPadDown;
@@ -162,17 +201,18 @@ public sealed class RearButtonMapper
         if (physical.IsPressed(GamepadButtons.DPadRight)) mapped &= ~GamepadButtons.DPadLeft;
         mapped = RearButtonBinding.SafeButtons(mapped);
         lastMapped = mapped;
-        if (mapped != GamepadButtons.None) lastPhysical = physical.Clone();
+        if (mapped != GamepadButtons.None || lastTouchActive) lastPhysical = physical.Clone();
         GamepadButtons buttons = physical.Buttons;
         if (profile.Left.Enabled) buttons &= ~GamepadButtons.PaddleLeft;
         if (profile.Right.Enabled) buttons &= ~GamepadButtons.PaddleRight;
         if (profile.C.Enabled) buttons &= ~GamepadButtons.Aux;
         buttons |= mapped;
-        if (buttons == physical.Buttons &&
+        if (buttons == physical.Buttons && touch == physical.Ps5Touch &&
             ((mapped & GamepadButtons.L2) == 0 || physical.L2 == GamepadState.TriggerMax) &&
             ((mapped & GamepadButtons.R2) == 0 || physical.R2 == GamepadState.TriggerMax)) return physical;
         var result = physical.Clone();
         result.Buttons = buttons; // OR preserves independently held face/shoulder keys.
+        result.Ps5Touch = touch;
         if ((mapped & GamepadButtons.L2) != 0) result.L2 = GamepadState.TriggerMax;
         if ((mapped & GamepadButtons.R2) != 0) result.R2 = GamepadState.TriggerMax;
         return result;
@@ -184,10 +224,15 @@ public sealed class RearButtonMapper
         private long start;
         private long lastPulse = -1;
         private GamepadButtons lastOutput;
-        public bool Active => active;
-        public void Reset() { initialized = down = active = false; start = 0; lastPulse = -1; lastOutput = GamepadButtons.None; }
-        private GamepadButtons Emit(GamepadButtons buttons, long pulse = 0)
+        private readonly Ps5TouchPlayback touch = new();
+        private bool allowTouch;
+        public Ps5TouchFrame Touch { get; private set; }
+        public bool Active => active || touch.HasPending;
+        public void Reset() { initialized = down = active = false; start = 0; lastPulse = -1; lastOutput = GamepadButtons.None; touch.Reset(); Touch = default; }
+        private GamepadButtons Emit(GamepadButtons buttons, long pulse = 0,
+            Ps5TouchGesture gesture = Ps5TouchGesture.None, double fraction = 0, bool cancelTouch = false)
         {
+            Touch = cancelTouch || !allowTouch ? touch.Cancel() : touch.Sample(gesture, pulse, fraction);
             if (pulse != lastPulse && (lastOutput & buttons) != 0)
             {
                 // Even if delivery skipped the configured gap, overlapping
@@ -198,46 +243,50 @@ public sealed class RearButtonMapper
             lastPulse = pulse; lastOutput = buttons;
             return buttons;
         }
-        public GamepadButtons Get(RearButtonBinding binding, bool pressed, long ticks)
+        public GamepadButtons Get(RearButtonBinding binding, bool pressed, long ticks, bool ps5)
         {
+            allowTouch = ps5;
             if (!initialized)
             {
                 initialized = true; down = pressed;
                 // Starting a session or applying settings while held must not fire.
                 return GamepadButtons.None;
             }
-            if (!binding.Enabled) { active = false; down = pressed; return Emit(GamepadButtons.None); }
+            if (!binding.Enabled) { active = false; down = pressed; return Emit(GamepadButtons.None, cancelTouch: true); }
             // No queue and no overlapping restart for delayed taps/sequences.
-            if (pressed && !down && !active) { active = true; start = ticks; }
+            if (pressed && !down && !active && !touch.HasPending) { active = true; start = ticks; touch.Reset(); }
             down = pressed;
             if (!pressed && binding.Action is RearButtonAction.Hold or RearButtonAction.Repeat)
-                active = false;
+            { active = false; return Emit(GamepadButtons.None, cancelTouch: true); }
             if (!active) return Emit(GamepadButtons.None);
             double elapsed = (ticks - start) * 1000.0 / Stopwatch.Frequency - binding.DelayMs;
             if (elapsed < 0) return Emit(GamepadButtons.None);
             switch (binding.Action)
             {
-                case RearButtonAction.Hold: return Emit(binding.Buttons);
+                case RearButtonAction.Hold: return Emit(binding.Buttons, gesture: elapsed < binding.PressMs ? binding.TouchGesture : Ps5TouchGesture.None,
+                    fraction: elapsed / binding.PressMs);
                 case RearButtonAction.Tap:
-                    if (elapsed < binding.PressMs) return Emit(binding.Buttons);
+                    if (elapsed < binding.PressMs) return Emit(binding.Buttons, gesture: binding.TouchGesture, fraction: elapsed / binding.PressMs);
                     break;
                 case RearButtonAction.Repeat:
                     int period = binding.PressMs + binding.GapMs;
                     double cycle = Math.Floor(elapsed / period);
                     if (binding.RepeatCount == 0 || cycle < binding.RepeatCount)
-                        return Emit(elapsed % period < binding.PressMs ? binding.Buttons : GamepadButtons.None, (long)cycle);
+                        return elapsed % period < binding.PressMs
+                            ? Emit(binding.Buttons, (long)cycle, binding.TouchGesture, elapsed % period / binding.PressMs)
+                            : Emit(GamepadButtons.None);
                     break;
                 case RearButtonAction.Sequence:
                     // First step uses the primary chord. Further steps have independent
                     // delay/duration. Late frames never replay a backlog of missed pulses.
-                    if (elapsed < binding.PressMs) return Emit(binding.Buttons);
+                    if (elapsed < binding.PressMs) return Emit(binding.Buttons, gesture: binding.TouchGesture, fraction: elapsed / binding.PressMs);
                     elapsed -= binding.PressMs;
                     long stepIndex = 1;
                     foreach (var step in binding.Steps)
                     {
                         if (elapsed < step.DelayMs) return Emit(GamepadButtons.None);
                         elapsed -= step.DelayMs;
-                        if (elapsed < step.PressMs) return Emit(step.Buttons, stepIndex);
+                        if (elapsed < step.PressMs) return Emit(step.Buttons, stepIndex, step.TouchGesture, elapsed / step.PressMs);
                         elapsed -= step.PressMs;
                         stepIndex++;
                     }

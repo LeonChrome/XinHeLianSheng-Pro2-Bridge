@@ -292,6 +292,11 @@ public static class VirtualPadPackets
         b[8] = DualSenseDpad(state);
         b[9] = Trigger12ToU8(state.L2, state.IsPressed(GamepadButtons.L2));
         b[10] = Trigger12ToU8(state.R2, state.IsPressed(GamepadButtons.R2));
+        WriteU16(b, 11, Math.Min(state.Ps5Touch.X, Ps5TouchGestures.MaxX));
+        WriteU16(b, 13, Math.Min(state.Ps5Touch.Y, Ps5TouchGestures.MaxY));
+        b[15] = state.Ps5Touch.Active ? (byte)1 : (byte)0;
+        // The second contact stays inactive; simultaneous macros never splice
+        // independent gestures into a single finger or duplicate tracking IDs.
 
         if (professionalImu is { Valid: true } proImu)
         {

@@ -120,5 +120,7 @@ public sealed partial class MainViewModel
         rearDirtyModes.Remove(RearEditingMode); OnPropertyChanged(nameof(RearDraftStatus));
         RearSettingsStatus = "已保存并应用。";
         AppendLog("[REAR_BUTTONS] profile=" + RearEditingMode + " applied=true scheduling=fresh_source_frames_only");
+        if (RearEditingMode == "PS5")
+            AppendLog($"[PS5_TOUCH_CONFIG] GL={profile.Left.TouchGesture} GR={profile.Right.TouchGesture} C={profile.C.TouchGesture} single_finger=true gestures_in_sequences=true repeat_only_when_selected=true");
     }
 }

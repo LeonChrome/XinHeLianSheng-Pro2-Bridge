@@ -26,6 +26,18 @@ internal static class Program
         try
         {
             StartupRenderingRegressionTests.Run(Check);
+            if (args.Contains("--touch-only"))
+            {
+                Ps5TouchRegressionTests.Run(Check, output);
+                Console.WriteLine("PASS: " + checks + " PS5 touch assertions; offline only.");
+                return 0;
+            }
+            if (args.Contains("--glyph-only"))
+            {
+                GameGlyphV03RegressionTests.Run(Check, output);
+                Console.WriteLine("PASS: " + checks + " embedded glyph-package assertions; disposable fixtures only.");
+                return 0;
+            }
             if (args.Contains("--native-rumble-only"))
             {
                 NativeRumbleRegressionTests.Run(Check);
@@ -55,6 +67,7 @@ internal static class Program
                 return 0;
             }
             TestReleasePackaging();
+            GameGlyphV03RegressionTests.Run(Check, output);
             UsbipDiscoveryRegressionTests.Run(Check, output);
             EnvironmentDiagnosticsRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             BleDiagnosticValidityRegressionTests.Run(Check, output);
@@ -82,6 +95,7 @@ internal static class Program
             Pro1RegressionTests.Run(Check);
             ManualConnectionRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             RearButtonRegressionTests.Run(Check, output);
+            Ps5TouchRegressionTests.Run(Check, output);
             RearButtonSafetyRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             CButtonDeviceRegressionTests.Run(Check);
             TestQueue();
@@ -132,9 +146,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.5.0.0", "v2.5 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.6.0.0", "v2.6 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.5.0-auto-sleep-wake", "v2.5 release metadata");
+            "2.6.0-touchpad-glyphs", "v2.6 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1224,6 +1238,29 @@ internal static class Program
             Check(scrolls.All(s => s.ComputedHorizontalScrollBarVisibility != Visibility.Visible), "no default horizontal scroll " + tab);
             Check(scrolls.All(s => s.ComputedVerticalScrollBarVisibility != Visibility.Visible), "no default vertical scroll " + tab);
         }
+        vm.RearEditingMode = "PS5"; vm.ResetRearButtonsCommand.Execute(null); vm.SelectedRearIndex = 2;
+        var touchEditor = vm.SelectedRearEditor; touchEditor.Enabled = true;
+        touchEditor.Action = "单次按键"; touchEditor.TouchAction = Ps5TouchGesture.CircleClockwise;
+        tabs.SelectedIndex = 2; Pump(window); Save(window, "ui-ps5-touch-c-key.png");
+        var touchPickers = Descendants<ComboBox>(window).Where(c => c.IsVisible && c.ItemsSource == Ps5TouchGestures.Choices).ToArray();
+        Check(touchPickers.Length == 1 && touchPickers[0].SelectedValue is Ps5TouchGesture.CircleClockwise,
+            "PS5 C-key touch gesture picker is visible and correctly bound");
+        Check(((ScrollViewer)window.FindName("RearEditorScroll")).ComputedVerticalScrollBarVisibility != Visibility.Visible,
+            "default PS5 gesture editor fits without vertical scrolling");
+        touchPickers[0].SelectedValue = Ps5TouchGesture.SwipeRight; Pump(window);
+        Check(touchEditor.TouchAction == Ps5TouchGesture.SwipeRight && vm.RearDraftStatus.StartsWith("未保存"),
+            "touch selector edits real draft through two-way binding");
+        vm.ApplyRearButtonsCommand.Execute(null); Pump(window);
+        Check(vm.RearDraftStatus == "已保存", "gesture-only C key saves without being connected");
+        touchEditor.Action = "顺序按键"; touchEditor.AddStepCommand.Execute(null);
+        touchEditor.Steps[0].TouchAction = Ps5TouchGesture.SwipeLeft;
+        touchEditor.Steps[0].First = touchEditor.Steps[0].Second = GamepadButtons.None;
+        Pump(window); Save(window, "ui-ps5-touch-sequence.png");
+        Check(Descendants<ComboBox>(window).Count(c => c.IsVisible && c.ItemsSource == Ps5TouchGestures.Choices) == 2,
+            "PS5 sequence exposes independent per-step gesture picker");
+        vm.RearEditingMode = "Xbox"; Pump(window);
+        Check(!Descendants<ComboBox>(window).Any(c => c.IsVisible && c.ItemsSource == Ps5TouchGestures.Choices),
+            "Xbox editor hides PS5-only gesture controls");
         for (int size = 0; size < 2; size++)
         {
             window.Width = size == 0 ? 820 : 720;

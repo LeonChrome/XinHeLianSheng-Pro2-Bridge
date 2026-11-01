@@ -43,6 +43,8 @@ public sealed class GamepadState
     public ushort Ry { get; set; } = AxisCenter;
     public ushort L2 { get; set; }
     public ushort R2 { get; set; }
+    // Synthetic PS5 finger state. Physical FD2 and its telemetry remain untouched.
+    public Ps5TouchPoint Ps5Touch { get; set; }
     public bool AccelValid { get; set; }
     public bool GyroValid { get; set; }
     public short AccelX { get; set; }

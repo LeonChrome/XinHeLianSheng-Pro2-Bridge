@@ -805,6 +805,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                         " state_reuse_count=" + stateReuseCount +
                         " state_reuse_ratio=" + stateReuseRatio.ToString("F3") +
                         " same_state_push_max=" + sameStatePushMax +
+                        (profile.IsPs5Family ? " " + rearButtonMapper.TouchMetrics : "") +
                         " source_age_bucket=0_20:" + age0To20 +
                         ",20_33:" + age20To33 +
                         ",33_50:" + age33To50 +

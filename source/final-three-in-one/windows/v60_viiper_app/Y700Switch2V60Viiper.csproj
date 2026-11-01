@@ -11,10 +11,10 @@
     <AssemblyTitle>PRO2 手柄助手</AssemblyTitle>
     <Product>PRO2 手柄助手</Product>
     <Description>适用于 Windows 10 / 11 x64 的 Pro2 纯软件手柄助手，支持 Pro2、Pro1、Xbox 与 PS5 兼容模式</Description>
-    <Version>2.5.0</Version>
-    <AssemblyVersion>2.5.0.0</AssemblyVersion>
-    <FileVersion>2.5.0.0</FileVersion>
-    <InformationalVersion>2.5.0-auto-sleep-wake</InformationalVersion>
+    <Version>2.6.0</Version>
+    <AssemblyVersion>2.6.0.0</AssemblyVersion>
+    <FileVersion>2.6.0.0</FileVersion>
+    <InformationalVersion>2.6.0-touchpad-glyphs</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>true</PublishSingleFile>
@@ -36,7 +36,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(CompatibilityRendering)' == 'true'">
     <DefineConstants>$(DefineConstants);PRO2_COMPATIBILITY_RENDERING</DefineConstants>
-    <InformationalVersion>2.5.0-auto-sleep-wake-ui-compatible</InformationalVersion>
+    <InformationalVersion>2.6.0-touchpad-glyphs-ui-compatible</InformationalVersion>
     <AssemblyTitle>PRO2 手柄助手 · 兼容启动版</AssemblyTitle>
     <Product>PRO2 手柄助手 · 兼容启动版</Product>
   </PropertyGroup>

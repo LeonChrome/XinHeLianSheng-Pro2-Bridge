@@ -43,6 +43,16 @@ public sealed class RearButtonChoice : RearEditorObservable
 public sealed class RearStepEditor : RearEditorObservable
 {
     public IReadOnlyList<RearButtonChoice> Choices { get; }
+    public bool Ps5 { get; }
+    private Ps5TouchGesture touchAction;
+    public Ps5TouchGesture TouchAction
+    {
+        get => touchAction;
+        set { if (touchAction == value) return; touchAction = Enum.IsDefined(value) ? value : Ps5TouchGesture.None;
+            if (touchAction != Ps5TouchGesture.None && (!int.TryParse(Duration, out int ms) || ms < Ps5TouchGestures.MinDurationMs))
+                Duration = Ps5TouchGestures.DefaultDurationMs.ToString(CultureInfo.InvariantCulture);
+            Changed(); }
+    }
     private GamepadButtons first, second;
     public GamepadButtons First { get => first; set { if (first == value) return; first = value; Changed(); } }
     public GamepadButtons Second { get => second; set { if (second == value) return; second = value; Changed(); } }
@@ -53,8 +63,9 @@ public sealed class RearStepEditor : RearEditorObservable
     public RearStepEditor(bool ps5, RearButtonStep step, Action<RearStepEditor> remove, bool nintendo = false)
     {
         Choices = RearButtonChoice.Choices(ps5, nintendo);
+        Ps5 = ps5; touchAction = ps5 ? step.TouchGesture : Ps5TouchGesture.None;
         var keys = Choices.Where(c => c.Key != GamepadButtons.None && (step.Buttons & c.Key) != 0).ToArray();
-        first = keys.FirstOrDefault()?.Key ?? GamepadButtons.South;
+        first = keys.FirstOrDefault()?.Key ?? GamepadButtons.None;
         second = keys.Skip(1).FirstOrDefault()?.Key ?? GamepadButtons.None;
         Delay = step.DelayMs.ToString(CultureInfo.InvariantCulture);
         Duration = step.PressMs.ToString(CultureInfo.InvariantCulture);
@@ -73,19 +84,35 @@ public sealed class RearButtonEditor : RearEditorObservable
     private bool enabled;
     public bool Enabled { get => enabled; set { if (enabled == value) return; enabled = value; Changed(); Changed(nameof(EnabledCaption)); } }
     public string EnabledCaption => Enabled ? "已启用" : "未启用";
-    public string MappingSummary => string.Join(" + ", Buttons.Where(b => b.Selected).Select(b => b.Label)) is { Length: > 0 } summary
+    private Ps5TouchGesture touchAction;
+    public Ps5TouchGesture TouchAction
+    {
+        get => touchAction;
+        set { var next = Ps5 && Enum.IsDefined(value) ? value : Ps5TouchGesture.None; if (touchAction == next) return; touchAction = next;
+            if (next != Ps5TouchGesture.None && (!int.TryParse(Duration, out int ms) || ms < Ps5TouchGestures.MinDurationMs))
+                Duration = Ps5TouchGestures.DefaultDurationMs.ToString(CultureInfo.InvariantCulture);
+            Changed(); Changed(nameof(MappingSummary)); Changed(nameof(IsDurationVisible)); Changed(nameof(DurationLabel)); Changed(nameof(BehaviorHint)); }
+    }
+    public bool IsDurationVisible => IsTimed || TouchAction != Ps5TouchGesture.None;
+    public string DurationLabel => TouchAction != Ps5TouchGesture.None ? "手势时长（ms）" : "按下时长（ms）";
+    public string MappingSummary => string.Join(" + ", Buttons.Where(b => b.Selected).Select(b => b.Label)
+        .Concat(TouchAction == Ps5TouchGesture.None ? [] : new[] { Ps5TouchGestures.Choices.First(c => c.Gesture == TouchAction).Label })) is { Length: > 0 } summary
         ? summary : "未分配按键";
     private string action;
     public string Action
     {
         get => action;
         set { string next = Actions.Contains(value) ? value : Actions[0]; if (action == next) return; action = next; Changed();
-            Changed(nameof(IsTimed)); Changed(nameof(IsRepeat)); Changed(nameof(IsSequence)); Changed(nameof(BehaviorHint)); }
+            Changed(nameof(IsTimed)); Changed(nameof(IsDurationVisible)); Changed(nameof(IsRepeat)); Changed(nameof(IsSequence)); Changed(nameof(BehaviorHint)); }
     }
     public bool IsTimed => Action != Actions[0];
     public bool IsRepeat => Action == Actions[2];
     public bool IsSequence => Action == Actions[3];
-    public string BehaviorHint => Action switch
+    public string BehaviorHint => TouchAction != Ps5TouchGesture.None
+        ? (IsRepeat ? "按住时重复手势，松开停止；同一时刻执行一个触控动作。"
+            : Action == Actions[0] ? "按住完成一次手势，提前松开会停止；游戏需支持触控板。"
+            : "每次按下完成一次手势；再次触发需松开。游戏需支持触控板。")
+        : Action switch
     {
         "按住连发" => "仅按住时连发；松开停止，0 表示不限次数。",
         "单次按键" => "触发一次；执行中重复按下不排队。",
@@ -103,6 +130,7 @@ public sealed class RearButtonEditor : RearEditorObservable
     public RearButtonEditor(string title, bool ps5, RearButtonBinding binding, bool nintendo = false)
     {
         Title = title; Ps5 = ps5; Nintendo = nintendo; binding = binding.Normalize();
+        touchAction = ps5 ? binding.TouchGesture : Ps5TouchGesture.None;
         enabled = binding.Enabled; action = Actions[(int)binding.Action];
         Delay = binding.DelayMs.ToString(CultureInfo.InvariantCulture);
         Duration = binding.PressMs.ToString(CultureInfo.InvariantCulture);
@@ -130,14 +158,15 @@ public sealed class RearButtonEditor : RearEditorObservable
         binding = new(); error = "";
         var keys = Buttons.Where(c => c.Selected).Aggregate(GamepadButtons.None, (mask, c) => mask | c.Key);
         int actionIndex = Actions.ToList().IndexOf(Action);
-        if (Enabled && keys == GamepadButtons.None) { error = Title + "：请选择至少一个按键。"; return false; }
+        if (Enabled && keys == GamepadButtons.None && TouchAction == Ps5TouchGesture.None) { error = Title + "：请选择按键或触控板动作。"; return false; }
         if (Enabled && RearButtonBinding.HasOppositeDirections(keys)) { error = Title + "：相反方向不能同时选择。"; return false; }
         bool delayOk = Number(Delay, 0, 30000, out int delay);
-        bool durationOk = Number(Duration, 30, 30000, out int duration);
+        int minDuration = TouchAction != Ps5TouchGesture.None ? Ps5TouchGestures.MinDurationMs : 30;
+        bool durationOk = Number(Duration, minDuration, 30000, out int duration);
         bool gapOk = Number(Gap, 30, 30000, out int gap);
         bool countOk = Number(Count, 0, 1000, out int count);
-        if (Enabled && (!delayOk || (IsTimed && !durationOk) || (IsRepeat && (!gapOk || !countOk))))
-        { error = Title + "：延迟0–30000ms，按下/间隔30–30000ms，次数0–1000。"; return false; }
+        if (Enabled && (!delayOk || (IsDurationVisible && !durationOk) || (IsRepeat && (!gapOk || !countOk))))
+        { error = Title + "：延迟0–30000ms，动作时长" + minDuration + "–30000ms，间隔30–30000ms，次数0–1000。"; return false; }
         // Hidden or disabled fields cannot prevent disabling a mapping. Invalid
         // unused drafts are stored as safe defaults, never passed to the runtime.
         if (!delayOk) delay = 0;
@@ -148,12 +177,14 @@ public sealed class RearButtonEditor : RearEditorObservable
         foreach (var step in Enabled && IsSequence ? Steps : Enumerable.Empty<RearStepEditor>())
         {
             var stepKeys = step.First | step.Second;
-            if (stepKeys == GamepadButtons.None || RearButtonBinding.HasOppositeDirections(stepKeys) || !Number(step.Delay, 0, 30000, out int stepDelay) ||
-                !Number(step.Duration, 30, 30000, out int stepDuration))
+            var stepTouch = Ps5 ? step.TouchAction : Ps5TouchGesture.None;
+            if ((stepKeys == GamepadButtons.None && stepTouch == Ps5TouchGesture.None) || RearButtonBinding.HasOppositeDirections(stepKeys) || !Number(step.Delay, 0, 30000, out int stepDelay) ||
+                !Number(step.Duration, stepTouch != Ps5TouchGesture.None ? Ps5TouchGestures.MinDurationMs : 30, 30000, out int stepDuration))
             { error = Title + "：请检查后续按键、延迟和按下时长。"; return false; }
-            steps.Add(new() { Buttons = stepKeys, DelayMs = stepDelay, PressMs = stepDuration });
+            steps.Add(new() { Buttons = stepKeys, TouchGesture = stepTouch, DelayMs = stepDelay, PressMs = stepDuration });
         }
         binding = new() { Enabled = Enabled, Action = (RearButtonAction)actionIndex, Buttons = keys,
+            TouchGesture = TouchAction,
             DelayMs = delay, PressMs = duration, GapMs = gap, RepeatCount = count, Steps = steps.ToArray() };
         return true;
     }

@@ -2,14 +2,15 @@
 
 让 **Nintendo Switch 2 Pro（Pro2）手柄无线连接 Windows**，直接用于 Steam，也能切换成 Pro1、Xbox 或 PS5 兼容手柄。纯软件连接，无需专用接收器。
 
-**[推荐下载：v2.5 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.5/PRO2ControllerAssistant-v2.5-win-x64.exe)** · [版本说明](docs/RELEASE_v2.5_ZH.md)
+**[推荐下载：v2.6 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.6/PRO2ControllerAssistant-v2.6-win-x64.exe)** · [版本说明](docs/RELEASE_v2.6_ZH.md)
 
-启动即闪退、窗口不显示时：[尝试 v2.5 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.5/PRO2ControllerAssistant-v2.5-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
+启动即闪退、窗口不显示时：[尝试 v2.6 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.6/PRO2ControllerAssistant-v2.6-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
 
 ## 能做什么
 
 - **四种模式**：Steam / Pro2、Pro1、Xbox、PS5 兼容输出。
 - **背键 / C 键自定义**：Pro1、Xbox、PS5 模式支持单键、组合键、连发、顺序动作和延迟；没连接手柄也能设置。
+- **PS5 触控板模拟**：背键 / C 键可映射轻触、四向滑动和顺逆时针画圈，支持时长和延迟；游戏需支持触控板。
 - **震动与体感**：震动强度调节、PS5 普通震动与触觉转换、陀螺仪校准；Xbox 模式不含原生体感。
 - **手柄状态**：真实输入频率、电量档位、固件版本、耳机插入状态；安全检查通过时每 10 分钟更新电量。
 - **自动休眠**：可设置闲置时长，休眠时虚拟手柄保持在线，按手柄按键唤醒后自动重连。默认关闭。
@@ -32,12 +33,12 @@
 
 实际速率受系统、适配器和驱动影响，不保证所有电脑达到 133Hz。首页显示真实 FD2 输入，虚拟 USB 重复报告不计入其中。PS5 触觉为转换输出，不承诺物理无损；无线耳机音频和跨设备蓝牙转发尚不支持。
 
-## v2.5 更新
+## v2.6 更新
 
-- 新增闲置自动休眠与按键唤醒重连，可在设置中选择 5～60 分钟。
-- 补充 Win10 首页连接引导与一键优化入口，保留管理员授权、备份、实测和恢复。
-- 调整设置页布局，默认窗口下完整显示休眠设置和常用功能。
+- PS5 背键 / C 键新增触控板手势，可组合按键、设置连发或编排顺序动作；停止、断联和修改映射时释放触点。
+- 《影之刃零》图标补丁升级至 0.3，补充菜单、文本内嵌按键和物品 / 装备选中提示。
+- 图标更新：退出游戏，在“设置 → 管理游戏图标”中点击“更新 Pro2 图标”；可一键恢复。支持已核对的游戏版本，画面覆盖仍需试玩确认。
 
-[版本说明](docs/RELEASE_v2.5_ZH.md) · 首次连接身份不明时仍需完整扫描，实际连接速度和速率取决于本机条件。
+[版本说明](docs/RELEASE_v2.6_ZH.md) · 保留自动休眠、Win10 连接引导及四模式功能。
 
 [反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [源码与构建](source/final-three-in-one/README.md) · [许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [历史三合一版本](docs/HISTORICAL_THREE_IN_ONE_README.md)

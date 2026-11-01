@@ -122,11 +122,16 @@
                                 <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected}" Style="{StaticResource RearChoice}"/>
                             </DataTemplate></ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        <DockPanel Visibility="{Binding Ps5, Converter={StaticResource BoolVisibility}}" Margin="0,4,0,0">
+                            <TextBlock Text="触控板动作" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                            <ComboBox ItemsSource="{x:Static local:Ps5TouchGestures.Choices}" DisplayMemberPath="Label" SelectedValuePath="Gesture"
+                                      SelectedValue="{Binding TouchAction}" MinWidth="150" MaxWidth="260" HorizontalAlignment="Left" Margin="0"/>
+                        </DockPanel>
                         <UniformGrid Columns="4" Margin="0,12,0,0">
                             <StackPanel><TextBlock Text="延迟（ms）" Style="{StaticResource MutedText}"/>
                                 <TextBox Text="{Binding Delay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" ToolTip="0–30000ms"/></StackPanel>
-                            <StackPanel Visibility="{Binding IsTimed, Converter={StaticResource BoolVisibility}}"><TextBlock Text="按下时长（ms）" Style="{StaticResource MutedText}"/>
-                                <TextBox Text="{Binding Duration, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" ToolTip="30–30000ms"/></StackPanel>
+                            <StackPanel Visibility="{Binding IsDurationVisible, Converter={StaticResource BoolVisibility}}"><TextBlock Text="{Binding DurationLabel}" Style="{StaticResource MutedText}"/>
+                                <TextBox Text="{Binding Duration, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" ToolTip="按键30–30000ms；触控手势180–30000ms"/></StackPanel>
                             <StackPanel Visibility="{Binding IsRepeat, Converter={StaticResource BoolVisibility}}"><TextBlock Text="松开间隔（ms）" Style="{StaticResource MutedText}"/>
                                 <TextBox Text="{Binding Gap, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" ToolTip="30–30000ms"/></StackPanel>
                             <StackPanel Visibility="{Binding IsRepeat, Converter={StaticResource BoolVisibility}}"><TextBlock Text="次数（0=按住）" Style="{StaticResource MutedText}"/>
@@ -145,12 +150,18 @@
                             <ItemsControl ItemsSource="{Binding Steps}">
                                 <ItemsControl.ItemTemplate><DataTemplate>
                                     <Grid>
+                                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="90"/><ColumnDefinition Width="90"/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions>
                                         <ComboBox ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedValuePath="Key" SelectedValue="{Binding First}" Margin="0,7,10,7"/>
                                         <ComboBox Grid.Column="1" ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedValuePath="Key" SelectedValue="{Binding Second}" Margin="0,7,10,7"/>
                                         <TextBox Grid.Column="2" Text="{Binding Delay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" Margin="0,7,10,7"/>
                                         <TextBox Grid.Column="3" Text="{Binding Duration, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource NumberInput}" Margin="0,7,10,7"/>
                                         <Button Grid.Column="4" Content="×" Command="{Binding RemoveCommand}" Padding="9,4" Margin="0,7,0,7" ToolTip="删除"/>
+                                        <DockPanel Grid.Row="1" Grid.ColumnSpan="5" Visibility="{Binding Ps5, Converter={StaticResource BoolVisibility}}" Margin="0,0,0,6">
+                                            <TextBlock Text="触控动作" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                            <ComboBox ItemsSource="{x:Static local:Ps5TouchGestures.Choices}" DisplayMemberPath="Label" SelectedValuePath="Gesture"
+                                                      SelectedValue="{Binding TouchAction}" Margin="0" MinWidth="140" MaxWidth="240" HorizontalAlignment="Left"/>
+                                        </DockPanel>
                                     </Grid>
                                 </DataTemplate></ItemsControl.ItemTemplate>
                             </ItemsControl>

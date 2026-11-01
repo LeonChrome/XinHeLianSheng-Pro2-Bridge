@@ -287,6 +287,18 @@ public partial class MainWindow : Window
         if (DataContext is MainViewModel viewModel) viewModel.ToggleWin10BleHomePanel();
     }
 
+    private void OneClickWin10Optimize_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel) return;
+        MessageBoxResult answer = System.Windows.MessageBox.Show(
+            this,
+            viewModel.Win10OneClickConfirmation,
+            "一键优化 Win10 蓝牙",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        ExecuteConfirmedCommand(answer, vm => vm.OneClickWin10OptimizeCommand);
+    }
+
     private void ConfigureBleTurbo_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel viewModel) return;

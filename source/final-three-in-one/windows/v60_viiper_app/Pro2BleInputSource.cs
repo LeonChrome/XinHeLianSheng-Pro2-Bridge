@@ -1390,6 +1390,7 @@ public sealed partial class Pro2BleInputSource :
                 pendingDisconnectSignal = null;
                 connectionSequence++;
                 IsRunning = true;
+                lastUserActivityTicks = Stopwatch.GetTimestamp();
             }
             SetConnectionPhase(rateAccepted ? Pro2ConnectionPhase.Ready : Pro2ConnectionPhase.RateLimited);
             StartRumbleWriter(progress);
@@ -2752,6 +2753,7 @@ public sealed partial class Pro2BleInputSource :
             filteredStateAt = now;
             latest = stableState;
             latestAt = DateTimeOffset.UtcNow;
+            NoteUserActivityNoLock(stableState, nowTicks);
             if (IsRunning)
             {
                 sequentialInput.Enqueue(stableState, nowTicks);

@@ -88,7 +88,8 @@ public sealed partial class MainViewModel
             nameof(BleConnectionTitle), nameof(BleConnectionHint), nameof(ShowWin11CompatibilityAction),
             nameof(CanTryWin11Compatibility), nameof(IsWin10BleExperimental), nameof(Win10BlePresetSafetyNote),
             nameof(Win10BleConfigurationConfirmation), nameof(CanConfigureWin10Stack),
-            nameof(ShowWin10BleHomeAction), nameof(ShowWin10BleHomePanel), nameof(Win10BleHomeHint) })
+            nameof(ShowWin10BleHomeAction), nameof(ShowWin10BleHomePanel), nameof(Win10BleHomeHint),
+            nameof(Win10StackConfigured), nameof(ShowWin10OneClick), nameof(Win10OneClickHint) })
             OnPropertyChanged(property);
     }
 

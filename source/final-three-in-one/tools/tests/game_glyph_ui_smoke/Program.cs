@@ -41,7 +41,7 @@ internal static class Program
                 using var file=File.Create(Path.Combine(output,$"game-glyphs-{size.Width}.png"));encoder.Save(file);
             }
             var assembly=typeof(GameGlyphWindow).Assembly;
-            if(assembly.GetName().Version?.ToString()!="2.4.0.0")throw new InvalidDataException("Release version mismatch");
+            if(assembly.GetName().Version?.ToString()!="2.5.0.0")throw new InvalidDataException("Release version mismatch");
             // Discovery/inspection only: no install, no game execution, no BLE or virtual gamepad.
             var service=new GameGlyphPatchService();
             var installs=service.DiscoverSteamInstallations();

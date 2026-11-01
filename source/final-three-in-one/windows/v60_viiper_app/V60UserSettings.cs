@@ -21,6 +21,8 @@ public sealed class V60UserSettings
     public Dictionary<string, Pro2StickCalibrationProfile> Pro2StickCalibrations { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
     public bool RuntimeBatteryRefreshEnabled { get; set; } = true;
+    public bool AutoSleepEnabled { get; set; }
+    public int AutoSleepMinutes { get; set; } = 10;
     public bool AutoOptimizeBle { get; set; } = true;
     public string UsbipExecutablePath { get; set; } = "";
     public double Ps5GyroScalePitch { get; set; } = 1.0;

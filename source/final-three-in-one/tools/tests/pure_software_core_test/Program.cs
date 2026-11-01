@@ -59,6 +59,7 @@ internal static class Program
             EnvironmentDiagnosticsRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             BleDiagnosticValidityRegressionTests.Run(Check, output);
             BleProtocolAuditRegressionTests.Run(Check);
+            SleepWakeRegressionTests.Run(Check);
             BluetoothRestartRegressionTests.Run(Check);
             CompatibleRateRegressionTests.Run(Check);
             BleRateStabilityRegressionTests.Run(Check);
@@ -131,9 +132,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.4.0.0", "v2.4 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.5.0.0", "v2.5 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.4.0-connection-discovery", "v2.4 release metadata");
+            "2.5.0-auto-sleep-wake", "v2.5 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -932,7 +933,7 @@ internal static class Program
             Save(window, "ui-home-win10-optimization-closed.png");
         }
         Check(vm.IsPro2Selected && !vm.Running, "new settings default Steam/Pro2, no hardware start");
-        Check(vm.CompactSystemText.EndsWith("v2.1.1") &&
+        Check(vm.CompactSystemText.EndsWith("v" + SystemBluetoothDiagnostics.CurrentAppVersion) &&
             (vm.CompactSystemText.Contains("Windows 10") || vm.CompactSystemText.Contains("Windows 11")), "UI system family/version follows runtime metadata");
         Check(vm.CompactCanConnect && vm.CompactConnectText == "连接 Pro2", "offline connection button remains usable");
         var settingsTabs = Descendants<TabControl>(window).First();

@@ -677,6 +677,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         age <= TimeSpan.FromMilliseconds(LostInputTimeoutMilliseconds);
     public string BleButtonText => IsInputConnected
         ? "PRO2 已连接 · 自动守护中"
+        : IsPrimarySleeping
+            ? "PRO2 已休眠 · 按手柄任意键唤醒"
         : AutoReconnectEnabled
             ? "正在寻找 PRO2 · 自动重连中"
             : "连接 PRO2 · 进入游戏";
@@ -684,6 +686,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         ? inputSource.IsPerformanceDegraded
             ? "BLE LIVE · DEGRADED · " + inputSource.LinkRateClass.ToUpperInvariant()
             : "BLE LIVE · INPUT ONLINE · " + inputSource.LinkRateClass.ToUpperInvariant()
+        : IsPrimarySleeping
+            ? "BLE SLEEPING · PRESS ANY BUTTON TO WAKE"
         : AutoReconnectEnabled
             ? "BLE SEARCHING · AUTO RECONNECT"
             : "BLE STANDBY · WAITING FOR PLAYER";
@@ -1837,6 +1841,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                await WaitWhileAutoSleepingAsync(pro2Slots[0], cancellationToken);
                 if (inputSource.TryConsumeDisconnectSignal(
                         out Pro2BleDisconnectSignal lowLevelDisconnect))
                 {
@@ -1873,6 +1878,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                     if (!previouslyLive)
                     {
                         previouslyLive = true;
+                        OnAutoSleepLiveSessionStarted(pro2Slots[0], inputSource);
                         InputStatus = inputSource.Status;
                         Status = inputSource.IsHighRateReady
                             ? "真实 Pro2 BLE 已连接，输入验收通过；正在准备所选游戏模式。"
@@ -1880,6 +1886,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                             : "BLE 已连接，输入尚未达到 60Hz 兼容门槛；保留连接等待，不反复断开。";
                         AppendLog("[PRO2_AUTO] live; reconnect guard active.");
                         RaiseConnectionStateChanged();
+                    }
+
+                    if (await TryEnterAutoSleepAsync(pro2Slots[0], inputSource, cancellationToken))
+                    {
+                        previouslyLive = false;
+                        continue;
                     }
 
                     ReportReconnectRecovery(1);
@@ -2067,6 +2079,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                await WaitWhileAutoSleepingAsync(slot, cancellationToken);
                 if (slot.InputSource.TryConsumeDisconnectSignal(
                         out Pro2BleDisconnectSignal lowLevelDisconnect))
                 {
@@ -2102,9 +2115,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                     if (!previouslyLive)
                     {
                         previouslyLive = true;
+                        OnAutoSleepLiveSessionStarted(slot, slot.InputSource);
                         AppendLog("[SLOT_MULTI] slot=" + slot.Index +
                                   " live address=" + slot.ConnectedAddress);
                         UpdateMultiSlotInputStatus();
+                    }
+
+                    if (await TryEnterAutoSleepAsync(slot, slot.InputSource, cancellationToken))
+                    {
+                        previouslyLive = false;
+                        continue;
                     }
 
                     ReportReconnectRecovery(slot.Index);

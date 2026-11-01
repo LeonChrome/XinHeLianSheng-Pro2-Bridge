@@ -112,7 +112,9 @@ public sealed partial class MainViewModel
     public string CompatibilityGuidance => BleCompatibilityInspector.Current.Plan.Guidance;
     public bool CanConfigureWin10Stack => BleCompatibilityInspector.Current.Plan.CanConfigureWin10Stack;
     private Pro2ConnectionPresentation ConnectionPresentation =>
-        Pro2ConnectionPresentation.Create(inputSource.ConnectionPhase,
+        IsPrimarySleeping && !inputSource.IsTransportConnected
+            ? new("已休眠", "手柄已休眠，按任意键唤醒", "闲置达到设定时间后已让手柄关灯省电；按手柄任意键会自动重连，虚拟手柄保持在线。")
+            : Pro2ConnectionPresentation.Create(inputSource.ConnectionPhase,
             inputSource.IsTransportConnected, Running, Busy, AutoReconnectEnabled, inputSource.IsGameplayReady);
     public string CompactConnectionTitle => ConnectionPresentation.Title;
     public string CompactConnectionHint => ConnectionPresentation.Hint;

@@ -51,6 +51,10 @@
             <Setter Property="Padding" Value="24"/>
             <Setter Property="Margin" Value="0,0,0,16"/>
         </Style>
+        <Style x:Key="SettingsCard" TargetType="Border" BasedOn="{StaticResource Card}">
+            <Setter Property="Padding" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
         <Style x:Key="ModeCard" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Padding" Value="18,20"/>
@@ -284,7 +288,10 @@
                             <Button Content="{Binding CompactConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding CompactCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
                             <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}"/>
                             <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding CompactCanStop}"/>
-                            <Button x:Name="Win10BleOptimizeButton" Content="优化蓝牙 · Win10" Click="ToggleWin10BleHomePanel_Click"
+                            <Button x:Name="Win10OneClickButton" Content="一键优化到 133Hz · Win10" Click="OneClickWin10Optimize_Click" Style="{StaticResource Primary}"
+                                    IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10OneClick, Converter={StaticResource BoolVisibility}}"
+                                    ToolTip="{Binding Win10OneClickHint}"/>
+                            <Button x:Name="Win10BleOptimizeButton" Content="Win10 蓝牙 · 高级" Click="ToggleWin10BleHomePanel_Click"
                                     IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10BleHomeAction, Converter={StaticResource BoolVisibility}}"
                                     ToolTip="选择 7.5ms 参数并授权测试"/>
                             <Button Content="取消操作" Command="{Binding CancelConnectionCommand}" Visibility="{Binding Busy, Converter={StaticResource BoolVisibility}}"/>
@@ -373,7 +380,7 @@
             <TabItem Header="设置" AutomationProperties.Name="设置">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="0,0,4,0">
-                        <Border Style="{StaticResource Card}" Padding="16">
+                        <Border Style="{StaticResource SettingsCard}">
                             <DockPanel>
                                 <Button x:Name="GameGlyphsButton" Content="管理游戏图标…" Click="GameGlyphs_Click" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="16,0,0,0"/>
                                 <StackPanel>
@@ -382,37 +389,47 @@
                                 </StackPanel>
                             </DockPanel>
                         </Border>
-                        <Border Style="{StaticResource Card}" Padding="16">
+                        <Border Style="{StaticResource SettingsCard}">
                             <StackPanel>
-                                <TextBlock Text="USBIP" FontWeight="SemiBold" FontSize="17" Margin="0,0,0,6"/>
-                                <TextBlock Text="{Binding UsbipLocationText}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
-                                <TextBlock Text="{Binding RuntimeReadinessText}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,4"/>
-                                <WrapPanel IsEnabled="{Binding CanManageRuntime}">
+                                <DockPanel LastChildFill="True">
+                                <WrapPanel DockPanel.Dock="Right" IsEnabled="{Binding CanManageRuntime}">
                                     <Button x:Name="SelectUsbipPathButton" Content="选择 usbip.exe…" Click="SelectUsbipPath_Click"/>
                                     <Button x:Name="ResetUsbipPathButton" Content="自动查找" Command="{Binding ResetUsbipPathCommand}"/>
                                     <Button Content="安装 / 修复驱动" Command="{Binding InstallUsbipCommand}"/>
                                 </WrapPanel>
+                                <TextBlock Text="USBIP" FontWeight="SemiBold" FontSize="17" VerticalAlignment="Center" Margin="0,0,12,8"/>
+                                </DockPanel>
+                                <TextBlock Text="{Binding UsbipLocationText}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding RuntimeReadinessText}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                             </StackPanel>
                         </Border>
-                        <Border Style="{StaticResource Card}" Padding="16">
+                        <Border Style="{StaticResource SettingsCard}">
                             <StackPanel>
-                                <DockPanel Margin="0,0,0,12">
+                                <DockPanel Margin="0,0,0,6">
                                     <Button x:Name="SettingsEnvironmentInfoButton" Content="系统与蓝牙信息…" Click="EnvironmentInfo_Click" DockPanel.Dock="Right" Padding="12,6" Margin="0"/>
-                                    <TextBlock Text="设置" FontSize="23" FontWeight="SemiBold"/>
+                                    <TextBlock Text="设置" FontSize="17" FontWeight="SemiBold"/>
                                 </DockPanel>
                                 <WrapPanel>
-                                    <CheckBox Content="登录 Windows 时自动启动" IsChecked="{Binding LaunchAtLoginEnabled}" Margin="0,0,28,12"/>
-                                    <CheckBox Content="启动后自动进入上次使用的模式" IsChecked="{Binding AutoReconnectOnStartupEnabled}"/>
+                                    <CheckBox Content="登录 Windows 时自动启动" IsChecked="{Binding LaunchAtLoginEnabled}" Margin="0,4,28,8"/>
+                                    <CheckBox Content="启动后自动进入上次使用的模式" IsChecked="{Binding AutoReconnectOnStartupEnabled}" Margin="0,4,0,8"/>
                                 </WrapPanel>
                                 <WrapPanel>
                                     <CheckBox Content="每10分钟更新电量" IsChecked="{Binding RuntimeBatteryRefreshEnabled}"
                                               Margin="0,0,28,0" ToolTip="输入稳定时读取原生档位；异常时自动暂停更新，保留上次读取值。"/>
                                     <CheckBox x:Name="AutoOptimizeBleCheckBox" Content="低速时自动优化蓝牙" IsChecked="{Binding AutoOptimizeBle}" IsEnabled="{Binding CanChangeBleOptimizationSettings}"
+                                              Margin="0"
                                               ToolTip="Win11 在当前连接内自动尝试有限预设，跨适配器型号和驱动版本开放；Win10 全局参数必须单独确认和管理员授权，不会静默轮换。"/>
+                                    <StackPanel Orientation="Horizontal" Margin="28,0,0,0">
+                                        <CheckBox Content="闲置自动休眠" IsChecked="{Binding AutoSleepEnabled}" VerticalAlignment="Center" Margin="0,0,8,0"
+                                                  ToolTip="无操作达到设定时间后让手柄关灯休眠，虚拟手柄保持在线；按手柄任意键自动重连。首次启用会把本机写入手柄的配对记录；若该手柄也在 Switch 2 主机上使用，回到主机时可能需要重新配对。"/>
+                                        <ComboBox ItemsSource="{Binding AutoSleepMinuteOptions}" SelectedItem="{Binding AutoSleepMinutes}" IsEnabled="{Binding AutoSleepEnabled}"
+                                                  Width="58" VerticalAlignment="Center" Margin="0"/>
+                                        <TextBlock Text="分钟 · 按任意键唤醒" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                    </StackPanel>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
-                        <Border Style="{StaticResource Card}" Padding="16">
+                        <Border Style="{StaticResource SettingsCard}">
                             <StackPanel IsEnabled="{Binding CanOperate}">
                                 <TextBlock Text="校准与连接" FontWeight="SemiBold" FontSize="17" Margin="0,0,0,8"/>
                                 <WrapPanel>

@@ -75,7 +75,17 @@ internal static class Win10HomeUiRegressionTests
         var picker = (ComboBox)window.FindName("Win10BlePresetComboBox");
         var apply = (Button)window.FindName("Win10BleConfigureButton");
         var restore = (Button)window.FindName("BleRestoreParametersButton");
-        check(entry.Content?.ToString() == "优化蓝牙 · Win10" &&
+        var oneClick = (Button)window.FindName("Win10OneClickButton");
+        check(oneClick.GetBindingExpression(UIElement.VisibilityProperty)?.ParentBinding.Path.Path ==
+                nameof(MainViewModel.ShowWin10OneClick) &&
+            oneClick.GetBindingExpression(UIElement.IsEnabledProperty)?.ParentBinding.Path.Path ==
+                nameof(MainViewModel.CanOperate) &&
+            FindTabAncestor(oneClick) == tabs.Items[0] && oneClick.IsVisible == vm.ShowWin10OneClick &&
+            (!vm.ShowWin10OneClick || vm.ShowWin10BleHomeAction),
+            "v2.5 one-click Win10 button is on home, guarded, and only shown on unconfigured Win10");
+        check(vm.Win10OneClickConfirmation.Contains("UAC") && vm.Win10OneClickConfirmation.Contains("恢复"),
+            "one-click confirmation states the single elevation and the restore path");
+        check(entry.Content?.ToString() == "Win10 蓝牙 · 高级" &&
             entry.GetBindingExpression(UIElement.VisibilityProperty)?.ParentBinding.Path.Path ==
                 nameof(MainViewModel.ShowWin10BleHomeAction) &&
             entry.GetBindingExpression(UIElement.IsEnabledProperty)?.ParentBinding.Path.Path ==

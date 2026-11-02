@@ -2,9 +2,9 @@
 
 让 **Nintendo Switch 2 Pro（Pro2）手柄无线连接 Windows**，直接用于 Steam，也能切换成 Pro1、Xbox 或 PS5 兼容手柄。纯软件连接，无需专用接收器。
 
-**[推荐下载：v2.7.3 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.3/PRO2ControllerAssistant-v2.7.3-win-x64.exe)** · [版本说明](docs/RELEASE_v2.7.3_ZH.md)
+**[推荐下载：v2.7.4 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.4/PRO2ControllerAssistant-v2.7.4-win-x64.exe)** · [版本说明](docs/RELEASE_v2.7.4_ZH.md)
 
-启动即闪退、窗口不显示时：[尝试 v2.7.3 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.3/PRO2ControllerAssistant-v2.7.3-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
+启动即闪退、窗口不显示时：[尝试 v2.7.4 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.4/PRO2ControllerAssistant-v2.7.4-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
 
 ## 能做什么
 
@@ -37,15 +37,15 @@
 
 多手柄已通过四路离线输入、反馈隔离和休眠故障模拟检查，**多只实体手柄的无线长测仍待验证**。实际并发数量、每只速率与休眠唤醒情况以对应电脑实测为准。驱动日期或标称蓝牙版本不能单独证明不兼容，证据不足时程序会明确提示。
 
-## v2.7.3 更新
+## v2.7.4 更新
 
-- 新增首页“多手柄”入口，每只独立选择模式并保存；修复第二只连接入口、地址占用及虚拟设备身份问题。
-- 模式切换只替换本槽位的虚拟输出，失败时尝试恢复原模式；保留其他槽位的输入、震动、重连和休眠状态。
-- 修复 Xbox 后端未应用独立序列号的问题，补充四模式后端的四实例身份与反馈隔离检查。
-- 加入手柄时保留已有输出；各只分别诊断和优化，发现影响其他手柄时停止试验并恢复原请求。
-- 修复排队期间误休眠、休眠失败仍停止输入，以及扫描错误被当作唤醒的问题。
-- 首页显示连接失败提示，“系统与蓝牙信息”可直接查看失败阶段、系统返回状态及近期尝试。
+- 修复休眠断联后仍用旧 BLE 通道发送停止震动包的问题。
+- 休眠前先停止电量、震动任务，释放保持连接请求；取消或失败时恢复仍在线手柄的任务。
+- 唤醒后等待扫描停止再重连，日志直接记录休眠前后的真实输入频率。
+- 保留四槽位独立模式、背键 / C 键、触控板、震动与体感功能。
 
-[版本说明](docs/RELEASE_v2.7.3_ZH.md) · 保留 PS5 触控板手势、游戏图标替换、Win10 连接引导及四模式功能。
+已通过离线回归与 EXE 启动检查；休眠唤醒后的速率改善仍待实机对照验证，不承诺消除所有蓝牙掉速。
+
+[版本说明](docs/RELEASE_v2.7.4_ZH.md) · 当前版本阶段性收尾，后续更新暂缓。
 
 [反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [源码与构建](source/final-three-in-one/README.md) · [许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [历史三合一版本](docs/HISTORICAL_THREE_IN_ONE_README.md)

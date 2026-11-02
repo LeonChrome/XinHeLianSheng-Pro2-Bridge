@@ -19,6 +19,7 @@ public sealed class V60UserSettings
     public bool AutoReconnectOnStartupEnabled { get; set; }
     public string[] LastConnectedPro2Addresses { get; set; } = new string[4];
     public bool[] EnabledPro2Slots { get; set; } = [true, false, false, false];
+    public string[] SlotModeKeys { get; set; } = [];
     public Dictionary<string, Pro2StickCalibrationProfile> Pro2StickCalibrations { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
     public bool RuntimeBatteryRefreshEnabled { get; set; } = true;
@@ -66,6 +67,7 @@ public sealed class V60UserSettings
                 loaded.LastConnectedPro2Addresses =
                     NormalizeAddressSlots(loaded.LastConnectedPro2Addresses);
                 loaded.EnabledPro2Slots = NormalizeEnabledSlots(loaded.EnabledPro2Slots);
+                loaded.SlotModeKeys = Pro2SlotModes.Normalize(loaded.SlotModeKeys, loaded.SelectedModeKey);
                 loaded.Pro2StickCalibrations =
                     NormalizeStickCalibrations(loaded.Pro2StickCalibrations);
                 loaded.Ps5GyroScalePitch =
@@ -95,6 +97,7 @@ public sealed class V60UserSettings
             BackendLabel = VirtualBackendOption.FromLabel(BackendLabel).Label;
             StickProcessingLabel = StickProcessingOption.FromLabel(StickProcessingLabel).Label;
             SelectedModeKey = NormalizeModeKey(SelectedModeKey);
+            SlotModeKeys = Pro2SlotModes.Normalize(SlotModeKeys, SelectedModeKey);
             RearButtons = (RearButtons ?? new()).Normalize();
             UsbipExecutablePath = UsbipRuntimeLocator.NormalizeExecutablePath(UsbipExecutablePath);
             LastConnectedPro2Addresses = NormalizeAddressSlots(LastConnectedPro2Addresses);

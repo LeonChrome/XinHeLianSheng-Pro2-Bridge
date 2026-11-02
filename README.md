@@ -2,14 +2,14 @@
 
 让 **Nintendo Switch 2 Pro（Pro2）手柄无线连接 Windows**，直接用于 Steam，也能切换成 Pro1、Xbox 或 PS5 兼容手柄。纯软件连接，无需专用接收器。
 
-**[推荐下载：v2.7.1 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.1/PRO2ControllerAssistant-v2.7.1-win-x64.exe)** · [版本说明](docs/RELEASE_v2.7.1_ZH.md)
+**[推荐下载：v2.7.2 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.2/PRO2ControllerAssistant-v2.7.2-win-x64.exe)** · [版本说明](docs/RELEASE_v2.7.2_ZH.md)
 
-启动即闪退、窗口不显示时：[尝试 v2.7.1 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.1/PRO2ControllerAssistant-v2.7.1-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
+启动即闪退、窗口不显示时：[尝试 v2.7.2 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.2/PRO2ControllerAssistant-v2.7.2-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
 
 ## 能做什么
 
 - **四种模式**：Steam / Pro2、Pro1、Xbox、PS5 兼容输出。
-- **多手柄管理**：提供四个槽位，分别连接、重连与休眠；加入第二只不重建已连接的手柄。
+- **多手柄管理**：四个槽位各自选择 Pro2、Pro1、Xbox 或 PS5，可同模式或混用；单只切换不重连实体 BLE，不重建其他手柄的输出。
 - **背键 / C 键自定义**：Pro1、Xbox、PS5 模式支持单键、组合键、连发、顺序动作和延迟；没连接手柄也能设置。
 - **PS5 触控板模拟**：背键 / C 键可映射轻触、四向滑动和顺逆时针画圈，支持时长和延迟；游戏需支持触控板。
 - **震动与体感**：震动强度调节、PS5 普通震动与触觉转换、陀螺仪校准；Xbox 模式不含原生体感。
@@ -25,7 +25,7 @@
 1. 下载 EXE，退出旧版；手柄保持 **PRO2 模式**，开启配对广播。
 2. 打开软件，点击“连接 Pro2”，选择游戏模式。无需先在 Windows 蓝牙设置中添加手柄。
 3. 首次使用按提示安装内置 **USBIP 驱动**，可能需要管理员授权或重启。无需另装 .NET 或 VIIPER；已有 USBIP 支持自动查找或手动指定位置。
-4. 使用多只手柄时，先让第一只进入游戏，再到首页“多手柄”为其他槽位逐只连接。
+4. 使用多只手柄时，先让第一只进入游戏，再到首页“多手柄”为其他槽位逐只连接；各自选模式后点“应用模式”。首页模式仅控制手柄 1。
 
 ## 速率与兼容性
 
@@ -37,13 +37,14 @@
 
 多手柄已通过四路离线输入、反馈隔离和休眠故障模拟检查，**多只实体手柄的无线长测仍待验证**。实际并发数量、每只速率与休眠唤醒情况以对应电脑实测为准。驱动日期或标称蓝牙版本不能单独证明不兼容，证据不足时程序会明确提示。
 
-## v2.7.1 更新
+## v2.7.2 更新
 
-- 新增首页“多手柄”入口，修复第二只连接入口、地址占用及虚拟设备身份问题。
+- 新增首页“多手柄”入口，每只独立选择模式并保存；修复第二只连接入口、地址占用及虚拟设备身份问题。
+- 模式切换只替换本槽位的虚拟输出，失败时尝试恢复原模式；保留其他槽位的输入、震动、重连和休眠状态。
 - 加入手柄时保留已有输出；各只分别诊断和优化，发现影响其他手柄时停止试验并恢复原请求。
 - 修复排队期间误休眠、休眠失败仍停止输入，以及扫描错误被当作唤醒的问题。
 - 首页显示连接失败提示，“系统与蓝牙信息”可直接查看失败阶段、系统返回状态及近期尝试。
 
-[版本说明](docs/RELEASE_v2.7.1_ZH.md) · 保留 PS5 触控板手势、游戏图标替换、Win10 连接引导及四模式功能。
+[版本说明](docs/RELEASE_v2.7.2_ZH.md) · 保留 PS5 触控板手势、游戏图标替换、Win10 连接引导及四模式功能。
 
 [反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [源码与构建](source/final-three-in-one/README.md) · [许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [历史三合一版本](docs/HISTORICAL_THREE_IN_ONE_README.md)

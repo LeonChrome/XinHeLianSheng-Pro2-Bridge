@@ -9,9 +9,51 @@ namespace Y700Switch2V60Viiper;
 
 public sealed partial class MainViewModel
 {
-    private ViiperDeviceProfile? multiRuntimeProfile;
     public string MultiControllerSummary => $"已连接 {pro2Slots.Count(s => s.InputSource.IsRunning)} / 4 · 休眠 {pro2Slots.Count(s => s.IsSleeping)} · 每只独立输入、震动与重连";
-    private ICommand? removeSlotCommand, optimizeSlotCommand;
+    private ICommand? removeSlotCommand, optimizeSlotCommand, applySlotModeCommand;
+    public ICommand ApplyPro2SlotModeCommand => applySlotModeCommand ??= new RelayCommand(parameter =>
+        RunExclusiveAsync("应用单只手柄模式", async token =>
+        {
+            if (SlotFromParameter(parameter) is { } slot) await ApplySlotModeAsync(slot, token);
+        }));
+    private bool HasPs5VirtualOutput => session?.Profile.IsPs5Family == true ||
+        pro2Slots.Any(s => s.VirtualDeviceRunning && s.Session?.Profile.IsPs5Family == true);
+    private ViiperDeviceProfile RuntimeProfileForSlot(Pro2ControllerSlot slot) =>
+        Pro2SlotModes.Profile(slot.SelectedMode, slot.Index, SelectedPushRateOption);
+
+    private async Task ApplySlotModeAsync(Pro2ControllerSlot slot, CancellationToken token)
+    {
+        if (slot.Index == 1) SelectMode(slot.SelectedMode);
+        if (!Running || !slot.Enabled || previewOnly)
+        { slot.Status = "模式已保存；下次连接使用 " + Pro2SlotModes.FromMode(slot.SelectedMode).Label + "。"; return; }
+        if (slot.VirtualDeviceRunning && slot.Session?.Profile.Mode == slot.SelectedMode)
+        { slot.Status = "当前已使用所选模式。"; return; }
+        await bleOperationGate.WaitAsync(token);
+        try
+        {
+            ViiperVirtualMode? previous = slot.Session?.Profile.Mode;
+            ViiperVirtualMode requested = slot.SelectedMode;
+            var result = await Pro2SlotModeSwitch.ReplaceAsync(previous, requested, async () =>
+            {
+                var old = slot.Session; slot.Session = null; slot.VirtualDeviceRunning = false;
+                if (old != null) await old.DisposeAsync();
+            }, (mode, ct) => StartSingleSlotSessionAsync(slot,
+                Pro2SlotModes.Profile(mode, slot.Index, SelectedPushRateOption), ct), token);
+            if (slot.Index == 1) SetActiveMode(slot.Session?.Profile.Mode ?? requested);
+            slot.Status = result switch
+            {
+                Pro2SlotModeChangeResult.Changed => "已切换为 " + Pro2SlotModes.FromMode(requested).Label + "；其他手柄保持运行。",
+                Pro2SlotModeChangeResult.RestoredPrevious => "新模式创建失败，已恢复原模式；其他手柄保持运行。",
+                _ => "本槽位输出未启动；BLE 和其他手柄保持，点击连接重试。"
+            };
+            AppendLog("[SLOT_MODE_SWITCH] slot=" + slot.Index + " previous=" + previous + " requested=" + requested +
+                " actual=" + slot.Session?.Profile.Mode + " result=" + result + " physical_ble_reconnected=false peers_preserved=true");
+        }
+        finally { bleOperationGate.Release(); }
+        if (HasPs5VirtualOutput) await ApplyDualSenseAudioGuardAsync(token);
+        else StopBuiltInAudioGuard();
+        slot.RefreshFromSource(); UpdateMultiSlotInputStatus(); RefreshCompactPresentation();
+    }
     public ICommand RemovePro2SlotCommand => removeSlotCommand ??= new RelayCommand(parameter =>
         RunExclusiveAsync("移除手柄", async token =>
         {
@@ -26,6 +68,7 @@ public sealed partial class MainViewModel
             if (previous != null) await previous.DisposeAsync();
             slot.VirtualDeviceRunning = false;
             slot.Status = "已移除；其他手柄保持连接。";
+            if (!HasPs5VirtualOutput) StopBuiltInAudioGuard();
             UpdateMultiSlotInputStatus();
         }));
     public ICommand OptimizePro2SlotCommand => optimizeSlotCommand ??= new RelayCommand(parameter =>
@@ -39,12 +82,20 @@ public sealed partial class MainViewModel
     private void InitializeMultiControllerSafety()
     {
         bool[] enabled = V60UserSettings.NormalizeEnabledSlots(userSettings.EnabledPro2Slots);
+        string[] modes = Pro2SlotModes.Normalize(userSettings.SlotModeKeys, userSettings.SelectedModeKey);
         foreach (var slot in pro2Slots)
         {
             slot.Enabled = enabled[slot.Index - 1];
+            slot.SelectedMode = Pro2SlotModes.FromKey(modes[slot.Index - 1]).Mode;
             slot.InputSource.PeerRatesProvider = () => CapturePeerRates(slot.Index);
             slot.PropertyChanged += (_, e) =>
             {
+                if (e.PropertyName == nameof(Pro2ControllerSlot.SelectedMode))
+                {
+                    userSettings.SlotModeKeys = pro2Slots.Select(s => Pro2SlotModes.FromMode(s.SelectedMode).Key).ToArray();
+                    if (slot.Index == 1) SelectMode(slot.SelectedMode);
+                    SaveUserSettings("[SLOT_MODE_SELECT]");
+                }
                 if (e.PropertyName == nameof(Pro2ControllerSlot.IsSleeping))
                 {
                     OnPropertyChanged(nameof(MultiControllerSummary));
@@ -55,11 +106,12 @@ public sealed partial class MainViewModel
                 SaveUserSettings("[SLOT_CONFIGURATION]");
             };
         }
+        userSettings.SelectedModeKey = Pro2SlotModes.FromMode(pro2Slots[0].SelectedMode).Key;
     }
 
     public string MultiControllerDiagnostics => "多手柄状态（缓存；无额外 GATT 查询）\n" +
         string.Join("\n\n", pro2Slots.Where(s => s.Enabled || s.VirtualDeviceRunning || s.InputSource.IsRunning).Select(s =>
-            s.Name + " · " + s.ConnectedAddress + " · " + s.RateSummary + "\n" + s.DiagnosticSummary + "\n" +
+            s.Name + " · " + s.ConnectedAddress + " · " + s.ModeSummary + " · " + s.RateSummary + "\n" + s.DiagnosticSummary + "\n" +
             s.InputSource.ConnectionDiagnosticText + "\n" + s.InputSource.GetAdaptiveDiagnosticText(includeHistory: false))) +
         "\n系统默认适配器不是各链路归属证明；多只手柄同时达到 133Hz 需要实测。\n";
 

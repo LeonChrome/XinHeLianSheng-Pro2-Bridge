@@ -15,7 +15,7 @@
         <StackPanel Margin="0,0,0,14">
             <TextBlock Text="多手柄" FontSize="23" FontWeight="SemiBold"/>
             <TextBlock Text="{Binding MultiControllerSummary}" Margin="0,6,0,4" Foreground="#52685D"/>
-            <TextBlock Text="先连接第一只并进入游戏，再逐只开启配对、点击对应“连接”。加入第二只不会重建第一只。" TextWrapping="Wrap" Foreground="#667870"/>
+            <TextBlock Text="先让第一只进入游戏，再逐只配对、连接。每只可单独选模式，改选后点“应用模式”；首页模式仅控制手柄 1。" TextWrapping="Wrap" Foreground="#667870"/>
         </StackPanel>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <ItemsControl ItemsSource="{Binding Pro2Slots}">
@@ -26,12 +26,17 @@
                                 <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold" DockPanel.Dock="Left"/>
                                 <TextBlock Text="{Binding ConnectedAddress}" Foreground="#667870" FontSize="11" Margin="12,0,12,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></DockPanel>
                             <WrapPanel Margin="0,6,0,4" IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <ComboBox ItemsSource="{Binding ModeOptions}" DisplayMemberPath="Label" SelectedValuePath="Mode"
+                                          SelectedValue="{Binding SelectedMode}" Width="135" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                          AutomationProperties.Name="本槽位输出模式"/>
+                                <Button Content="应用模式" Command="{Binding DataContext.ApplyPro2SlotModeCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                                 <Button Content="连接" Command="{Binding DataContext.ConnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                                 <Button Content="暂停连接" Command="{Binding DataContext.DisconnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                                 <Button Content="优化蓝牙" Command="{Binding DataContext.OptimizePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                                 <Button Content="移除" Command="{Binding DataContext.RemovePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Visibility="{Binding CanRemove, Converter={StaticResource VisibleIf}}"/>
                             </WrapPanel>
                             <TextBlock Text="{Binding DisplayStatus}" Foreground="#667870" FontSize="12" TextTrimming="CharacterEllipsis" MaxHeight="18"/>
+                            <TextBlock Text="{Binding ModeSummary}" Foreground="#315847" FontSize="11"/>
                             <TextBlock Text="{Binding SleepStatus}" Foreground="#667870" FontSize="11" TextWrapping="Wrap"/>
                             <Expander Header="连接诊断" Margin="0,3,0,0"><TextBlock Text="{Binding DiagnosticSummary}" TextWrapping="Wrap" Foreground="#52685D" FontSize="12" Margin="0,6,0,0"/></Expander>
                         </StackPanel>
@@ -39,6 +44,6 @@
                 </DataTemplate></ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
-        <TextBlock Grid.Row="2" Text="所有手柄使用首页选择的同一种模式。Win10 参数授权在首页；单只或多只达到 133Hz 均以实测为准。" TextWrapping="Wrap" Foreground="#667870" FontSize="12" Margin="0,10,0,0"/>
+        <TextBlock Grid.Row="2" Text="模式可离线保存，各槽位可混用。应用模式只重建本槽位的虚拟输出，保留实体蓝牙和其他槽位。实际蓝牙并发数量与速率以实测为准。" TextWrapping="Wrap" Foreground="#667870" FontSize="12" Margin="0,10,0,0"/>
     </Grid>
 </Window>

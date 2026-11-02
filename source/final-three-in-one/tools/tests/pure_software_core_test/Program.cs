@@ -29,6 +29,7 @@ internal static class Program
             if (args.Contains("--multi-only"))
             {
                 MultiControllerRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
+                MixedSlotModeRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
                 Console.WriteLine("PASS: " + checks + " multi-controller assertions; loopback only.");
                 return 0;
             }
@@ -105,6 +106,7 @@ internal static class Program
             Ps5TouchRegressionTests.Run(Check, output);
             RearButtonSafetyRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             MultiControllerRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
+            MixedSlotModeRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             CButtonDeviceRegressionTests.Run(Check);
             TestQueue();
             TestWin10StackPlan();
@@ -154,9 +156,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.7.1.0", "v2.7.1 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.7.2.0", "v2.7.2 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.7.1-sleep-connection-safety", "v2.7.1 release metadata");
+            "2.7.2-independent-controller-modes", "v2.7.2 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1257,6 +1259,55 @@ internal static class Program
             "each visible connect button targets its own real slot");
         Check(Descendants<Button>(multiWindow).Count(b => b.Content?.ToString() == "移除" && b.IsVisible) == 3,
             "extra slot removal keeps primary controller separate");
+        var originalSlotModes = vm.Pro2Slots.Select(s => s.SelectedMode).ToArray();
+        var slotModePickers = Descendants<ComboBox>(multiWindow).Where(c => ReferenceEquals(c.ItemsSource, Pro2SlotModes.Options)).ToArray();
+        Check(slotModePickers.Length == 4 && slotModePickers.Select(c => c.DataContext).OfType<Pro2ControllerSlot>()
+            .Select(s => s.Index).SequenceEqual(new[] { 1, 2, 3, 4 }), "four mode selectors bind to four independent real slots");
+        foreach (var picker in slotModePickers)
+        {
+            var target = (Pro2ControllerSlot)picker.DataContext;
+            picker.SelectedValue = Pro2SlotModes.Options[target.Index - 1].Mode;
+        }
+        Pump(multiWindow); Save(multiWindow, "ui-four-independent-modes.png");
+        Check(vm.Pro2Slots.Select(s => s.SelectedMode).SequenceEqual(Pro2SlotModes.Options.Select(o => o.Mode)),
+            "offline UI independently selects Pro2 Pro1 Xbox PS5");
+        Check(Descendants<Button>(multiWindow).Where(b => b.Content?.ToString() == "应用模式")
+            .Select(b => b.CommandParameter).OfType<Pro2ControllerSlot>().Select(s => s.Index).SequenceEqual(new[] { 1, 2, 3, 4 }),
+            "each apply command targets its own slot");
+        vm.ApplyPro2SlotModeCommand.Execute(vm.Pro2Slots[1]); Pump(multiWindow);
+        Check(vm.Pro2Slots[1].Status.Contains("模式已保存") && vm.Pro2Slots.All(s => !s.VirtualDeviceRunning),
+            "offline mode apply saves without starting a virtual device or Bluetooth");
+        bool originallyEnabled = vm.Pro2Slots[1].Enabled;
+        AwaitUi((Task)typeof(MainViewModel).GetMethod("StartPro2SlotAutoReconnectAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(vm, new object[] { vm.Pro2Slots[1], CancellationToken.None })!, multiWindow);
+        Check(vm.Pro2Slots[1].Status.Contains("先连接手柄 1") && !vm.Running &&
+            vm.Pro2Slots.All(s => !s.VirtualDeviceRunning && !s.InputSource.IsRunning),
+            "failed initial preflight cannot hot add an unowned virtual device");
+        vm.Pro2Slots[1].Enabled = originallyEnabled;
+        var siblingModes = vm.Pro2Slots.Skip(1).Select(s => s.SelectedMode).ToArray();
+        vm.SelectCompactModeCommand.Execute("Xbox"); Pump(window);
+        Check(vm.Pro2Slots[0].SelectedMode == ViiperVirtualMode.Xbox &&
+            vm.Pro2Slots.Skip(1).Select(s => s.SelectedMode).SequenceEqual(siblingModes), "home mode changes primary selection only");
+        for (int i = 0; i < 4; i++) vm.Pro2Slots[i].SelectedMode = originalSlotModes[i];
+        var ps5Slot = vm.Pro2Slots[1];
+        var fakeSession = new ViiperBridgeSession(new("127.0.0.1", 1), ViiperDeviceProfile.DualSenseLike, new Progress<string>());
+        ps5Slot.Session = fakeSession; ps5Slot.VirtualDeviceRunning = true;
+        var audioCtsField = typeof(MainViewModel).GetField("builtInAudioGuardCts", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var priorAudioCts = audioCtsField.GetValue(vm);
+        var activeField = typeof(MainViewModel).GetField("activeMode", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var priorActive = activeField.GetValue(vm);
+        using (var guard = new CancellationTokenSource())
+        {
+            audioCtsField.SetValue(vm, guard);
+            var setActive = typeof(MainViewModel).GetMethod("SetActiveMode", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            setActive.Invoke(vm, new object?[] { ViiperVirtualMode.Xbox });
+            Check(!guard.IsCancellationRequested, "secondary PS5 audio protection survives a non PS5 primary");
+            ps5Slot.VirtualDeviceRunning = false; ps5Slot.Session = null;
+            setActive.Invoke(vm, new object?[] { ViiperVirtualMode.Xbox });
+            Check(guard.IsCancellationRequested, "audio guard stops after the last PS5 virtual output is removed");
+        }
+        audioCtsField.SetValue(vm, priorAudioCts); activeField.SetValue(vm, priorActive);
+        fakeSession.DisposeAsync().AsTask().GetAwaiter().GetResult();
         var secondSlot = vm.Pro2Slots[1];
         secondSlot.IsSleeping = true;
         secondSlot.Status = "已自动休眠 · 按任意键唤醒";

@@ -59,8 +59,12 @@ internal static class MultiControllerRegressionTests
         }
         foreach(var profile in new[]{ViiperDeviceProfile.Pro2,ViiperDeviceProfile.Pro1,ViiperDeviceProfile.Xbox,ViiperDeviceProfile.DualSenseLike})
             await FourStreamsAsync(profile with {SourcePaced=true},check);
+        var modes = Pro2SlotModes.Options.Select(o => o.Mode).ToArray();
+        for (int rotation = 0; rotation < 4; rotation++)
+            await ProfilesAsync(Enumerable.Range(0, 4).Select(i => Pro2SlotModes.Profile(modes[(i + rotation) % 4],
+                i + 1, ViiperPushRateOption.Default)).ToArray(), check);
         Directory.CreateDirectory(output);
-        File.WriteAllText(Path.Combine(output,"multi-controller-tests.txt"),"Offline: four concurrent real C# input consumers per mode, independent loopback streams and Xbox feedback routing; no Bluetooth/USBIP hardware proof. Address ownership and peer-rate rollback tested.\n");
+        File.WriteAllText(Path.Combine(output,"multi-controller-tests.txt"),"Offline: four concurrent real C# input consumers in each homogeneous mode and four mixed rotations; all four feedback protocols isolated and payload checked. No Bluetooth/USBIP hardware proof. Address ownership, mode replacement and peer-rate rollback tested.\n");
     }
     private sealed class PeerBackend(bool rejectRestore):IBleAdaptiveTrialBackend,IBleAdaptivePeerGuard
     {
@@ -71,6 +75,8 @@ internal static class MultiControllerRegressionTests
         public Task<BleAdaptiveMeasurement> MeasureAsync(string phase,CancellationToken t)=>Task.FromResult(new BleAdaptiveMeasurement(new(10,phase=="NATIVE"?660:1330,phase=="NATIVE"?660:1330,1,true,true,8,6)));
     }
     private static async Task FourStreamsAsync(ViiperDeviceProfile profile,Action<bool,string> check)
+        => await ProfilesAsync(Enumerable.Repeat(profile, 4).ToArray(), check);
+    private static async Task ProfilesAsync(ViiperDeviceProfile[] profiles,Action<bool,string> check)
     {
         using var stop=new CancellationTokenSource();
         var sessions=new List<ViiperBridgeSession>();var clients=new List<TcpClient>();var hosts=new List<TcpClient>();
@@ -79,6 +85,7 @@ internal static class MultiControllerRegressionTests
         {
             for(int i=0;i<4;i++)
             {
+                var profile = profiles[i];
                 var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();
                 var client=new TcpClient{NoDelay=true};var accept=listener.AcceptTcpClientAsync();
                 await client.ConnectAsync(IPAddress.Loopback,((IPEndPoint)listener.LocalEndpoint).Port);
@@ -89,11 +96,11 @@ internal static class MultiControllerRegressionTests
                 typeof(ViiperBridgeSession).GetMethod("SetStream",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(session,[new ViiperDeviceStream(client,client.GetStream())]);
                 source.Feed(new());
                 loops.Add((Task)typeof(ViiperBridgeSession).GetMethod("InputLoopAsync",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(session,[stop.Token])!);
-                if(profile.Mode==ViiperVirtualMode.Xbox)
-                    loops.Add((Task)typeof(ViiperBridgeSession).GetMethod("FeedbackLoopAsync",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(session,[stop.Token])!);
+                loops.Add((Task)typeof(ViiperBridgeSession).GetMethod("FeedbackLoopAsync",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(session,[stop.Token])!);
             }
             async Task Expect(int i,GamepadState s)
             {
+                var profile = profiles[i];
                 var bytes=new byte[profile.InputSize];using var deadline=new CancellationTokenSource(2000);
                 await hosts[i].GetStream().ReadExactlyAsync(bytes,deadline.Token);
                 check(bytes.SequenceEqual(VirtualPadPackets.FromGamepad(profile,s)),"isolated actual stream "+profile.Mode+" slot="+(i+1));
@@ -105,19 +112,23 @@ internal static class MultiControllerRegressionTests
                 for(int i=0;i<4;i++)sources[i].Feed(states[i]);
                 for(int i=0;i<4;i++)await Expect(i,states[i]);
             }
-            if(profile.Mode==ViiperVirtualMode.Xbox)
+            for(int i=0;i<4;i++)
             {
-                for(int i=0;i<4;i++)
-                {
-                    await hosts[i].GetStream().WriteAsync(new byte[]{(byte)(30+i*20),180});
-                    using var wait=new CancellationTokenSource(2000);
-                    while(sources[i].Writes.IsEmpty)await Task.Delay(1,wait.Token);
-                    check(sources.Select(s=>s.Writes.Count).SequenceEqual(Enumerable.Range(0,4).Select(j=>j<=i?1:0)),"feedback only reaches matching slot "+(i+1));
-                }
+                var profile = profiles[i]; var feedback = Feedback(profile, i);
+                Pro2OutputPacket expected;
+                bool mapped = profile.UsesDualSenseHaptics
+                    ? new DualSenseHapticRumbleScheduler().TryProcess(feedback, out expected!, out _, out _)
+                    : Pro2OutputPacketMapper.TryMapFeedback(profile, feedback, out expected!, out _);
+                check(mapped, "test feedback is valid for " + profile.Mode);
+                await hosts[i].GetStream().WriteAsync(feedback);
+                using var wait=new CancellationTokenSource(2000);
+                while(sources[i].Writes.IsEmpty)await Task.Delay(1,wait.Token);
+                check(sources.Select(s=>s.Writes.Count).SequenceEqual(Enumerable.Range(0,4).Select(j=>j<=i?1:0)),"feedback only reaches matching slot "+(i+1));
+                check(sources[i].Writes.Single().SequenceEqual(expected.Report), "mode-specific feedback payload reaches only its own physical sink " + profile.Mode);
             }
             sources[1].Running=false;sources[1].Wake();await Expect(1,new());
             for(int i=0;i<4;i++)if(i!=1){var s=new GamepadState{Buttons=GamepadButtons.North,Lx=(ushort)(2000+i)};sources[i].Feed(s);await Expect(i,s);}
-            check(!loops.Any(t=>t.IsFaulted),"one source disconnect does not stop sibling streams "+profile.Mode);
+            check(!loops.Any(t=>t.IsFaulted),"one source disconnect does not stop sibling streams "+string.Join(",",profiles.Select(p=>p.Mode)));
         }
         finally
         {
@@ -125,6 +136,19 @@ internal static class MultiControllerRegressionTests
             foreach(var session in sessions)await session.DisposeAsync();
             foreach(var c in clients.Concat(hosts))c.Dispose();
         }
+    }
+    private static byte[] Feedback(ViiperDeviceProfile profile, int slot)
+    {
+        byte weak = (byte)(30 + slot * 20), strong = (byte)(180 - slot * 10);
+        if (profile.Mode == ViiperVirtualMode.Xbox) return [strong, weak];
+        if (profile.Mode == ViiperVirtualMode.Pro1) return [0, 0xC8, 0x40, (byte)(0x70 + slot), 0, 1, 0x40, 0x40, 1, 0];
+        if (profile.Mode == ViiperVirtualMode.Pro2)
+        {
+            byte[] frame = new byte[34]; var packet = Pro2OutputPacketMapper.BuildOrdinaryPacket(weak, strong, "test");
+            packet.Report.AsSpan(1, 32).CopyTo(frame); frame[32] = 1; return frame;
+        }
+        byte[] wire = new byte[DualSenseHapticFrame.WireSize]; wire[0] = 1; wire[1] = 48;
+        wire[4] = 2; wire[5] = 3; wire[7] = weak; wire[8] = strong; return wire;
     }
     private sealed class Quiet:IProgress<string>{public void Report(string s){}}
     private sealed class Source:IGamepadInputSource,IGamepadRealtimeInputSource,IGamepadSignaledInputSource,IGamepadOutputSink

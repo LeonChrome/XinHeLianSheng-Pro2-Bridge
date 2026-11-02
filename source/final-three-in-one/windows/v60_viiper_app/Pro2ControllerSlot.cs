@@ -13,6 +13,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
     private bool virtualDeviceRunning;
     private bool isSleeping;
     private string sleepStatus = "";
+    private ViiperVirtualMode selectedMode = ViiperVirtualMode.Pro2;
     private string status;
     private string connectedAddress = "";
     private string stickCalibrationStatus = "摇杆校准：连接手柄后可执行零位或完整行程校准。";
@@ -33,6 +34,17 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
     public int Index { get; }
     public string Name { get; }
     public bool CanRemove => Index != 1;
+    public IReadOnlyList<Pro2SlotModeOption> ModeOptions => Pro2SlotModes.Options;
+    public ViiperVirtualMode SelectedMode
+    {
+        get => selectedMode;
+        set { value = Pro2SlotModes.FromMode(value).Mode; if (selectedMode == value) return;
+            selectedMode = value; OnPropertyChanged(); OnPropertyChanged(nameof(ModeSummary)); }
+    }
+    public string ModeSummary => VirtualDeviceRunning && Session != null
+        ? "当前输出：" + Pro2SlotModes.FromMode(Session.Profile.Mode).Label +
+            (Session.Profile.Mode == SelectedMode ? "" : " · 点击应用模式生效")
+        : "待用模式：" + Pro2SlotModes.FromMode(SelectedMode).Label;
     public string SleepStatus
     {
         get => sleepStatus;
@@ -66,6 +78,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
                 : "未启用。";
             OnPropertyChanged();
             OnPropertyChanged(nameof(Headline));
+            OnPropertyChanged(nameof(ModeSummary));
         }
     }
 
@@ -98,6 +111,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
             virtualDeviceRunning = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(Headline));
+            OnPropertyChanged(nameof(ModeSummary));
         }
     }
 
@@ -193,6 +207,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
         ConnectedAddress = InputSource.ConnectedAddress;
         if (InputSource.IsRunning) Status = InputSource.Status;
         OnPropertyChanged(nameof(Headline));
+        OnPropertyChanged(nameof(ModeSummary));
         OnPropertyChanged(nameof(RateSummary));
         OnPropertyChanged(nameof(OptimizationSummary));
         OnPropertyChanged(nameof(DisplayStatus));

@@ -1708,6 +1708,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         CancellationToken cancellationToken)
     {
         SelectMode(profile.Mode);
+        if (Running && activeMode.HasValue && IsMultiSlotMode(activeMode.Value) && IsMultiSlotMode(profile.Mode))
+        {
+            await ApplySlotModeAsync(pro2Slots[0], cancellationToken);
+            return;
+        }
         if (!Pro2ConnectionPresentation.CanStartVirtual(
                 PureSoftware133Mode.IsEnabled, inputSource.IsRunning, inputSource.IsHighRateReady, inputSource.IsGameplayReady))
         {
@@ -2039,11 +2044,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             await SwitchModeAsync(targetProfile, cancellationToken);
         }
 
+        if (!Running)
+        {
+            slot.Status = "请先连接手柄 1 并进入游戏，再连接其他槽位；本槽位的模式已保存。";
+            return;
+        }
+
         if (!slot.VirtualDeviceRunning)
         {
-            if (multiRuntimeProfile == null || !await StartSingleSlotSessionAsync(slot, multiRuntimeProfile, cancellationToken))
+            if (!await StartSingleSlotSessionAsync(slot, RuntimeProfileForSlot(slot), cancellationToken))
             { UpdateMultiSlotInputStatus(); return; }
-            if (multiRuntimeProfile.IsPs5Family) await ApplyDualSenseAudioGuardAsync(cancellationToken);
+            if (slot.Session?.Profile.IsPs5Family == true) await ApplyDualSenseAudioGuardAsync(cancellationToken);
             AppendLog("[SLOT_HOT_ADD] slot=" + slot.Index + " existing_sessions_preserved=true");
         }
 
@@ -2063,7 +2074,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         slot.Status = string.IsNullOrWhiteSpace(preferredAddress)
             ? "自动连接已启动，正在寻找未被其他 Slot 占用的 Pro2。"
             : "自动连接已启动，优先寻找上次保存的 Pro2：" + preferredAddress;
-        AppendLog("[SLOT_MULTI] slot=" + slot.Index + " auto enabled mode=" + activeMode +
+        AppendLog("[SLOT_MULTI] slot=" + slot.Index + " auto enabled mode=" + slot.Session?.Profile.Mode +
                   " preferred=" + (string.IsNullOrWhiteSpace(preferredAddress) ? "none" : preferredAddress) +
                   " startup_auto=" + startupAutomationActive);
         slot.AutoReconnectTask = Pro2SlotAutoReconnectLoopAsync(slot, slot.AutoReconnectCts.Token);
@@ -3001,7 +3012,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                 await StartMultiSlotSessionsAsync(runtimeProfile, cancellationToken);
                 SetActiveMode(runtimeProfile.Mode);
                 int runningSlots = pro2Slots.Count(slot => slot.VirtualDeviceRunning);
-                if (runtimeProfile.Mode == ViiperVirtualMode.DualSenseLike &&
+                if (HasPs5VirtualOutput &&
                     AudioEndpointGuardEnabled)
                 {
                     await ApplyDualSenseAudioGuardAsync(cancellationToken);
@@ -3101,7 +3112,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
         ViiperDeviceProfile slotProfile = runtimeProfile with
         {
-            Label = runtimeProfile.Label + " Slot " + slot.Index,
             DeviceSpecificSerialNumber =
                 ViiperDeviceProfile.SlotSerialNumber(runtimeProfile.Mode, slot.Index)
         };
@@ -3138,7 +3148,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             slot.RefreshFromSource();
 
             AppendLog("[SLOT_MULTI] slot=" + slot.Index +
-                      " virtual_ready=1 device_type=" + slotProfile.DeviceType);
+                      " virtual_ready=1 mode=" + slotProfile.Mode + " serial=" + slotProfile.DeviceSpecificSerialNumber +
+                      " device_type=" + slotProfile.DeviceType);
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -3166,10 +3177,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             AppendLog("[SLOT_MULTI] no enabled slot; slot=1 enabled automatically.");
         }
 
-        multiRuntimeProfile = runtimeProfile;
         int started = 0;
         foreach (Pro2ControllerSlot slot in enabledSlots)
-            if (await StartSingleSlotSessionAsync(slot, runtimeProfile, cancellationToken)) started++;
+            if (await StartSingleSlotSessionAsync(slot, RuntimeProfileForSlot(slot), cancellationToken)) started++;
 
         foreach (Pro2ControllerSlot slot in pro2Slots.Where(slot => !slot.Enabled))
         {
@@ -3627,7 +3637,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task StopMultiSlotSessionsAsync()
     {
-        multiRuntimeProfile = null;
         foreach (Pro2ControllerSlot slot in pro2Slots)
         {
             ViiperBridgeSession? active = slot.Session;
@@ -4296,6 +4305,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private void SelectMode(ViiperVirtualMode mode)
     {
+        if (IsMultiSlotMode(mode) && pro2Slots[0].SelectedMode != mode)
+            pro2Slots[0].SelectedMode = mode;
         if (selectedMode == mode)
         {
             return;
@@ -4318,7 +4329,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private void SetActiveMode(ViiperVirtualMode? mode)
     {
-        if (mode is not (ViiperVirtualMode.DualSenseLike or ViiperVirtualMode.DualSenseProfessionalImuTest))
+        if (!HasPs5VirtualOutput && mode is not (ViiperVirtualMode.DualSenseLike or ViiperVirtualMode.DualSenseProfessionalImuTest))
             StopBuiltInAudioGuard();
         activeMode = mode;
         OnPropertyChanged(nameof(IsDualSenseActive));

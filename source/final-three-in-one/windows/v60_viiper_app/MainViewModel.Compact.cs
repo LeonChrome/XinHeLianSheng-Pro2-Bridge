@@ -107,7 +107,8 @@ public sealed partial class MainViewModel
         }
     }
     public string CompactHapticSource => (session ?? pro2Slots[0].Session)?.FeedbackSource ?? "等待游戏反馈";
-    public string CompactActualMode => activeMode.HasValue ? ProfileFor(activeMode.Value).Label : "尚未创建虚拟手柄";
+    public string CompactActualMode => pro2Slots[0].Session?.Profile.Label ??
+        (session?.Profile.Label ?? (Running ? "手柄 1 输出未启动；其他槽位独立运行" : "尚未创建虚拟手柄"));
     public string CompatibilityTitle => BleCompatibilityInspector.Current.Plan.Title;
     public string CompatibilityGuidance => BleCompatibilityInspector.Current.Plan.Guidance;
     public bool CanConfigureWin10Stack => BleCompatibilityInspector.Current.Plan.CanConfigureWin10Stack;

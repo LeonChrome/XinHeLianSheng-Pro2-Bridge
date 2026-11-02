@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/Alia5/VIIPER/device"
@@ -17,12 +18,14 @@ type Xbox360 struct {
 	inputQueue  *device.InputQueue[InputState]
 	sourcePaced bool
 	rumbleFunc  func(XRumbleState)
+	rumbleMu    sync.RWMutex
 	descriptor  usb.Descriptor
 }
 
 type Xbox360CreateOptions struct {
-	SubType     *uint8 `json:"subType"`
-	SourcePaced bool   `json:"source_paced"`
+	SubType      *uint8 `json:"subType"`
+	SourcePaced  bool   `json:"source_paced"`
+	SerialNumber string `json:"serial_number"`
 }
 
 // New returns a new Xbox360 device.
@@ -47,6 +50,9 @@ func New(o *device.CreateOptions) (*Xbox360, error) {
 				d.descriptor.Interfaces[0].ClassDescriptors[0].Payload[2] = *args.SubType
 			}
 			d.sourcePaced = args.SourcePaced
+			if args.SerialNumber != "" {
+				d.descriptor.Strings[3] = args.SerialNumber
+			}
 		}
 	}
 	d.inputQueue = device.NewInputQueue[InputState](64, func(a, b InputState) bool {
@@ -59,6 +65,8 @@ func New(o *device.CreateOptions) (*Xbox360, error) {
 
 // SetRumbleCallback sets a callback that will be invoked when rumble commands arrive.
 func (x *Xbox360) SetRumbleCallback(f func(XRumbleState)) {
+	x.rumbleMu.Lock()
+	defer x.rumbleMu.Unlock()
 	x.rumbleFunc = f
 }
 
@@ -104,8 +112,11 @@ func (x *Xbox360) HandleTransfer(ctx context.Context, ep uint32, dir uint32, out
 				LeftMotor:  out[3], // big / low-frequency motor
 				RightMotor: out[4], // small / high-frequency motor
 			}
-			if x.rumbleFunc != nil {
-				x.rumbleFunc(rumble)
+			x.rumbleMu.RLock()
+			callback := x.rumbleFunc
+			x.rumbleMu.RUnlock()
+			if callback != nil {
+				callback(rumble)
 			}
 		}
 	}

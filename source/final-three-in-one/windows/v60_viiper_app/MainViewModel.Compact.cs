@@ -188,8 +188,11 @@ public sealed partial class MainViewModel
 
     private void RefreshCompactPresentation()
     {
+        foreach (var slot in pro2Slots) slot.RefreshFromSource();
+        OnPropertyChanged(nameof(MultiControllerSummary));
         RefreshBleCompatibilityPresentation();
         RefreshLowRateDiagnosis();
+        RefreshConnectionDiagnosis();
         QueueLowRateAutomaticOptimization();
         foreach (string property in new[] { nameof(CompactPs5Selected),
                      nameof(BleStabilitySummary), nameof(ShowWin11CompatibilityAction), nameof(CanTryWin11Compatibility),

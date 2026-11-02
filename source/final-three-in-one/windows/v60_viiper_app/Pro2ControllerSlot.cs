@@ -11,6 +11,8 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
     private bool enabled;
     private bool autoReconnectEnabled;
     private bool virtualDeviceRunning;
+    private bool isSleeping;
+    private string sleepStatus = "";
     private string status;
     private string connectedAddress = "";
     private string stickCalibrationStatus = "摇杆校准：连接手柄后可执行零位或完整行程校准。";
@@ -18,7 +20,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
     public Pro2ControllerSlot(int index, bool enabled)
     {
         Index = index;
-        Name = "Pro2 Slot " + index;
+        Name = "手柄 " + index;
         this.enabled = enabled;
         status = enabled
             ? "已启用，等待进入游戏。"
@@ -30,6 +32,18 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
 
     public int Index { get; }
     public string Name { get; }
+    public bool CanRemove => Index != 1;
+    public string SleepStatus
+    {
+        get => sleepStatus;
+        set { if (sleepStatus == value) return; sleepStatus = value; OnPropertyChanged(); }
+    }
+    public bool IsSleeping
+    {
+        get => isSleeping;
+        set { if (isSleeping == value) return; isSleeping = value;
+            OnPropertyChanged(); OnPropertyChanged(nameof(RateSummary)); OnPropertyChanged(nameof(DisplayStatus)); }
+    }
     public Pro2BleInputSource InputSource { get; }
     public ViiperBridgeSession? Session { get; set; }
     public CancellationTokenSource? AutoReconnectCts { get; set; }
@@ -117,6 +131,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
 
             status = normalized;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(DisplayStatus));
         }
     }
 
@@ -144,11 +159,44 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
         (AutoReconnectEnabled ? " · AUTO" : "") +
         (string.IsNullOrWhiteSpace(ConnectedAddress) ? "" : " · " + ConnectedAddress);
 
+    public string RateSummary
+    {
+        get
+        {
+            var r = InputSource.GetRateEvidence();
+            if (IsSleeping) return "已休眠 · 按任意键唤醒";
+            if (!r.Connected || !r.Running) return "未连接";
+            if (!r.RecentWindow || r.LastInputAgeMs >= 500) return "输入中断或正在测量";
+            return $"FD2 {r.Fd2Hz:F1} Hz / 解析 {r.ParsedHz:F1} Hz · " +
+                (r.IntervalUnits > 0 ? $"间隔 {r.IntervalUnits * 1.25:F2}ms · " : "") +
+                (r.HighRate ? "高速" : r.GameplayReady ? "可游玩，建议优化" : "低速，待优化");
+        }
+    }
+    public string OptimizationSummary => InputSource.CompatibilityOptimizationSummary;
+    public string DisplayStatus => IsSleeping ? Status : InputSource.IsRunning
+        ? InputSource.IsCompatibilityOptimizationRunning ? OptimizationSummary : "已连接 · 输入、震动与重连独立运行"
+        : Status.StartsWith("真实 Pro2 BLE", StringComparison.Ordinal) ? "未连接 · 等待重连" : Status;
+    public string DiagnosticSummary
+    {
+        get
+        {
+            var r = InputSource.GetRateEvidence();
+            return $"系统 {Environment.OSVersion.Version} · 请求 {r.DescriptorStatus} · 参数 {r.ParameterStatus}" +
+                $"\nNotify P50 / P95：{r.Gaps.P50Ms:F2} / {r.Gaps.P95Ms:F2}ms · 解析失败 {r.ParseFailures}" +
+                "\n" + OptimizationSummary + "\n" + (IsSleeping ? "休眠中；此槽位按地址独立监听唤醒" :
+                    InputSource.ConnectionDiagnosis.Title + "\n" + InputSource.ConnectionDiagnosis.Advice);
+        }
+    }
+
     public void RefreshFromSource()
     {
         ConnectedAddress = InputSource.ConnectedAddress;
-        Status = InputSource.Status;
+        if (InputSource.IsRunning) Status = InputSource.Status;
         OnPropertyChanged(nameof(Headline));
+        OnPropertyChanged(nameof(RateSummary));
+        OnPropertyChanged(nameof(OptimizationSummary));
+        OnPropertyChanged(nameof(DisplayStatus));
+        OnPropertyChanged(nameof(DiagnosticSummary));
     }
 
     public async Task StopAutoReconnectAsync()

@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,6 +15,7 @@ public sealed partial class Pro2BleInputSource
     // Only the main application enables this from its persisted setting. Existing
     // source-only experiments/CLI captures do not silently acquire a new workflow.
     public bool AutoOptimizeBleEnabled { get; set; }
+    public Func<IReadOnlyList<BlePeerRate>>? PeerRatesProvider { get; set; }
     private volatile string compatibilityOptimizationSummary = "";
     private bool adaptiveOptimizationRunAttempted;
     public string CompatibilityOptimizationSummary => compatibilityOptimizationSummary;
@@ -91,7 +94,10 @@ public sealed partial class Pro2BleInputSource
                     (cached?.Preset.ToString() ?? "none") + " cache_is_retest_hint_only=true");
                 win11ParameterRouteStatus = "AdaptiveBoundedPresets";
             }
-            var backend = new AdaptiveTrialBackend(SameConnection,
+            var peerBaseline = PeerRatesProvider?.Invoke() ?? Array.Empty<BlePeerRate>();
+            bool PeersHealthy() => BlePeerRateGuard.Healthy(peerBaseline, PeerRatesProvider?.Invoke() ?? Array.Empty<BlePeerRate>());
+            progress.Report("[BLE_PEER_GUARD] tracked_peers=" + System.Linq.Enumerable.Count(peerBaseline, p => p.Connected && p.Fresh) + " cached_only=true system_writes=false");
+            var backend = new AdaptiveTrialBackend(SameConnection, PeersHealthy,
                 async (phase, ct) =>
                 {
                     BleTrialMeasurement measured = await CaptureParameterTrialAsync("AUTO_" + phase, 10000, progress, ct);
@@ -127,6 +133,8 @@ public sealed partial class Pro2BleInputSource
                 ? "原连接测量无效，未进行参数测试；请查看系统与蓝牙信息。"
                 : result.Code == "win11_api_unavailable"
                 ? "系统参数请求 API 不可用，未进行预设测试；请查看系统与蓝牙信息。"
+                : result.Code.StartsWith("peer_rate_regression", StringComparison.Ordinal)
+                ? "其他手柄输入下降，已停止预设测试并尝试恢复原请求；本只 " + rate + "，请核对各手柄速率。"
                 : high ? "已选用 " + selected + " · 实测 " + rate + " · 高速复核通过，继续监测"
                 : result.Trials.Count == 0 ? "已测原连接 · 当前 " + rate + "；未进行参数预设测试"
                 : System.Linq.Enumerable.All(result.Trials, trial => !trial.RequestAccepted)
@@ -190,7 +198,9 @@ public sealed partial class Pro2BleInputSource
         return new(Environment.OSVersion.Version.Build, BleCompatibilityInspector.Current.Facts.StackSha256,
             adapter.PnpDeviceId, adapter.WinRtDeviceId + "|" + environment.Adapters[0].Address,
             adapter.DriverProvider, adapter.DriverVersion, adapter.DriverDate,
-            "ble-adaptive-v1|os=" + environment.System.Version + "|fw=" + (FirmwareInfo?.ControllerVersion ?? "unknown"));
+            "ble-adaptive-v2|os=" + environment.System.Version + "|fw=" + (FirmwareInfo?.ControllerVersion ?? "unknown") +
+            "|controller=" + (device == null ? "unknown" : FormatAddress(device.BluetoothAddress)) +
+            "|peer_count=" + (PeerRatesProvider?.Invoke().Count(p => p.Connected) ?? 0));
     }
 
     private bool SubmitAdaptiveConnectionPreset(BluetoothLEDevice owner, BleAdaptivePresetCandidate? candidate,
@@ -309,12 +319,13 @@ public sealed partial class Pro2BleInputSource
         else ConnectionStateChanged?.Invoke();
     }
 
-    private sealed class AdaptiveTrialBackend(Func<bool> connected,
+    private sealed class AdaptiveTrialBackend(Func<bool> connected, Func<bool> peersHealthy,
         Func<string, CancellationToken, Task<BleAdaptiveMeasurement>> measure,
         Func<BleAdaptivePresetCandidate?, CancellationToken, Task<bool>> request, Action release, Action<string> report)
-        : IBleAdaptiveTrialBackend
+        : IBleAdaptiveTrialBackend, IBleAdaptivePeerGuard
     {
         public bool Connected => connected();
+        public bool PeersHealthy => peersHealthy();
         public Task<BleAdaptiveMeasurement> MeasureAsync(string phase, CancellationToken token) => measure(phase, token);
         public Task<bool> RequestAsync(BleAdaptivePresetCandidate? candidate, CancellationToken token) => request(candidate, token);
         public void ReleaseTrialRequest() => release();

@@ -19,6 +19,7 @@ public sealed partial class MainViewModel
         public string WakeReadyAddress = "";
         public long LastPairingAttemptTicks;
         public string LastPairingAttemptAddress = "";
+        public long LastSleepAttemptTicks;
     }
 
     public IReadOnlyList<int> AutoSleepMinuteOptions => AutoSleepMinuteChoices;
@@ -70,6 +71,11 @@ public sealed partial class MainViewModel
         AutoSleepSlotState state = AutoSleepState(slot.Index);
         state.WakeReadyAddress = "";
         state.LastPairingAttemptTicks = 0;
+        state.LastSleepAttemptTicks = 0;
+        state.Sleeping = false;
+        slot.IsSleeping = false;
+        slot.SleepStatus = AutoSleepEnabled ? "自动休眠：每只手柄独立计时" : "";
+        OnPropertyChanged(nameof(IsPrimarySleeping));
     }
 
     /// <summary>
@@ -81,15 +87,25 @@ public sealed partial class MainViewModel
         Pro2BleInputSource source,
         CancellationToken cancellationToken)
     {
-        if (!AutoSleepEnabled || !source.IsRunning) return false;
+        if (!AutoSleepEnabled || !source.IsRunning ||
+            source.UserIdleFor < TimeSpan.FromMinutes(AutoSleepMinutes)) return false;
         string address = source.ConnectedAddress;
         if (string.IsNullOrWhiteSpace(address)) return false;
         AutoSleepSlotState state = AutoSleepState(slot.Index);
         var progress = new DirectProgress<string>(line => AppendLog("[PRO2_SLOT " + slot.Index + "] " + line));
 
-        // The controller only emits a wake advertisement for hosts in its pairing list.
-        if (!string.Equals(state.WakeReadyAddress, address, StringComparison.OrdinalIgnoreCase))
+        if (state.LastSleepAttemptTicks != 0 &&
+            Stopwatch.GetElapsedTime(state.LastSleepAttemptTicks) < WakePairingRetryInterval) return false;
+        int minutes = AutoSleepMinutes;
+        bool Eligible() => AutoSleepEnabled && slot.Enabled && source.IsRunning &&
+            !source.IsCompatibilityOptimizationRunning &&
+            string.Equals(source.ConnectedAddress, address, StringComparison.OrdinalIgnoreCase) &&
+            source.UserIdleFor >= TimeSpan.FromMinutes(AutoSleepMinutes);
+
+        Pro2SleepResult result = await Pro2SleepSafety.EnterAsync(bleOperationGate, Eligible, async () =>
         {
+            // Prepare wake only when actually idle, serialized with all slot connection/tuning work.
+            if (string.Equals(state.WakeReadyAddress, address, StringComparison.OrdinalIgnoreCase)) return true;
             if (state.LastPairingAttemptTicks != 0 &&
                 string.Equals(state.LastPairingAttemptAddress, address, StringComparison.OrdinalIgnoreCase) &&
                 Stopwatch.GetElapsedTime(state.LastPairingAttemptTicks) < WakePairingRetryInterval)
@@ -107,36 +123,40 @@ public sealed partial class MainViewModel
             }
             else
             {
+                slot.SleepStatus = "自动休眠暂缓：" + source.WakePairingAdvice;
                 return false;
             }
-        }
-
-        TimeSpan idle = source.UserIdleFor;
-        int minutes = AutoSleepMinutes;
-        if (idle < TimeSpan.FromMinutes(minutes)) return false;
-
-        AppendLog("[PRO2_SLEEP] slot=" + slot.Index + " address=" + address +
-                  " idle_s=" + idle.TotalSeconds.ToString("F0") + " threshold_min=" + minutes + " entering_sleep=true");
-        await bleOperationGate.WaitAsync(cancellationToken);
-        try
+            return true;
+        }, async () =>
         {
-            bool dropped = await source.SendSleepCommandAsync(progress, cancellationToken);
-            await source.StopAsync();
-            // The sleep-induced disconnect is expected; do not report it as an outage.
-            while (source.TryConsumeDisconnectSignal(out _)) { }
+            minutes = AutoSleepMinutes;
+            state.LastSleepAttemptTicks = Stopwatch.GetTimestamp();
+            AppendLog("[PRO2_SLEEP] slot=" + slot.Index + " address=" + address +
+                " idle_s=" + source.UserIdleFor.TotalSeconds.ToString("F0") + " entering_sleep=true");
+            return await source.SendSleepCommandAsync(progress, cancellationToken);
+        }, async () =>
+        {
+            // Commit intent before cleanup, so cancellation cannot lose the sleeping address.
             state.Sleeping = true;
             state.SleepingAddress = address;
             state.SleepingSinceUtc = DateTime.UtcNow;
-            AppendLog("[PRO2_SLEEP] slot=" + slot.Index + " sleeping=true link_dropped=" + dropped);
-        }
-        finally
+            slot.IsSleeping = true;
+            await source.StopAsync();
+            // The sleep-induced disconnect is expected; do not report it as an outage.
+            while (source.TryConsumeDisconnectSignal(out _)) { }
+            AppendLog("[PRO2_SLEEP] slot=" + slot.Index + " sleeping=true link_dropped=true peers_preserved=true");
+        }, cancellationToken);
+        if (result != Pro2SleepResult.Sleeping)
         {
-            bleOperationGate.Release();
+            if (result == Pro2SleepResult.CommandFailed) slot.SleepStatus = "休眠未确认，保留连接，稍后重试";
+            AppendLog("[PRO2_SLEEP] slot=" + slot.Index + " result=" + result + " forced_stop=false");
+            return false;
         }
 
         string text = "已自动休眠（" + minutes + " 分钟无操作）· 按手柄任意键唤醒";
         slot.RefreshFromSource();
         slot.Status = text;
+        slot.SleepStatus = "已休眠 · 按任意键唤醒；其他手柄不受影响";
         if (slot.Index == 1)
         {
             InputStatus = "Pro2 " + text + "。虚拟手柄保持在线。";
@@ -167,52 +187,59 @@ public sealed partial class MainViewModel
         catch
         {
             state.Sleeping = false;
+            slot.IsSleeping = false;
+            AppendLog("[PRO2_WAKE] slot=" + slot.Index + " invalid_saved_address=true");
             return;
         }
 
-        var woke = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Passive };
-        watcher.Received += (_, args) =>
+        await Pro2SleepSafety.WaitForWakeAsync(async token =>
         {
-            if (args.BluetoothAddress != target) return;
-            foreach (BluetoothLEManufacturerData data in args.Advertisement.ManufacturerData)
-            {
-                if (data.CompanyId == 0x0553)
-                {
-                    woke.TrySetResult("advertisement rssi=" + args.RawSignalStrengthInDBm);
-                    return;
-                }
-            }
+        var woke = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Passive };
+        Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs> onReceived = (_, args) =>
+        {
+            if (Pro2SleepSafety.IsWakeAdvertisement(target, args.BluetoothAddress,
+                args.Advertisement.ManufacturerData.Any(data => data.CompanyId == 0x0553)))
+                woke.TrySetResult(true);
         };
-        watcher.Stopped += (_, args) =>
+        Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementWatcherStoppedEventArgs> onStopped = (_, args) =>
         {
             if (args.Error != Windows.Devices.Bluetooth.BluetoothError.Success)
-                woke.TrySetResult("watcher_stopped error=" + args.Error);
+                woke.TrySetException(new InvalidOperationException("watcher_stopped=" + args.Error));
+            else woke.TrySetResult(false);
         };
+        watcher.Received += onReceived;
+        watcher.Stopped += onStopped;
 
         try
         {
             using CancellationTokenRegistration registration =
-                cancellationToken.Register(() => woke.TrySetCanceled(cancellationToken));
+                token.Register(() => woke.TrySetCanceled(token));
             watcher.Start();
             AppendLog("[PRO2_WAKE] slot=" + slot.Index + " waiting address=" + state.SleepingAddress +
                       " watcher=" + watcher.Status + " scan=passive");
-            string reason = await woke.Task;
-            AppendLog("[PRO2_WAKE] slot=" + slot.Index + " wake=" + reason +
-                      " slept_s=" + (DateTime.UtcNow - state.SleepingSinceUtc).TotalSeconds.ToString("F0"));
-            slot.Status = "检测到手柄唤醒，正在重连…";
-            if (slot.Index == 1)
-            {
-                InputStatus = "检测到 Pro2 按键唤醒，正在自动重连…";
-            }
+            return await woke.Task;
         }
         finally
         {
+            watcher.Received -= onReceived;
+            watcher.Stopped -= onStopped;
             try { watcher.Stop(); } catch { }
-            state.Sleeping = false;
-            UpdateMultiSlotInputStatus();
-            RaiseConnectionStateChanged();
-            OnPropertyChanged(nameof(IsPrimarySleeping));
         }
+        }, async (error, token) =>
+        {
+            AppendLog("[PRO2_WAKE] slot=" + slot.Index + " listener_retry=true sleeping_preserved=true error=" + error?.Message);
+            slot.Status = "休眠中 · 蓝牙监听暂不可用，正在重试";
+            slot.SleepStatus = slot.Status;
+            await Task.Delay(2000, token);
+        }, cancellationToken);
+        state.Sleeping = false;
+        slot.IsSleeping = false;
+        slot.Status = "检测到手柄唤醒，正在重连…";
+        slot.SleepStatus = slot.Status;
+        AppendLog("[PRO2_WAKE] slot=" + slot.Index + " confirmed_advertisement=true address=" + state.SleepingAddress);
+        UpdateMultiSlotInputStatus();
+        RaiseConnectionStateChanged();
+        OnPropertyChanged(nameof(IsPrimarySleeping));
     }
 }

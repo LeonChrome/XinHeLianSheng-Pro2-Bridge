@@ -216,6 +216,7 @@ public static class SystemBluetoothDiagnostics
             text.AppendLine();
         }
         text.AppendLine("蓝牙协议版本（如 5.0 / 5.3）：未获取，不能由驱动版本或 VID/PID 推断。");
+        text.AppendLine("驱动是否最新：未核对厂商更新目录；不会仅凭驱动日期判定过旧。以 Windows 实际提供的 BLE 中央能力和连接结果判断可用性。");
         text.AppendLine("系统默认适配器不等于已确认的每条连接归属；设备能力也不保证 133Hz。");
         if (!string.IsNullOrWhiteSpace(snapshot.Warning)) text.AppendLine("读取提示：" + Value(snapshot.Warning));
         return text.ToString();

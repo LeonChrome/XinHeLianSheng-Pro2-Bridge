@@ -126,7 +126,12 @@ public sealed partial class Pro2BleInputSource
                 long operationEnd;
                 try
                 {
-                    var captured = await TapRuntimeBatteryAsync(primary, SameSession, progress, token);
+                    // Pairing/sleep and the battery command share a physical command channel.
+                    // Never inject a battery command into the wake handshake of this slot.
+                    await wakeCommandGate.WaitAsync(token);
+                    (Pro2InitialBatterySnapshotResult Report, long ReceivedTicks) captured;
+                    try { captured = await TapRuntimeBatteryAsync(primary, SameSession, progress, token); }
+                    finally { wakeCommandGate.Release(); }
                     report = captured.Report;
                     receivedTicks = captured.ReceivedTicks;
                     operationEnd = Stopwatch.GetTimestamp();

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 
 	"github.com/Alia5/VIIPER/device"
 	"github.com/Alia5/VIIPER/internal/server/api"
@@ -19,8 +20,11 @@ func init() {
 type handler struct{}
 
 var serials = map[string]struct{}{}
+var serialsMu sync.Mutex
 
 func (h *handler) CreateDevice(o *device.CreateOptions) (usb.Device, error) {
+	serialsMu.Lock()
+	defer serialsMu.Unlock()
 	if o == nil {
 		o = &device.CreateOptions{}
 	}
@@ -76,7 +80,9 @@ func (h *handler) StreamHandler() api.StreamHandlerFunc {
 			if serial == "" {
 				return
 			}
+			serialsMu.Lock()
 			delete(serials, serial)
+			serialsMu.Unlock()
 			slog.Debug("ns2pro disconnected, serial released", "serial", serial)
 		}()
 

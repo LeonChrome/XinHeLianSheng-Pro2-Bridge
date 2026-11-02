@@ -95,6 +95,7 @@ public sealed partial class MainViewModel
 
     private void QueueLowRateAutomaticOptimization()
     {
+        if (pro2Slots[0].AutoReconnectEnabled) return; // Per-slot loop owns serialized optimization.
         if (previewOnly || shuttingDown || !AutoOptimizeBle || Busy || !HasLowRateWarning ||
             !inputSource.CanOptimizeConnectionCompatibility ||
             Interlocked.Exchange(ref bleAutoOptimizationQueued, 1) != 0) return;

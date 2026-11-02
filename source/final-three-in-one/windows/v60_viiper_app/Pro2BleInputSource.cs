@@ -799,6 +799,7 @@ public sealed partial class Pro2BleInputSource :
         }
 
         long connectionAttemptStarted = Stopwatch.GetTimestamp();
+        lock (connectionEvidenceGate) connectionEvidence = new();
         try
         {
         cancellationToken.ThrowIfCancellationRequested();
@@ -831,6 +832,7 @@ public sealed partial class Pro2BleInputSource :
         List<BleCandidate> candidates;
         if (manualCandidate != null)
         {
+            await ReportBluetoothAdapterDiagnosticsAsync(progress);
             // Exactly one selected address/type; do not rescan or fall through to another controller.
             candidates = [new(manualCandidate.Address, manualCandidate.AddressType, manualCandidate.Name,
                 manualCandidate.Rssi, manualCandidate.NintendoManufacturer, manualCandidate.Score)
@@ -860,7 +862,8 @@ public sealed partial class Pro2BleInputSource :
         }
         if (candidates.Count == 0)
         {
-            Status = "没有扫描到 Pro2 BLE 候选。请长按配对/唤醒手柄，确认未连接到主机、手机或 ESP32。";
+            RecordConnectionFailure("no_candidate");
+            Status = "未发现 Pro2。请确认 PRO2 模式并开启配对广播；原因见首页连接诊断。";
             progress.Report("[PRO2_BLE] scan none");
             progress.Report("[PRO2_CONNECT_TIMING] stage=complete result=no_candidate total_ms=" +
                 Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0"));
@@ -891,6 +894,8 @@ public sealed partial class Pro2BleInputSource :
             .ToList();
 
         int skippedNonPreferred = 0;
+        int skippedReserved = 0;
+        int attemptedCandidates = 0;
         foreach (var item in orderedCandidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -903,11 +908,13 @@ public sealed partial class Pro2BleInputSource :
             }
             if (excludedAddresses.Contains(candidateAddress))
             {
+                skippedReserved++;
                 progress.Report("[PRO2_BLE] skip occupied candidate " + DescribeCandidate(candidate));
                 continue;
             }
 
             progress.Report("[PRO2_BLE] trying " + DescribeCandidate(candidate));
+            attemptedCandidates++;
             long candidateStarted = Stopwatch.GetTimestamp();
             try
             {
@@ -951,6 +958,8 @@ public sealed partial class Pro2BleInputSource :
             }
             catch (Exception ex)
             {
+                RecordConnectionFailure(ex is UnauthorizedAccessException ? "AccessDenied" : "exception",
+                    ex.GetType().Name + " 0x" + ex.HResult.ToString("X8") + " " + ex.Message);
                 progress.Report("[PRO2_BLE] connect failed " + DescribeCandidate(candidate) + " / " + ex.Message);
             }
 
@@ -958,6 +967,8 @@ public sealed partial class Pro2BleInputSource :
                 Stopwatch.GetElapsedTime(candidateStarted).TotalMilliseconds.ToString("F0") +
                 " total_ms=" + Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0") +
                 " address=" + candidateAddress);
+            UpdateConnectionEvidence(e => e with { CandidateTrace = e.CandidateTrace +
+                $"目标 {candidateAddress} · {e.Stage} · {e.Outcome} · {e.Error}\n" });
             await CloseCurrentAsync("候选 BLE 未确认 live，继续尝试下一项。");
         }
 
@@ -965,16 +976,27 @@ public sealed partial class Pro2BleInputSource :
         {
             progress.Report("[PRO2_BLE] skipped non-preferred candidates=" + skippedNonPreferred);
         }
+        UpdateConnectionEvidence(e => e with { Excluded = skippedReserved, NonPreferred = skippedNonPreferred });
+        if (attemptedCandidates == 0)
+            RecordConnectionFailure(skippedReserved > 0 ? "reserved" : "saved_not_seen");
         Status = onlyPreferredAddresses && preferred.Count > 0
             ? "未连接到上次保存的 Pro2 BLE 地址。请唤醒上次那只手柄；如需换新手柄，请手动点击连接。"
             : string.IsNullOrWhiteSpace(lastPerformanceFailure)
-                ? "未能连接到真实 Pro2 BLE。请确保手柄处于可连接状态，并且没有被 ESP32、Switch、手机或旧进程占用。"
+                ? "Pro2 连接未完成；失败阶段与系统返回状态见首页连接诊断。"
                 : lastPerformanceFailure;
         progress.Report("[PRO2_CONNECT_TIMING] stage=complete result=no_live_candidate total_ms=" +
             Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0"));
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            RecordConnectionFailure(ex is UnauthorizedAccessException ? "AccessDenied" : "exception",
+                ex.GetType().Name + " 0x" + ex.HResult.ToString("X8") + " " + ex.Message);
+            throw;
+        }
         finally
         {
+            FinishConnectionEvidence(cancellationToken.IsCancellationRequested, progress);
             progress.Report("[PRO2_CONNECT_TIMING] stage=finished result=" + (IsRunning ? "live" : "not_live") +
                 " cancelled=" + cancellationToken.IsCancellationRequested +
                 " total_ms=" + Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0"));
@@ -1200,12 +1222,19 @@ public sealed partial class Pro2BleInputSource :
     {
         ResetLiveState();
         BeginProtocolAudit(progress);
+        ConnectionStage("打开设备", FormatAddress(candidate.Address));
         SetConnectionPhase(Pro2ConnectionPhase.Connecting);
-        BluetoothLEDevice? opened = candidate.IsManualSelection
-            ? await BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType).AsTask(cancellationToken)
-            : await BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType);
+        BluetoothLEDevice? opened;
+        using (var openDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            openDeadline.CancelAfter(TimeSpan.FromSeconds(10));
+            try { opened = await BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType).AsTask(openDeadline.Token); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { RecordConnectionFailure("timeout", "device open deadline"); return false; }
+        }
         if (opened == null)
         {
+            RecordConnectionFailure("device_null", "FromBluetoothAddressAsync=null");
             progress.Report("[PRO2_BLE] FromBluetoothAddressAsync returned null.");
             return false;
         }
@@ -1227,24 +1256,24 @@ public sealed partial class Pro2BleInputSource :
             TryRequestWindows11ThroughputPreference(opened, "initial", progress);
         }
 
+        ConnectionStage("GATT 服务发现");
         GattDeviceServicesResult services;
-        if (candidate.IsKnownAddressProbe)
+        using (var discoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            using var discoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            discoveryDeadline.CancelAfter(TimeSpan.FromSeconds(10));
-            services = await opened.GetGattServicesAsync(BluetoothCacheMode.Uncached).AsTask(discoveryDeadline.Token);
-        }
-        else
-        {
-            services = await opened.GetGattServicesAsync(BluetoothCacheMode.Uncached);
+            discoveryDeadline.CancelAfter(TimeSpan.FromSeconds(candidate.IsKnownAddressProbe ? 10 : 20));
+            try { services = await opened.GetGattServicesAsync(BluetoothCacheMode.Uncached).AsTask(discoveryDeadline.Token); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { RecordConnectionFailure("timeout", "GATT service discovery deadline"); return false; }
         }
         if (services.Status != GattCommunicationStatus.Success)
         {
+            RecordConnectionFailure(services.Status.ToString(), "ATT=" + (services.ProtocolError?.ToString("X2") ?? "none"));
             progress.Report("[PRO2_BLE] service discovery failed status=" + services.Status);
             return false;
         }
 
         ownedGattServices.AddRange(services.Services);
+        ConnectionStage("GATT 特征发现");
         await DiscoverGattChannelsAsync(services.Services, progress,
             candidate.IsManualSelection ? cancellationToken : CancellationToken.None);
         if (candidate.IsKnownAddressProbe)
@@ -1254,6 +1283,7 @@ public sealed partial class Pro2BleInputSource :
             if (!BleDiagnosticTargetResolver.CanInitializeUnadvertisedTarget(exactPro2))
             {
                 progress.Report("[BLE_KNOWN_PROBE] rejected: exact Pro2 cmd/ack/FD2 UUIDs not verified; init_commands_sent=false");
+                RecordConnectionFailure("channels_missing", "exact UUID verification failed");
                 return false;
             }
             progress.Report("[BLE_KNOWN_PROBE] identity_verified=true via exact Pro2 cmd/ack/FD2 UUIDs; starting normal initialization.");
@@ -1274,6 +1304,8 @@ public sealed partial class Pro2BleInputSource :
         if (commandCharacteristic == null || ackCharacteristic == null ||
             (fd2Characteristic == null && legacyCharacteristic == null))
         {
+            RecordConnectionFailure("channels_missing", "cmd=" + (commandCharacteristic != null) + " ack=" + (ackCharacteristic != null) +
+                " fd2=" + (fd2Characteristic != null));
             progress.Report("[PRO2_BLE] required GATT chars missing cmd=" + (commandCharacteristic != null) +
                             " ack=" + (ackCharacteristic != null) +
                             " fd2=" + (fd2Characteristic != null) +
@@ -1288,6 +1320,7 @@ public sealed partial class Pro2BleInputSource :
         await ApplyLegacyServiceBeforeInitializationAsync(progress, cancellationToken);
 #endif
         ackCharacteristic.ValueChanged += OnAckValueChanged;
+        ConnectionStage("ACK 通知订阅");
 
         if (!await SubscribeAsync(ackCharacteristic, "ack", progress))
         {
@@ -1296,6 +1329,7 @@ public sealed partial class Pro2BleInputSource :
 
         for (int i = 0; i < InitCommands.Length; i++)
         {
+            ConnectionStage("初始化命令 " + i);
             byte[] initCommand = InitCommands[i];
             if (!BleInitAuditPolicy.ShouldSend(initCommand, sessionSkipUsbInitialization))
             {
@@ -1313,6 +1347,7 @@ public sealed partial class Pro2BleInputSource :
                 cancellationToken);
             if (write != GattCommunicationStatus.Success)
             {
+                RecordConnectionFailure(write.ToString(), "init=" + i);
                 progress.Report("[PRO2_BLE] init write failed index=" + i + " status=" + write);
                 return false;
             }
@@ -1360,11 +1395,13 @@ public sealed partial class Pro2BleInputSource :
         ackTcs = null;
         if (fd2Characteristic == null)
         {
+            RecordConnectionFailure("channels_missing", "FD2 absent");
             progress.Report("[PRO2_FD2_INPUT] required FD2 characteristic is missing; refusing a controls-only connection without IMU.");
             return false;
         }
 
         fd2Characteristic.ValueChanged += OnNotifyValueChanged;
+        ConnectionStage("FD2 通知订阅");
         if (!await SubscribeAsync(fd2Characteristic, "fd2-exclusive", progress))
         {
             fd2Characteristic.ValueChanged -= OnNotifyValueChanged;
@@ -1372,6 +1409,7 @@ public sealed partial class Pro2BleInputSource :
         }
 
         progress.Report("[PRO2_FD2_INPUT] exclusive FD2 enabled; waiting for a parsed report with live IMU.");
+        ConnectionStage("FD2 输入验收");
         if (await WaitForFd2MotionAsync(TimeSpan.FromSeconds(6), cancellationToken))
         {
             SetConnectionPhase(Pro2ConnectionPhase.Measuring);
@@ -1409,6 +1447,7 @@ public sealed partial class Pro2BleInputSource :
             return true;
         }
 
+        RecordConnectionFailure("notify_timeout", "raw=" + rawNotifyCount + " parsed=" + fd2InputParsedCount);
         progress.Report("[PRO2_FD2_INPUT] no parsed FD2 IMU within timeout; connection rejected instead of exposing a gyro-less virtual controller. raw_notify=" + rawNotifyCount +
                         " parse_fail=" + parseFailCount +
                         " last=" + lastNotifySummary);
@@ -2010,6 +2049,9 @@ public sealed partial class Pro2BleInputSource :
         catch (Exception ex)
         {
             progress.Report("[PRO2_BLE] " + scanLabel + " scan start failed: " + ex.GetType().Name + ": " + ex.Message);
+            UpdateConnectionEvidence(e => e with { ScanError = ex.GetType().Name + " 0x" + ex.HResult.ToString("X8"),
+                ScanModes = e.ScanModes + scanLabel + " ", Error = ex.Message,
+                ScanTrace = e.ScanTrace + scanLabel + " start_failed=" + ex.GetType().Name + " 0x" + ex.HResult.ToString("X8") + "\n" });
             localWatcher.Received -= receivedHandler;
             localWatcher.Stopped -= stoppedHandler;
             if (ReferenceEquals(watcher, localWatcher)) watcher = null;
@@ -2059,6 +2101,9 @@ public sealed partial class Pro2BleInputSource :
                 .OrderByDescending(c => c.Score)
                 .ThenByDescending(c => c.Rssi)
                 .ToList();
+            UpdateConnectionEvidence(e => e with { Advertisements = e.Advertisements + rawAdvertisementCount,
+                Candidates = e.Candidates + result.Count, ScanError = stopError.ToString(), ScanModes = e.ScanModes + scanLabel + " ",
+                ScanTrace = e.ScanTrace + scanLabel + " status=" + stopError + " ads=" + rawAdvertisementCount + " candidates=" + result.Count + "\n" });
             progress.Report("[PRO2_BLE] " + scanLabel + " scan result count=" + result.Count +
                             " stop_error=" + stopError);
             progress.Report("[PRO2_BLE_DIAG] " + scanLabel +
@@ -2097,7 +2142,7 @@ public sealed partial class Pro2BleInputSource :
         }
     }
 
-    private static async Task ReportBluetoothAdapterDiagnosticsAsync(IProgress<string> progress)
+    private async Task ReportBluetoothAdapterDiagnosticsAsync(IProgress<string> progress)
     {
         try
         {
@@ -2137,6 +2182,7 @@ public sealed partial class Pro2BleInputSource :
                     progress.Report("[BLE_RADIO] default name=\"" + radio.Name +
                                     "\" state=" + radio.State +
                                     " kind=" + radio.Kind);
+                    UpdateConnectionEvidence(e => e with { DefaultRadioState = radio.State.ToString() });
                     if (radio.State != RadioState.On)
                     {
                         progress.Report("[BLE_RADIO] warning: Bluetooth radio is not On. Turn on Bluetooth in Windows settings.");
@@ -2156,17 +2202,19 @@ public sealed partial class Pro2BleInputSource :
         }
     }
 
-    private static async Task ReportAllBluetoothAdaptersAsync(IProgress<string> progress)
+    private async Task ReportAllBluetoothAdaptersAsync(IProgress<string> progress)
     {
         try
         {
             string selector = BluetoothAdapter.GetDeviceSelector();
             DeviceInformationCollection devices = await DeviceInformation.FindAllAsync(selector);
             int count = 0;
+            int capable = 0;
 
             foreach (DeviceInformation device in devices)
             {
                 BluetoothAdapter? adapter = await BluetoothAdapter.FromIdAsync(device.Id);
+                if (adapter?.IsLowEnergySupported == true && adapter.IsCentralRoleSupported) capable++;
                 if (adapter == null)
                 {
                     continue;
@@ -2182,6 +2230,7 @@ public sealed partial class Pro2BleInputSource :
                                 " device_id=\"" + SanitizeDeviceId(adapter.DeviceId) + "\"");
             }
 
+            UpdateConnectionEvidence(e => e with { Adapters = count, CapableAdapters = capable });
             progress.Report("[BLE_ADAPTER_LIST] total=" + count +
                             " dual_adapter_candidate=" + (count >= 2));
         }
@@ -2315,6 +2364,7 @@ public sealed partial class Pro2BleInputSource :
             await Task.Delay(350 * attempt);
         }
 
+        RecordConnectionFailure(status.ToString(), "CCCD Notify " + label + " attempts=3");
         return false;
     }
 

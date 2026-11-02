@@ -246,6 +246,20 @@
                                 <DockPanel Margin="0,6,0,0" ToolTip="仅显示实体耳机孔的插入状态，音频传输尚未启用"><TextBlock Text="耳机孔" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/><TextBlock Text="{Binding CompactHeadset}" FontWeight="SemiBold"/></DockPanel>
                             </StackPanel>
                         </Grid>
+                        <Border x:Name="ConnectionFailureNotice" Visibility="{Binding HasConnectionWarning, Converter={StaticResource BoolVisibility}}"
+                                Background="#FFF9ED" BorderBrush="#E9D7AF" BorderThickness="1" CornerRadius="12" Padding="10" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="{Binding ConnectionWarningTitle}" Foreground="#765C24" FontSize="13" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding ConnectionWarningAdvice}" Foreground="#806C43" FontSize="12" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                                <Expander Header="连接依据与系统信息" FontSize="12" Foreground="#806C43" Margin="0,6,0,0">
+                                    <StackPanel>
+                                        <TextBox Text="{Binding ConnectionWarningEvidence, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                                                 Background="Transparent" BorderThickness="0" MaxHeight="170" VerticalScrollBarVisibility="Auto"/>
+                                        <Button Content="系统与蓝牙信息…" Click="EnvironmentInfo_Click" HorizontalAlignment="Left" Padding="10,5" Margin="0,6,0,0"/>
+                                    </StackPanel>
+                                </Expander>
+                            </StackPanel>
+                        </Border>
                         <Border x:Name="LowRateNotice" Visibility="{Binding HasLowRateWarning, Converter={StaticResource BoolVisibility}}"
                                 Background="#FFF9ED" BorderBrush="#E9D7AF" BorderThickness="1" CornerRadius="12" Padding="10" Margin="0,0,0,14">
                             <StackPanel>
@@ -299,6 +313,7 @@
                             <Button Content="{Binding CompactConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding CompactCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
                             <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}"/>
                             <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding CompactCanStop}"/>
+                            <Button x:Name="MultiControllerButton" Content="多手柄…" Click="MultiController_Click" ToolTip="添加第二至第四只 Pro2，逐只查看速率与重连状态"/>
                             <Button x:Name="Win10OneClickButton" Content="一键优化到 133Hz · Win10" Click="OneClickWin10Optimize_Click" Style="{StaticResource Primary}"
                                     IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10OneClick, Converter={StaticResource BoolVisibility}}"
                                     ToolTip="{Binding Win10OneClickHint}"/>

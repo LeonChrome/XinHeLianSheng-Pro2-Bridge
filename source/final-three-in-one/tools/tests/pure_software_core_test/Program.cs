@@ -26,6 +26,12 @@ internal static class Program
         try
         {
             StartupRenderingRegressionTests.Run(Check);
+            if (args.Contains("--multi-only"))
+            {
+                MultiControllerRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
+                Console.WriteLine("PASS: " + checks + " multi-controller assertions; loopback only.");
+                return 0;
+            }
             if (args.Contains("--touch-only"))
             {
                 Ps5TouchRegressionTests.Run(Check, output);
@@ -73,6 +79,7 @@ internal static class Program
             BleDiagnosticValidityRegressionTests.Run(Check, output);
             BleProtocolAuditRegressionTests.Run(Check);
             SleepWakeRegressionTests.Run(Check);
+            SleepConnectionSafetyRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             BluetoothRestartRegressionTests.Run(Check);
             CompatibleRateRegressionTests.Run(Check);
             BleRateStabilityRegressionTests.Run(Check);
@@ -97,6 +104,7 @@ internal static class Program
             RearButtonRegressionTests.Run(Check, output);
             Ps5TouchRegressionTests.Run(Check, output);
             RearButtonSafetyRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
+            MultiControllerRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
             CButtonDeviceRegressionTests.Run(Check);
             TestQueue();
             TestWin10StackPlan();
@@ -146,9 +154,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.6.0.0", "v2.6 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.7.1.0", "v2.7.1 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.6.0-touchpad-glyphs", "v2.6 release metadata");
+            "2.7.1-sleep-connection-safety", "v2.7.1 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1239,6 +1247,39 @@ internal static class Program
             Check(scrolls.All(s => s.ComputedVerticalScrollBarVisibility != Visibility.Visible), "no default vertical scroll " + tab);
         }
         vm.RearEditingMode = "PS5"; vm.ResetRearButtonsCommand.Execute(null); vm.SelectedRearIndex = 2;
+        Check(window.FindName("MultiControllerButton") is Button, "multi-controller entry is on home");
+        var multiWindow = new MultiControllerWindow(vm) { Owner = window };
+        multiWindow.Show(); Pump(multiWindow); Save(multiWindow, "ui-multi-controller.png");
+        Check(Descendants<Button>(multiWindow).Count(b => b.Content?.ToString() == "连接") == 4,
+            "four independent connect controls are visible");
+        Check(Descendants<Button>(multiWindow).Where(b => b.Content?.ToString() == "连接")
+            .Select(b => b.CommandParameter).OfType<Pro2ControllerSlot>().Select(s => s.Index).SequenceEqual(new[] {1,2,3,4}),
+            "each visible connect button targets its own real slot");
+        Check(Descendants<Button>(multiWindow).Count(b => b.Content?.ToString() == "移除" && b.IsVisible) == 3,
+            "extra slot removal keeps primary controller separate");
+        var secondSlot = vm.Pro2Slots[1];
+        secondSlot.IsSleeping = true;
+        secondSlot.Status = "已自动休眠 · 按任意键唤醒";
+        secondSlot.SleepStatus = "已休眠 · 按任意键唤醒；其他手柄不受影响";
+        Pump(multiWindow); Save(multiWindow, "ui-multi-sleep.png");
+        Check(secondSlot.RateSummary.Contains("已休眠") && secondSlot.DisplayStatus.Contains("已自动休眠"),
+            "sleeping slot is not mislabeled as disconnected");
+        Check(vm.MultiControllerSummary.Contains("休眠 1"), "sleep count updates immediately per slot");
+        secondSlot.IsSleeping = false; secondSlot.SleepStatus = "";
+        multiWindow.Close();
+        var evidenceField = typeof(Pro2BleInputSource).GetField("connectionEvidence", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var previousEvidence = evidenceField.GetValue(source);
+        evidenceField.SetValue(source, new BleConnectionAttemptEvidence { Outcome = "Unreachable", Stage = "GATT 服务发现",
+            Adapters = 1, CapableAdapters = 1, Advertisements = 40, Candidates = 1, DefaultRadioState = "On", Error = "ATT=none" });
+        typeof(MainViewModel).GetMethod("RefreshCompactPresentation", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(vm, null);
+        tabs.SelectedIndex = 0; Pump(window); Save(window, "ui-home-connection-failure.png");
+        Check(vm.HasConnectionWarning && vm.ConnectionWarningTitle.Contains("服务不可达") &&
+            window.FindName("ConnectionFailureNotice") is Border { Visibility: Visibility.Visible },
+            "home displays structured connection failure and evidence");
+        Check(vm.EnvironmentReportText.Contains("Unreachable") && vm.EnvironmentReportText.Contains("GATT 服务发现"),
+            "system information includes cached connection failure");
+        evidenceField.SetValue(source, previousEvidence);
+        typeof(MainViewModel).GetMethod("RefreshCompactPresentation", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(vm, null);
         var touchEditor = vm.SelectedRearEditor; touchEditor.Enabled = true;
         touchEditor.Action = "单次按键"; touchEditor.TouchAction = Ps5TouchGesture.CircleClockwise;
         tabs.SelectedIndex = 2; Pump(window); Save(window, "ui-ps5-touch-c-key.png");

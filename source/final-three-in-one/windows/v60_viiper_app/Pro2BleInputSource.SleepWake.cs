@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Threading.Channels;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
+using Windows.Devices.Enumeration;
 using Windows.Foundation;
 
 namespace Y700Switch2V60Viiper;
@@ -27,6 +28,7 @@ public sealed partial class Pro2BleInputSource
     private readonly SemaphoreSlim wakeCommandGate = new(1, 1);
     private readonly Pro2UserActivityTracker activityTracker = new();
     private long lastUserActivityTicks;
+    public string WakePairingAdvice { get; private set; } = "";
 
     /// <summary>Time since the last real user input (buttons, sticks, triggers; IMU ignored).</summary>
     public TimeSpan UserIdleFor
@@ -63,17 +65,26 @@ public sealed partial class Pro2BleInputSource
         await wakeCommandGate.WaitAsync(cancellationToken);
         try
         {
+            WakePairingAdvice = "唤醒登记未确认，保持连接，稍后重试";
             if (!IsRunning || !transportConnected || commandCharacteristic == null || ackCharacteristic == null)
                 return Pro2WakePairingResult.NotConnected;
 
-            BluetoothAdapter? adapter = await BluetoothAdapter.GetDefaultAsync().AsTask(cancellationToken);
-            if (adapter == null)
+            var interfaces = await DeviceInformation.FindAllAsync(BluetoothAdapter.GetDeviceSelector()).AsTask(cancellationToken);
+            var localAddresses = new List<ulong>();
+            foreach (var info in interfaces)
             {
-                progress.Report("[PRO2_WAKE_PAIR] no default Bluetooth adapter.");
+                BluetoothAdapter? radio = await BluetoothAdapter.FromIdAsync(info.Id).AsTask(cancellationToken);
+                if (radio != null && radio.IsLowEnergySupported && radio.IsCentralRoleSupported)
+                    localAddresses.Add(radio.BluetoothAddress);
+            }
+            ulong host = Pro2SleepSafety.ResolveHost(device?.DeviceId ?? "", localAddresses);
+            if (host == 0)
+            {
+                WakePairingAdvice = "无法确认此连接使用的蓝牙适配器，保持连接";
+                progress.Report("[PRO2_WAKE_PAIR] skipped=local_radio_ownership_unknown adapters=" + localAddresses.Count +
+                    " pairing_written=false; keep_connected=true");
                 return Pro2WakePairingResult.Failed;
             }
-
-            ulong host = adapter.BluetoothAddress;
             byte[]? before = await ReadWakeFlashAsync(Pro2SleepWakeProtocol.PairingFlashAddress, 18, cancellationToken);
             if (before == null)
             {
@@ -140,8 +151,13 @@ public sealed partial class Pro2BleInputSource
             if (command == null || !transportConnected) return false;
             long started = Stopwatch.GetTimestamp();
             GattCommunicationStatus status = await WriteCharacteristicAsync(command, Pro2SleepWakeProtocol.SleepCommand(), cancellationToken);
+            if (status != GattCommunicationStatus.Success)
+            {
+                progress.Report("[PRO2_SLEEP] command=06/02 write=" + status + " sleep_confirmed=false");
+                return false;
+            }
             while (transportConnected && Stopwatch.GetElapsedTime(started).TotalMilliseconds < 2500)
-                await Task.Delay(25, cancellationToken);
+                await Task.Delay(25, CancellationToken.None); // Finish a command already accepted before cancelling the listener.
             bool dropped = !transportConnected;
             progress.Report("[PRO2_SLEEP] command=06/02 write=" + status + " link_dropped=" + dropped +
                             " elapsed_ms=" + Stopwatch.GetElapsedTime(started).TotalMilliseconds.ToString("F0"));

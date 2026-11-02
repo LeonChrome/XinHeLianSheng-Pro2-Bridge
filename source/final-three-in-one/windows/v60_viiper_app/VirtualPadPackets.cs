@@ -1,6 +1,8 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Y700Switch2V60Viiper;
 
@@ -126,6 +128,18 @@ public sealed record ViiperDeviceProfile(
         if (!string.IsNullOrWhiteSpace(DeviceSpecificSerialNumber))
         {
             arguments["serial_number"] = DeviceSpecificSerialNumber.Trim();
+            if (IsPs5Family)
+            {
+                // dualsensehaptic bypasses the legacy backend MAC allocator.
+                // Steam/SDL may use feature 0x09 as identity, not USB serial.
+                // Preserve slot 1's old identity; give every extra slot a stable
+                // locally administered unicast address, independent of create order.
+                string serial = DeviceSpecificSerialNumber.Trim();
+                byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(serial));
+                hash[0] = (byte)((hash[0] & 0xFC) | 2);
+                arguments["mac_address"] = serial == SlotSerialNumber(ViiperVirtualMode.DualSenseLike, 1)
+                    ? "A5:FA:9C:CF:92:00" : string.Join(":", Array.ConvertAll(hash[..6], b => b.ToString("X2")));
+            }
         }
 
         if (Mode is ViiperVirtualMode.Pro2 or ViiperVirtualMode.Pro1)

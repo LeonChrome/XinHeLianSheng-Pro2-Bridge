@@ -1,0 +1,44 @@
+<Window x:Class="Y700Switch2V60Viiper.MultiControllerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="多手柄" Width="840" Height="740" MinWidth="560" MinHeight="440"
+        WindowStartupLocation="CenterOwner" Background="#F5F7F6" Foreground="#192824"
+        FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="14" UseLayoutRounding="True">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="VisibleIf"/>
+        <Style TargetType="Button"><Setter Property="Padding" Value="10,5"/><Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#DFE7E2"/>
+            <Setter Property="Foreground" Value="#234E40"/><Setter Property="Cursor" Value="Hand"/></Style>
+    </Window.Resources>
+    <Grid Margin="22">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Text="多手柄" FontSize="23" FontWeight="SemiBold"/>
+            <TextBlock Text="{Binding MultiControllerSummary}" Margin="0,6,0,4" Foreground="#52685D"/>
+            <TextBlock Text="先连接第一只并进入游戏，再逐只开启配对、点击对应“连接”。加入第二只不会重建第一只。" TextWrapping="Wrap" Foreground="#667870"/>
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Pro2Slots}">
+                <ItemsControl.ItemTemplate><DataTemplate>
+                    <Border Background="White" BorderBrush="#DFE7E2" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,4,8">
+                        <StackPanel>
+                            <DockPanel><TextBlock Text="{Binding RateSummary}" DockPanel.Dock="Right" FontWeight="SemiBold" Foreground="#315847"/>
+                                <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold" DockPanel.Dock="Left"/>
+                                <TextBlock Text="{Binding ConnectedAddress}" Foreground="#667870" FontSize="11" Margin="12,0,12,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></DockPanel>
+                            <WrapPanel Margin="0,6,0,4" IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <Button Content="连接" Command="{Binding DataContext.ConnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                <Button Content="暂停连接" Command="{Binding DataContext.DisconnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                <Button Content="优化蓝牙" Command="{Binding DataContext.OptimizePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                <Button Content="移除" Command="{Binding DataContext.RemovePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Visibility="{Binding CanRemove, Converter={StaticResource VisibleIf}}"/>
+                            </WrapPanel>
+                            <TextBlock Text="{Binding DisplayStatus}" Foreground="#667870" FontSize="12" TextTrimming="CharacterEllipsis" MaxHeight="18"/>
+                            <TextBlock Text="{Binding SleepStatus}" Foreground="#667870" FontSize="11" TextWrapping="Wrap"/>
+                            <Expander Header="连接诊断" Margin="0,3,0,0"><TextBlock Text="{Binding DiagnosticSummary}" TextWrapping="Wrap" Foreground="#52685D" FontSize="12" Margin="0,6,0,0"/></Expander>
+                        </StackPanel>
+                    </Border>
+                </DataTemplate></ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+        <TextBlock Grid.Row="2" Text="所有手柄使用首页选择的同一种模式。Win10 参数授权在首页；单只或多只达到 133Hz 均以实测为准。" TextWrapping="Wrap" Foreground="#667870" FontSize="12" Margin="0,10,0,0"/>
+    </Grid>
+</Window>

@@ -18,6 +18,7 @@ public sealed class V60UserSettings
     public bool LaunchAtLoginEnabled { get; set; }
     public bool AutoReconnectOnStartupEnabled { get; set; }
     public string[] LastConnectedPro2Addresses { get; set; } = new string[4];
+    public bool[] EnabledPro2Slots { get; set; } = [true, false, false, false];
     public Dictionary<string, Pro2StickCalibrationProfile> Pro2StickCalibrations { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
     public bool RuntimeBatteryRefreshEnabled { get; set; } = true;
@@ -64,6 +65,7 @@ public sealed class V60UserSettings
                 loaded.UsbipExecutablePath = UsbipRuntimeLocator.NormalizeExecutablePath(loaded.UsbipExecutablePath);
                 loaded.LastConnectedPro2Addresses =
                     NormalizeAddressSlots(loaded.LastConnectedPro2Addresses);
+                loaded.EnabledPro2Slots = NormalizeEnabledSlots(loaded.EnabledPro2Slots);
                 loaded.Pro2StickCalibrations =
                     NormalizeStickCalibrations(loaded.Pro2StickCalibrations);
                 loaded.Ps5GyroScalePitch =
@@ -85,6 +87,7 @@ public sealed class V60UserSettings
     {
         lock (FileGate)
         {
+            EnabledPro2Slots = NormalizeEnabledSlots(EnabledPro2Slots);
             string directory = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(directory);
             RumbleMultiplier = NormalizeRumbleMultiplier(RumbleMultiplier);
@@ -139,6 +142,13 @@ public sealed class V60UserSettings
             "xbox" or "xinput" or "xbox360" => "xbox",
             _ => "dualsense"
         };
+    }
+
+    public static bool[] NormalizeEnabledSlots(bool[]? value)
+    {
+        bool[] slots = [true, false, false, false];
+        for (int i = 1; i < 4; i++) slots[i] = value != null && i < value.Length && value[i];
+        return slots;
     }
 
     public static string[] NormalizeAddressSlots(string[]? value)

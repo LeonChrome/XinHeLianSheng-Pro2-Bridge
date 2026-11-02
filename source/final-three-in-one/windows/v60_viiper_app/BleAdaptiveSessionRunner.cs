@@ -21,6 +21,8 @@ public sealed record BleAdaptiveRunResult(BleAdaptivePresetCandidate? Selected,
     BleAdaptiveMeasurement Native, BleAdaptiveMeasurement Final, bool FinalVerified,
     string Code, IReadOnlyList<BleAdaptiveTrialRecord> Trials);
 
+public interface IBleAdaptivePeerGuard { bool PeersHealthy { get; } }
+
 /// <summary>
 /// Bounded single-connection state machine, independently testable without any radio.
 /// A successful request never substitutes for a complete received-input window.
@@ -62,6 +64,21 @@ public static class BleAdaptiveSessionRunner
         BleAdaptiveMeasurement latest = native;
         BleAdaptivePresetCandidate? winner = null;
         bool preferenceChanged = false, finished = false, restoreFailed = false;
+        bool PeersHealthy() => backend is not IBleAdaptivePeerGuard guard || guard.PeersHealthy;
+        async Task<BleAdaptiveRunResult> RestoreForPeerRegressionAsync()
+        {
+            // Never retain a locally fast preset which slowed another pad.
+            // Restore the pre-test request, not the last locally-best candidate.
+            winner = null;
+            backend.Report("其他手柄输入下降 · 停止测试并恢复原请求");
+            bool restored = await backend.RequestAsync(null, token);
+            if (!restored) backend.ReleaseTrialRequest();
+            var after = backend.Connected ? await backend.MeasureAsync("PEER_RESTORE_VERIFY", token) : latest;
+            finished = true;
+            trials.Add(new("peer_guard", false, after, "peer_rate_regression"));
+            return new(null, native, after, false, restored && PeersHealthy()
+                ? "peer_rate_regression_restored" : "peer_rate_regression_restore_unverified", trials);
+        }
         BleAdaptiveRunResult DisconnectedResult() => new(null, native,
             latest with { Sample = latest.Sample with { Connected = false } }, false, "link_disconnected", trials);
         async Task<bool> RestoreBestAsync(CancellationToken restoreToken)
@@ -83,6 +100,7 @@ public static class BleAdaptiveSessionRunner
             {
                 token.ThrowIfCancellationRequested();
                 if (!backend.Connected) return DisconnectedResult();
+                if (!PeersHealthy()) return await RestoreForPeerRegressionAsync();
                 if (++index > BleAdaptivePresetPolicy.MaximumTrials) break;
                 backend.Report("正在优化蓝牙 · 方案 " + index + "/" + plan.Candidates.Count + " · " + candidate.DisplayName);
                 // RequestAsync may submit then await negotiation. Cancellation in
@@ -96,6 +114,7 @@ public static class BleAdaptiveSessionRunner
                 }
                 BleAdaptiveMeasurement after = await backend.MeasureAsync(candidate.Id, token);
                 latest = after;
+                if (!PeersHealthy()) return await RestoreForPeerRegressionAsync();
                 BleAdaptivePresetDecision decision = BleAdaptivePresetPolicy.EvaluateCandidate(native, best, after);
                 trials.Add(new(candidate.Id, true, after, decision.Code));
                 if (!backend.Connected) return DisconnectedResult();
@@ -110,6 +129,7 @@ public static class BleAdaptiveSessionRunner
                     backend.Report("高速方案已出现 · 再复核 10 秒");
                     BleAdaptiveMeasurement verify = await backend.MeasureAsync(candidate.Id + "_VERIFY", token);
                     latest = verify;
+                    if (!PeersHealthy()) return await RestoreForPeerRegressionAsync();
                     if (!backend.Connected) return DisconnectedResult();
                     BleAdaptivePresetDecision verified = BleAdaptivePresetPolicy.VerifyFinal(after, verify);
                     trials.Add(new(candidate.Id + "_VERIFY", true, verify, verified.Code));
@@ -134,6 +154,7 @@ public static class BleAdaptiveSessionRunner
             if (!backend.Connected) return DisconnectedResult();
             backend.Report("方案测试完成 · 正在复核最终连接 10 秒");
             BleAdaptiveMeasurement final = await backend.MeasureAsync("FINAL", token);
+            if (!PeersHealthy()) return await RestoreForPeerRegressionAsync();
             BleAdaptivePresetDecision finalDecision = BleAdaptivePresetPolicy.VerifyFinal(best, final);
             if (!finalDecision.Retain && winner != null && backend.Connected)
             {

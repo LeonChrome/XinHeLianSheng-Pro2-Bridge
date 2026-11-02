@@ -40,7 +40,7 @@ public sealed partial class MainViewModel
     }
     public string EnvironmentHomeSummaryHint => EnvironmentHomeSummary + Environment.NewLine +
         "系统默认适配器不代表已确认此手柄的连接归属；完整信息可查看、复制或保存。";
-    public string EnvironmentReportText => environmentMetadata + Environment.NewLine +
+    public string EnvironmentReportText => environmentMetadata + Environment.NewLine + MultiControllerDiagnostics + Environment.NewLine +
         "当前手柄与游戏输出（缓存状态，无额外 GATT 查询）" + Environment.NewLine +
         inputSource.GetLinkDiagnosticText() + "Raw / FD2 / Parsed：" + CompactRawRate + " / " +
         CompactInputRate + " Hz / " + CompactParsedRate + "（界面短窗）" + Environment.NewLine +

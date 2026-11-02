@@ -12,6 +12,15 @@ namespace Y700Switch2V60Viiper;
 
 public partial class MainWindow : Window
 {
+    private MultiControllerWindow? multiControllerWindow;
+    private void MultiController_Click(object sender, RoutedEventArgs e)
+    {
+        if (multiControllerWindow != null) { multiControllerWindow.Activate(); return; }
+        if (DataContext is not MainViewModel vm) return;
+        multiControllerWindow = new MultiControllerWindow(vm) { Owner = this };
+        multiControllerWindow.Closed += (_, _) => multiControllerWindow = null;
+        multiControllerWindow.Show();
+    }
     private Forms.NotifyIcon? trayIcon;
     private Forms.ContextMenuStrip? trayMenu;
     private Forms.ToolStripMenuItem? launchAtLoginMenuItem;

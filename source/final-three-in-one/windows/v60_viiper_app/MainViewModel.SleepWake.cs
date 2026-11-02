@@ -20,6 +20,11 @@ public sealed partial class MainViewModel
         public long LastPairingAttemptTicks;
         public string LastPairingAttemptAddress = "";
         public long LastSleepAttemptTicks;
+        public double BeforeSleepFd2Hz;
+        public double BeforeSleepParsedHz;
+        public long WakeObservedTicks;
+        public bool WakeRateReported;
+        public bool WakeRateWasLow;
     }
 
     public IReadOnlyList<int> AutoSleepMinuteOptions => AutoSleepMinuteChoices;
@@ -131,9 +136,14 @@ public sealed partial class MainViewModel
         {
             minutes = AutoSleepMinutes;
             state.LastSleepAttemptTicks = Stopwatch.GetTimestamp();
+            var rate = source.GetRateEvidence();
+            state.BeforeSleepFd2Hz = rate.RecentWindow ? rate.Fd2Hz : 0;
+            state.BeforeSleepParsedHz = rate.RecentWindow ? rate.ParsedHz : 0;
             AppendLog("[PRO2_SLEEP] slot=" + slot.Index + " address=" + address +
-                " idle_s=" + source.UserIdleFor.TotalSeconds.ToString("F0") + " entering_sleep=true");
-            return await source.SendSleepCommandAsync(progress, cancellationToken);
+                " idle_s=" + source.UserIdleFor.TotalSeconds.ToString("F0") + " entering_sleep=true" +
+                " before_fd2_hz=" + state.BeforeSleepFd2Hz.ToString("F2") +
+                " before_parsed_hz=" + state.BeforeSleepParsedHz.ToString("F2"));
+            return await source.SendSleepCommandAsync(progress, cancellationToken, Eligible);
         }, async () =>
         {
             // Commit intent before cleanup, so cancellation cannot lose the sleeping address.
@@ -195,6 +205,7 @@ public sealed partial class MainViewModel
         await Pro2SleepSafety.WaitForWakeAsync(async token =>
         {
         var woke = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Passive };
         Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs> onReceived = (_, args) =>
         {
@@ -204,6 +215,7 @@ public sealed partial class MainViewModel
         };
         Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementWatcherStoppedEventArgs> onStopped = (_, args) =>
         {
+            stopped.TrySetResult(true);
             if (args.Error != Windows.Devices.Bluetooth.BluetoothError.Success)
                 woke.TrySetException(new InvalidOperationException("watcher_stopped=" + args.Error));
             else woke.TrySetResult(false);
@@ -223,8 +235,14 @@ public sealed partial class MainViewModel
         finally
         {
             watcher.Received -= onReceived;
-            watcher.Stopped -= onStopped;
-            try { watcher.Stop(); } catch { }
+            try
+            {
+                watcher.Stop();
+                if (watcher.Status is not (BluetoothLEAdvertisementWatcherStatus.Stopped or BluetoothLEAdvertisementWatcherStatus.Aborted))
+                    await stopped.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                AppendLog("[PRO2_WAKE_SCAN_RELEASE] slot=" + slot.Index + " stopped=true status=" + watcher.Status + " before_gatt_reconnect=true");
+            }
+            finally { watcher.Stopped -= onStopped; }
         }
         }, async (error, token) =>
         {
@@ -234,6 +252,9 @@ public sealed partial class MainViewModel
             await Task.Delay(2000, token);
         }, cancellationToken);
         state.Sleeping = false;
+        state.WakeObservedTicks = Stopwatch.GetTimestamp();
+        state.WakeRateReported = false;
+        state.WakeRateWasLow = false;
         slot.IsSleeping = false;
         slot.Status = "检测到手柄唤醒，正在重连…";
         slot.SleepStatus = slot.Status;
@@ -241,5 +262,26 @@ public sealed partial class MainViewModel
         UpdateMultiSlotInputStatus();
         RaiseConnectionStateChanged();
         OnPropertyChanged(nameof(IsPrimarySleeping));
+    }
+
+    private void RecordWakeRateOutcome(Pro2ControllerSlot slot)
+    {
+        var state = AutoSleepState(slot.Index);
+        if (state.WakeObservedTicks == 0 || state.WakeRateReported && !state.WakeRateWasLow ||
+            Stopwatch.GetElapsedTime(state.WakeObservedTicks).TotalSeconds < 15) return;
+        var rate = slot.InputSource.GetRateEvidence();
+        if (!rate.Connected || !rate.Running || !rate.RecentWindow || rate.LastInputAgeMs >= 500) return;
+        bool high = rate.Fd2Hz >= 128 && rate.ParsedHz >= 128;
+        if (state.WakeRateReported && !high) return;
+        bool recovered = state.WakeRateReported && state.WakeRateWasLow && high;
+        state.WakeRateReported = true;
+        state.WakeRateWasLow = !high;
+        AppendLog("[PRO2_WAKE_RATE] slot=" + slot.Index + " address=" + slot.InputSource.ConnectedAddress +
+            " before_sleep_fd2_hz=" + state.BeforeSleepFd2Hz.ToString("F2") +
+            " before_sleep_parsed_hz=" + state.BeforeSleepParsedHz.ToString("F2") +
+            " after_wake_fd2_hz=" + rate.Fd2Hz.ToString("F2") + " after_wake_parsed_hz=" + rate.ParsedHz.ToString("F2") +
+            " p50_ms=" + rate.Gaps.P50Ms.ToString("F2") + " p95_ms=" + rate.Gaps.P95Ms.ToString("F2") +
+            " high_rate=" + high + " recovered=" + recovered +
+            " source=cached_notify_window system_changes=false cause_proven=false");
     }
 }

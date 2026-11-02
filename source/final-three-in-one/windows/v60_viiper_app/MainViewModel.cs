@@ -2121,6 +2121,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                 if (live)
                 {
                     slot.InputSource.RecheckLiveRate();
+                    RecordWakeRateOutcome(slot);
                     failedAttemptStreak = 0;
                     slot.RefreshFromSource();
                     RememberConnectedAddress(slot);

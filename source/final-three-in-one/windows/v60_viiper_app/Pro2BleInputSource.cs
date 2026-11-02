@@ -3566,7 +3566,8 @@ public sealed partial class Pro2BleInputSource :
             return;
         }
 
-        rumbleWriterCts = new CancellationTokenSource();
+        var writerCts = new CancellationTokenSource();
+        rumbleWriterCts = writerCts;
         rumbleSignal = new SemaphoreSlim(0, 1);
         lock (writeGate)
         {
@@ -3581,7 +3582,7 @@ public sealed partial class Pro2BleInputSource :
             rumbleFailureCount = 0;
         }
         rumbleWriterTask = Task.Run(
-            () => RumbleWriterLoopAsync(progress, rumbleWriterCts.Token));
+            () => RumbleWriterLoopAsync(progress, writerCts.Token));
         progress.Report("[PRO2_OUTPUT] BLE writer started: native_pro2=adaptive_original_events; converted=adaptive_ordered_events; all_modes_max_queue_ms=30; overload=measured_lossy_event_selection; native_payload_preserved=true; converted_frequency_mapping=legacy_hz_proxy_unvalidated; minimum_write_ms=7.5; ordinary_state_refresh_target_ms=12; refresh_clock=write_start; refresh_scope=xbox_ps5_only; refresh_not_source_event=true.");
     }
 
@@ -3764,7 +3765,7 @@ public sealed partial class Pro2BleInputSource :
         }
     }
 
-    private async Task StopRumbleWriterAsync()
+    private async Task StopRumbleWriterAsync(bool allowFinalNeutral = true)
     {
         lock (writeGate) ordinaryRumbleHold.Invalidate();
         CancellationTokenSource? writerCts = rumbleWriterCts;
@@ -3801,15 +3802,16 @@ public sealed partial class Pro2BleInputSource :
         // After the single writer is joined, make one bounded final neutral
         // attempt before releasing the GATT service. Never replay old effects.
         GattCharacteristic? stoppingCharacteristic = rumbleCharacteristic;
-        if (writerTask != null && stoppingCharacteristic != null &&
-            (rumbleQueue.LastWrittenActive || rumbleQueuedCount > 0))
+        bool hadOutput = writerTask != null && stoppingCharacteristic != null &&
+            (rumbleQueue.LastWrittenActive || rumbleQueuedCount > 0);
+        if (hadOutput && Pro2SleepSafety.CanSendShutdownStop(allowFinalNeutral, HasConnectedBleOwner()))
         {
             long started = Stopwatch.GetTimestamp();
             byte[] neutral = rumbleQueue.LastWrittenNeutral;
             try
             {
                 using var stopDeadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
-                var status = await WriteCharacteristicAsync(stoppingCharacteristic, neutral, stopDeadline.Token);
+                var status = await WriteCharacteristicAsync(stoppingCharacteristic!, neutral, stopDeadline.Token);
                 rumbleTransportMetrics.ObserveWrite(started, started, Stopwatch.GetTimestamp(),
                     status == GattCommunicationStatus.Success, false, neutral, "shutdown_stop");
                 connectionProgress?.Report("[PRO2_RUMBLE_SHUTDOWN] neutral_attempted=true status=" + status +
@@ -3822,6 +3824,10 @@ public sealed partial class Pro2BleInputSource :
                 connectionProgress?.Report("[PRO2_RUMBLE_SHUTDOWN] neutral_attempted=true error=" + ex.GetType().Name +
                     " playback_confirmed=false");
             }
+        }
+        else if (hadOutput)
+        {
+            connectionProgress?.Report("[PRO2_RUMBLE_SHUTDOWN] neutral_attempted=false reason=link_released_or_disconnected reconnect_requested=false");
         }
         if (rumbleTransportMetrics.TrySnapshot(Stopwatch.GetTimestamp(), out string finalRumble, force: true))
         {
@@ -3892,6 +3898,7 @@ public sealed partial class Pro2BleInputSource :
 
     private async Task CloseCurrentAsync(string nextStatus)
     {
+        bool connectedAtStop = HasConnectedBleOwner();
         AuditSessionEnd("receiver_release:" + nextStatus);
         lock (gate) activeBleDiagnosticCapture?.MarkInterrupted("receiver_stopped");
         try { compatibilityTrialCts?.Cancel(); } catch (ObjectDisposedException) { }
@@ -3901,8 +3908,10 @@ public sealed partial class Pro2BleInputSource :
         liveRateProbeTicks = 0;
         SetConnectionPhase(Pro2ConnectionPhase.Offline);
         inputSignal.Notify();
+        // Release Windows' reconnect intent before waiting on any background worker.
+        SetMaintainConnectionForLifecycle(false);
         await StopRuntimeBatteryRefreshAsync();
-        await StopRumbleWriterAsync();
+        await StopRumbleWriterAsync(allowFinalNeutral: connectedAtStop);
         watcher?.Stop();
         watcher = null;
 

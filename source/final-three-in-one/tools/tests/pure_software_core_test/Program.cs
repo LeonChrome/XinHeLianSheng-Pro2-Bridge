@@ -156,9 +156,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.7.3.0", "v2.7.3 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.7.4.0", "v2.7.4 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.7.3-independent-controller-modes", "v2.7.3 release metadata");
+            "2.7.4-sleep-connection-lifetime", "v2.7.4 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

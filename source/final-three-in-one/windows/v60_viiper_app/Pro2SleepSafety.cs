@@ -44,6 +44,37 @@ public static class Pro2SleepSafety
     public static bool IsWakeAdvertisement(ulong expected, ulong actual, bool nintendo) =>
         expected != 0 && expected == actual && nintendo;
 
+    // A sleep command must be the last operation on this connection. In particular,
+    // a final rumble stop after the remote disconnect can itself ask Windows to reconnect.
+    public static async Task<bool> SendQuiescedAsync(Func<Task> stopTraffic,
+        Func<bool> eligible, Action<bool> maintainConnection, Func<Task<bool>> sendSleep,
+        Func<bool> connected, Action resumeTraffic, CancellationToken token)
+    {
+        bool accepted = false;
+        try
+        {
+            await stopTraffic();
+            token.ThrowIfCancellationRequested();
+            if (!eligible()) return false;
+            maintainConnection(false);
+            token.ThrowIfCancellationRequested();
+            accepted = await sendSleep();
+            return accepted;
+        }
+        finally
+        {
+            // A failed/deferred sleep must leave a live controller fully usable.
+            // A dropped connection must never restart workers or request a reconnect here.
+            if (!accepted && connected())
+            {
+                try { maintainConnection(true); }
+                finally { resumeTraffic(); }
+            }
+        }
+    }
+
+    public static bool CanSendShutdownStop(bool allowed, bool ownerConnected) => allowed && ownerConnected;
+
     public static ulong ResolveHost(string deviceId, IEnumerable<ulong> exposedAddresses)
     {
         ulong[] addresses = exposedAddresses.Where(a => a != 0).Distinct().ToArray();

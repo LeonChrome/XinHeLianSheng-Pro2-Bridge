@@ -141,8 +141,64 @@ public sealed partial class Pro2BleInputSource
         }
     }
 
-    /// <summary>Sends 06/02. Returns true when the controller dropped the link (LEDs off).</summary>
-    public async Task<bool> SendSleepCommandAsync(IProgress<string> progress, CancellationToken cancellationToken)
+    private bool HasConnectedBleOwner()
+    {
+        try { return device?.ConnectionStatus == BluetoothConnectionStatus.Connected &&
+            (gattSession == null || gattSession.SessionStatus == GattSessionStatus.Active); }
+        catch (ObjectDisposedException) { return false; }
+    }
+
+    private bool SetMaintainConnectionForLifecycle(bool maintain)
+    {
+        try
+        {
+            if (gattSession?.CanMaintainConnection == true)
+                gattSession.MaintainConnection = maintain;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            connectionProgress?.Report("[PRO2_BLE_RELEASE] maintain=" + maintain + " error=" + ex.GetType().Name);
+            return false; // Normal teardown still disposes the owner; intentional sleep must abort.
+        }
+    }
+
+    /// <summary>Quiesces this owner's traffic before sending 06/02; peers stay online.</summary>
+    public async Task<bool> SendSleepCommandAsync(IProgress<string> progress, CancellationToken cancellationToken,
+        Func<bool>? stillIdle = null)
+    {
+        BluetoothLEDevice? owner = device;
+        long sequence = connectionSequence;
+        bool SameOwner() => ReferenceEquals(owner, device) && sequence == connectionSequence &&
+            IsRunning && transportConnected && HasConnectedBleOwner();
+        try { return await Pro2SleepSafety.SendQuiescedAsync(async () =>
+        {
+            await StopRuntimeBatteryRefreshAsync();
+            await StopRumbleWriterAsync(); // final neutral, if needed, is sent while still connected
+            progress.Report("[PRO2_SLEEP_QUIESCE] battery_worker=stopped rumble_writer=joined final_stop_before_sleep=true");
+        }, () => SameOwner() && (stillIdle?.Invoke() ?? true), maintain =>
+        {
+            bool changed = SetMaintainConnectionForLifecycle(maintain);
+            if (!maintain && !changed)
+                throw new InvalidOperationException("Windows BLE reconnect intent was not released; sleep aborted.");
+            progress.Report("[PRO2_SLEEP_QUIESCE] maintain_connection=" + maintain);
+        }, () => SendSleepCommandCoreAsync(progress, cancellationToken), SameOwner, () =>
+        {
+            if (!SameOwner()) return;
+            StartRumbleWriter(progress);
+            StartRuntimeBatteryRefresh(progress);
+            progress.Report("[PRO2_SLEEP_QUIESCE] sleep_not_committed=true live_workers=restored");
+        }, cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            progress.Report("[PRO2_SLEEP_QUIESCE] sleep_aborted=true error=" + ex.GetType().Name + " message=" + ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>Sends 06/02 after all other command producers have stopped.</summary>
+    private async Task<bool> SendSleepCommandCoreAsync(IProgress<string> progress, CancellationToken cancellationToken)
     {
         await wakeCommandGate.WaitAsync(cancellationToken);
         try

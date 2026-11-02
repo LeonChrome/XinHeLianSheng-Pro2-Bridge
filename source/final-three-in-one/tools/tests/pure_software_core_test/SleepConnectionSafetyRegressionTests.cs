@@ -5,6 +5,57 @@ internal static class SleepConnectionSafetyRegressionTests
 {
     public static async Task RunAsync(Action<bool, string> check)
     {
+        // Deliberately hold a simulated battery/rumble write in flight. Sleep cannot
+        // cut its connection until that producer has finished; no reconnect after drop.
+        var trafficJoined = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var order = new List<string>();
+        bool connected = true;
+        Task<bool> sleeping = Pro2SleepSafety.SendQuiescedAsync(async () =>
+        {
+            order.Add("stop_workers"); await trafficJoined.Task; order.Add("joined");
+        }, () => true, maintain => order.Add("maintain_" + maintain), () =>
+        {
+            order.Add("sleep"); connected = false; return Task.FromResult(true);
+        }, () => connected, () => order.Add("resume"), default);
+        check(!sleeping.IsCompleted && order.SequenceEqual(new[] { "stop_workers" }),
+            "sleep waits for pending command producers instead of racing the power command");
+        trafficJoined.SetResult();
+        check(await sleeping && order.SequenceEqual(new[] { "stop_workers", "joined", "maintain_False", "sleep" }),
+            "joined traffic and released Windows reconnect intent precede sleep, no post-disconnect writes");
+
+        foreach (string failure in new[] { "new_input", "command_failed", "command_exception", "link_dropped", "cancelled" })
+        {
+            order.Clear(); connected = true;
+            using var cancellation = new CancellationTokenSource();
+            try
+            {
+                bool accepted = await Pro2SleepSafety.SendQuiescedAsync(() =>
+                {
+                    order.Add("joined");
+                    if (failure == "cancelled") cancellation.Cancel();
+                    return Task.CompletedTask;
+                }, () => failure != "new_input", maintain => order.Add("maintain_" + maintain), () =>
+                {
+                    order.Add("sleep");
+                    if (failure == "command_exception") throw new InvalidOperationException("write_failed");
+                    if (failure == "link_dropped") connected = false;
+                    return Task.FromResult(false);
+                }, () => connected, () => order.Add("resume"), cancellation.Token);
+                check(!accepted, "failed/deferred quiesced sleep is not committed: " + failure);
+            }
+            catch (InvalidOperationException) when (failure == "command_exception") { }
+            catch (OperationCanceledException) when (failure == "cancelled") { }
+            check(order.Count(s => s == "resume") == (failure == "link_dropped" ? 0 : 1),
+                "only live failed/deferred sleep restores its workers: " + failure);
+            if (failure is "new_input" or "cancelled")
+                check(!order.Contains("sleep") && !order.Contains("maintain_False"), "new input/cancel during join prevents sleep");
+            if (failure == "link_dropped")
+                check(!order.Contains("maintain_True"), "unexpected disconnect cannot acquire a fresh Windows reconnect request");
+        }
+        check(Pro2SleepSafety.CanSendShutdownStop(true, true), "normal connected exit may deliver final rumble stop");
+        check(!Pro2SleepSafety.CanSendShutdownStop(true, false) && !Pro2SleepSafety.CanSendShutdownStop(false, true),
+            "sleep/disconnect teardown must not use stale characteristics to reconnect");
+
         using var gate = new SemaphoreSlim(1, 1);
         int inFlight = 0, maxInFlight = 0;
         var committed = new bool[4];

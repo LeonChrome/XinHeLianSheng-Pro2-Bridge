@@ -2,13 +2,14 @@
 
 让 **Nintendo Switch 2 Pro（Pro2）手柄无线连接 Windows**，直接用于 Steam，也能切换成 Pro1、Xbox 或 PS5 兼容手柄。纯软件连接，无需专用接收器。
 
-**[推荐下载：v2.7.4 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.4/PRO2ControllerAssistant-v2.7.4-win-x64.exe)** · [版本说明](docs/RELEASE_v2.7.4_ZH.md)
+**[推荐下载：v2.8 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.8/PRO2ControllerAssistant-v2.8-win-x64.exe)** · [版本说明](docs/RELEASE_v2.8_ZH.md)
 
-启动即闪退、窗口不显示时：[尝试 v2.7.4 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.7.4/PRO2ControllerAssistant-v2.7.4-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
+启动即闪退、窗口不显示时：[尝试 v2.8 兼容启动版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v2.8/PRO2ControllerAssistant-v2.8-ui-compatible-win-x64.exe)。仅改界面渲染，手柄功能相同。先从托盘退出旧版再打开。
 
 ## 能做什么
 
 - **四种模式**：Steam / Pro2、Pro1、Xbox、PS5 兼容输出。
+- **ABXY 键位映射**：独立页面选择位置、Pro2 字母对应预设，或自定义四个键；四种模式分别保存，未连接也能设置。
 - **多手柄管理**：四个槽位各自选择 Pro2、Pro1、Xbox 或 PS5，可同模式或混用；单只切换不重连实体 BLE，不重建其他手柄的输出。
 - **背键 / C 键自定义**：Pro1、Xbox、PS5 模式支持单键、组合键、连发、顺序动作和延迟；没连接手柄也能设置。
 - **PS5 触控板模拟**：背键 / C 键可映射轻触、四向滑动和顺逆时针画圈，支持时长和延迟；游戏需支持触控板。
@@ -37,15 +38,19 @@
 
 多手柄已通过四路离线输入、反馈隔离和休眠故障模拟检查，**多只实体手柄的无线长测仍待验证**。实际并发数量、每只速率与休眠唤醒情况以对应电脑实测为准。驱动日期或标称蓝牙版本不能单独证明不兼容，证据不足时程序会明确提示。
 
-## v2.7.4 更新
+## v2.8 更新
 
-- 修复休眠断联后仍用旧 BLE 通道发送停止震动包的问题。
-- 休眠前先停止电量、震动任务，释放保持连接请求；取消或失败时恢复仍在线手柄的任务。
-- 唤醒后等待扫描停止再重连，日志直接记录休眠前后的真实输入频率。
-- 保留四槽位独立模式、背键 / C 键、触控板、震动与体感功能。
+- 新增键位映射页和手柄图片，清楚显示实体按键对应的输出。
+- 修复旧数据流误删虚拟设备、同一手柄重复挂载的问题。
+- USBIP 异常时只恢复对应手柄，限制自动重试次数；首页分别显示蓝牙连接与虚拟输出状态。
+- 系统与蓝牙信息补充虚拟手柄状态、相关系统设备事件，便于排查连接失败。
 
-已通过离线回归与 EXE 启动检查；休眠唤醒后的速率改善仍待实机对照验证，不承诺消除所有蓝牙掉速。
+**键位以哪里为准？** 默认按位置对应：Pro2 下方 B → Xbox A / PS5 ×。选择“Pro2 字母对应”或自定义后，以映射页列出的输出为准；Steam Input 和游戏里的改键会继续叠加。背键 / C 键单独设置，不会再经过 ABXY 二次转换。同种输出模式的多只手柄共用该模式的 ABXY 配置。
 
-[版本说明](docs/RELEASE_v2.7.4_ZH.md) · 当前版本阶段性收尾，后续更新暂缓。
+![v2.8 键位映射页面](docs/images/v2.8-key-mapping.png)
+
+已通过离线回归和标准版、兼容启动版的 EXE 启动检查；反馈故障的电脑仍需实测，不保证解决所有蓝牙或驱动问题。
+
+[完整版本说明](docs/RELEASE_v2.8_ZH.md)
 
 [反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [源码与构建](source/final-three-in-one/README.md) · [许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [历史三合一版本](docs/HISTORICAL_THREE_IN_ONE_README.md)

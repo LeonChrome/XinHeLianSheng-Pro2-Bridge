@@ -13,6 +13,7 @@ type contextKey int
 const (
 	ExportMetaKey contextKey = iota
 	ConnTimerKey
+	StreamLifetimeKey
 )
 
 // GetDeviceMeta extracts the device metadata from a device context.

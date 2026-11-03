@@ -1,0 +1,50 @@
+<UserControl x:Class="Y700Switch2V60Viiper.FaceMappingView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <UserControl.Resources>
+  <Style x:Key="Caption" TargetType="TextBlock"><Setter Property="Foreground" Value="#6B8077"/><Setter Property="FontSize" Value="12"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
+  <Style x:Key="Panel" TargetType="Border"><Setter Property="Background" Value="White"/><Setter Property="CornerRadius" Value="16"/><Setter Property="BorderBrush" Value="#E1E8E3"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="20"/></Style>
+ </UserControl.Resources>
+ <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+  <StackPanel Margin="0,0,4,0">
+   <TextBlock Text="键位映射" FontSize="23" FontWeight="SemiBold" Margin="0,0,0,6"/>
+   <TextBlock Text="实体 Pro2 → 本页 ABXY 映射 → 背键 / C 键输出 → Steam Input / 游戏设置" Style="{StaticResource Caption}" Margin="0,0,0,18"/>
+   <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Border Style="{StaticResource Panel}" VerticalAlignment="Top">
+     <StackPanel>
+      <TextBlock Text="选择输出手柄" FontWeight="SemiBold"/>
+      <ComboBox ItemsSource="{Binding FaceModes}" DisplayMemberPath="Label" SelectedValuePath="Mode" SelectedValue="{Binding FaceEditingMode}" Margin="0,8,0,18"/>
+      <TextBlock Text="映射预设" FontWeight="SemiBold"/>
+      <ComboBox x:Name="FacePresetPicker" ItemsSource="{Binding FacePresets}" DisplayMemberPath="Label" SelectedValuePath="Preset" SelectedValue="{Binding SelectedFacePreset}" Margin="0,8,0,8"/>
+      <TextBlock Text="{Binding FacePresetHint}" Style="{StaticResource Caption}" MinHeight="40"/>
+      <Image x:Name="MappingControllerImage" Source="/PRO2ControllerAssistant;component/Assets/Controller-pro2-v2.8.png" Height="155" Stretch="Uniform" Margin="-8,16,-8,10" RenderOptions.BitmapScalingMode="HighQuality"/>
+      <TextBlock Text="实体 Pro2：上 X · 右 A · 下 B · 左 Y" HorizontalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="#294E40"/>
+      <TextBlock Text="以右侧实际输出为准。同一输出模式共用一份配置。" Style="{StaticResource Caption}" Margin="0,14,0,0"/>
+     </StackPanel>
+    </Border>
+    <Border Grid.Column="2" Style="{StaticResource Panel}" VerticalAlignment="Top">
+     <StackPanel>
+      <DockPanel Margin="0,0,0,16"><TextBlock Text="{Binding FaceDraftStatus}" DockPanel.Dock="Right" Style="{StaticResource Caption}"/><TextBlock Text="实体按键 → 虚拟输出" FontWeight="SemiBold"/></DockPanel>
+      <ItemsControl ItemsSource="{Binding FaceRows}">
+       <ItemsControl.ItemTemplate><DataTemplate>
+        <Border Background="#F6F9F7" CornerRadius="10" Padding="12" Margin="0,0,0,10">
+         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="40"/><ColumnDefinition Width="36"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <Border Background="#254B3D" Width="32" Height="32" CornerRadius="16" VerticalAlignment="Center"><TextBlock Text="{Binding PhysicalLabel}" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold"/></Border>
+          <TextBlock Grid.Column="1" Text="{Binding Position}" VerticalAlignment="Center" Foreground="#687C72"/>
+          <TextBlock Grid.Column="2" Text="→" VerticalAlignment="Center" Foreground="#729483"/>
+          <ComboBox Grid.Column="3" ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedValuePath="Button" SelectedValue="{Binding Target}" Margin="0" MinWidth="95"/>
+         </Grid>
+        </Border>
+       </DataTemplate></ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <TextBlock Text="只调整 ABXY。背键 / C 键按输出手柄的键名设置，不再经过本页转换。" Style="{StaticResource Caption}" Margin="0,5,0,15"/>
+      <WrapPanel><Button Content="保存并应用" Command="{Binding SaveFaceMappingCommand}" Background="#254B3D" Foreground="White" Padding="18,10" Margin="0,0,8,8"/><Button Content="恢复按位置" Command="{Binding ResetFaceMappingCommand}" Padding="14,10" Margin="0,0,0,8"/></WrapPanel>
+      <TextBlock Text="{Binding FaceStatus}" Style="{StaticResource Caption}" MinHeight="38" Margin="0,6,0,0"/>
+     </StackPanel>
+    </Border>
+   </Grid>
+   <TextBlock Text="这里改变手柄输出，不会自动改游戏里的按键图标。Steam Input 或游戏再次改键时，会在本页结果上继续生效。" Style="{StaticResource Caption}" Margin="0,14,0,0"/>
+  </StackPanel>
+ </ScrollViewer>
+</UserControl>

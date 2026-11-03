@@ -273,40 +273,29 @@ func (s *Server) handleConn(conn net.Conn) {
 			return
 		}
 
-		connTimer := device.GetConnTimer(devCtx)
-		if connTimer != nil {
-			connTimer.Stop()
+		lifetime := device.GetStreamLifetime(devCtx)
+		if lifetime == nil {
+			s.writeError(w, apierror.ErrInternal("device stream lifetime unavailable"))
+			return
 		}
+		lease, acquired := lifetime.Acquire()
+		if !acquired {
+			s.writeError(w, apierror.ErrNotFound("device is being removed"))
+			return
+		}
+		defer lifetime.Release(lease, s.config.DeviceHandlerConnectTimeout, func() {
+			if err := bus.RemoveDeviceIfContext(devIDStr, devCtx); err != nil {
+				connLogger.Warn("idle cleanup: device already removed", "error", err)
+			} else {
+				connLogger.Info("idle cleanup: removed device with no active API streams", "busID", busID, "deviceID", devIDStr)
+			}
+		})
 
 		// Stream handler takes ownership of connection
 		if err := sh(conn, &dev, connLogger); err != nil {
 			connLogger.Error("api stream handler error", "path", path, "error", err)
 		}
 		connLogger.Info("api stream end", "path", path)
-
-		connTimer = device.GetConnTimer(devCtx)
-		if connTimer != nil {
-			connTimer.Reset(s.config.DeviceHandlerConnectTimeout)
-			go func() {
-				select {
-				case <-devCtx.Done():
-					connTimer.Stop()
-					return
-				case <-connTimer.C:
-					exportMeta := device.GetDeviceMeta(devCtx)
-					if exportMeta != nil {
-						deviceIDStr := fmt.Sprintf("%d", exportMeta.DevID)
-						if err := bus.RemoveDeviceByID(deviceIDStr); err != nil {
-							connLogger.Error("disconnect timeout: failed to remove device", "busID", busID, "deviceID", deviceIDStr, "error", err)
-						} else {
-							connLogger.Info("disconnect timeout: removed device (no reconnection)", "busID", busID, "deviceID", deviceIDStr)
-						}
-						return
-					}
-					connLogger.Warn("disconnect timeout: device context closed but metadata missing")
-				}
-			}()
-		}
 
 		return
 	}

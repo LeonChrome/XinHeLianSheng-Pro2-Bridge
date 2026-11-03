@@ -246,6 +246,13 @@
                                 <DockPanel Margin="0,6,0,0" ToolTip="仅显示实体耳机孔的插入状态，音频传输尚未启用"><TextBlock Text="耳机孔" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/><TextBlock Text="{Binding CompactHeadset}" FontWeight="SemiBold"/></DockPanel>
                             </StackPanel>
                         </Grid>
+                        <Border Visibility="{Binding HasVirtualOutputWarning, Converter={StaticResource BoolVisibility}}"
+                                Background="#FFF8EB" BorderBrush="#E7CE96" BorderThickness="1" CornerRadius="12" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="{Binding VirtualOutputSummary}" Foreground="#765C24" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding VirtualOutputDetail}" Foreground="#806C43" TextWrapping="Wrap" FontSize="12" Margin="0,5,0,0"/>
+                            </StackPanel>
+                        </Border>
                         <Border x:Name="ConnectionFailureNotice" Visibility="{Binding HasConnectionWarning, Converter={StaticResource BoolVisibility}}"
                                 Background="#FFF9ED" BorderBrush="#E9D7AF" BorderThickness="1" CornerRadius="12" Padding="10" Margin="0,0,0,14">
                             <StackPanel>
@@ -402,6 +409,9 @@
                         </ScrollViewer>
                     </Grid>
                 </Grid>
+            </TabItem>
+            <TabItem Header="键位映射" AutomationProperties.Name="键位映射">
+                <local:FaceMappingView/>
             </TabItem>
             <TabItem Header="设置" AutomationProperties.Name="设置">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">

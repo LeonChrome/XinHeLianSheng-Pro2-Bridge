@@ -16,6 +16,10 @@ public sealed partial class MainViewModel
     private string environmentMetadata = "尚未采集系统与蓝牙信息。";
     private string win10ConfigurationHistoryText = "";
     private string win10ConfigurationAttemptText = "";
+    private string deviceEventEvidence = "相关系统设备事件：尚未读取。";
+    private string VirtualOutputDiagnosticText => "虚拟手柄状态（缓存，只读）\n" +
+        string.Join("\n", pro2Slots.Where(s => s.Session != null).Select(s => s.Name + " · " + s.Session!.OutputHealth.Summary + " · " + s.Session.OutputHealth.Detail + " · 恢复次数 " + s.Session.OutputHealth.Repairs)) +
+        (session == null ? "" : "\n主会话 · " + session.OutputHealth.Summary + " · " + session.OutputHealth.Detail) + "\n";
 
     public bool EnvironmentInfoBusy => environmentInfoBusy;
     public string EnvironmentInfoStatus => environmentInfoStatus;
@@ -41,6 +45,7 @@ public sealed partial class MainViewModel
     public string EnvironmentHomeSummaryHint => EnvironmentHomeSummary + Environment.NewLine +
         "系统默认适配器不代表已确认此手柄的连接归属；完整信息可查看、复制或保存。";
     public string EnvironmentReportText => environmentMetadata + Environment.NewLine + MultiControllerDiagnostics + Environment.NewLine +
+        VirtualOutputDiagnosticText + deviceEventEvidence + Environment.NewLine +
         "当前手柄与游戏输出（缓存状态，无额外 GATT 查询）" + Environment.NewLine +
         inputSource.GetLinkDiagnosticText() + "Raw / FD2 / Parsed：" + CompactRawRate + " / " +
         CompactInputRate + " Hz / " + CompactParsedRate + "（界面短窗）" + Environment.NewLine +
@@ -78,6 +83,7 @@ public sealed partial class MainViewModel
         try
         {
             SystemBluetoothSnapshot snapshot = await SystemBluetoothDiagnostics.CaptureAsync(token);
+            deviceEventEvidence = await WindowsDeviceEventEvidence.CaptureAsync(token);
             if (shuttingDown || token.IsCancellationRequested) return;
             ApplyEnvironmentSnapshot(snapshot);
             foreach (string line in SystemBluetoothDiagnostics.LogLines(snapshot)) AppendLog(line);

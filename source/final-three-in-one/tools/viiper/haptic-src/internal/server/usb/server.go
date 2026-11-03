@@ -264,6 +264,8 @@ const (
 )
 
 type Server struct {
+	importsMu sync.Mutex
+	imports   map[string]*importOwner
 	config    *ServerConfig
 	logger    *slog.Logger
 	rawLogger log.RawLogger
@@ -327,6 +329,10 @@ func (s *Server) RemoveBus(busID uint32) error {
 
 // RemoveDeviceByID removes a device by busId and cancels its connections.
 func (s *Server) RemoveDeviceByID(busID uint32, deviceID string) error {
+	return s.RemoveDeviceIfContext(busID, deviceID, nil)
+}
+
+func (s *Server) RemoveDeviceIfContext(busID uint32, deviceID string, expected context.Context) error {
 	s.busesMu.Lock()
 	bus, ok := s.busses[busID]
 	s.busesMu.Unlock()
@@ -334,7 +340,7 @@ func (s *Server) RemoveDeviceByID(busID uint32, deviceID string) error {
 	if !ok {
 		return fmt.Errorf("bus %d not found", busID)
 	}
-	err := bus.RemoveDeviceByID(deviceID)
+	err := bus.RemoveDeviceIfContext(deviceID, expected)
 	if err != nil {
 		return err
 	}
@@ -499,10 +505,11 @@ func (s *Server) handleConn(conn net.Conn) error {
 			return s.handleDevList(conn)
 		case usbip.OpReqImport:
 			s.logger.Info("OP_REQ_IMPORT")
-			dev, err := s.handleImport(conn)
+			dev, release, err := s.handleImport(conn)
 			if err != nil {
 				return fmt.Errorf("handle import: %w", err)
 			}
+			defer release()
 			return s.handleUrbStream(conn, dev)
 		}
 	}
@@ -552,12 +559,16 @@ func (s *Server) handleDevList(conn net.Conn) error {
 	return nil
 }
 
-func (s *Server) handleImport(conn net.Conn) (usb.Device, error) {
+func (s *Server) handleImport(conn net.Conn) (usb.Device, func(), error) {
 	var rest [busIDSize]byte
 	if err := usbip.ReadExactly(conn, rest[:]); err != nil {
-		return nil, fmt.Errorf("read import busid: %w", err)
+		return nil, nil, fmt.Errorf("read import busid: %w", err)
 	}
-	reqBus := string(rest[:bytes.IndexByte(rest[:], 0)])
+	endBus := bytes.IndexByte(rest[:], 0)
+	if endBus <= 0 {
+		return nil, nil, fmt.Errorf("invalid import busid")
+	}
+	reqBus := string(rest[:endBus])
 	s.logger.Info("Import request", "busid", reqBus)
 	var chosen usb.Device
 	var chosenMeta *usbip.ExportMeta
@@ -574,7 +585,19 @@ func (s *Server) handleImport(conn net.Conn) (usb.Device, error) {
 		}
 	}
 	if chosen == nil || chosenMeta == nil || chosenDesc == nil {
-		return nil, fmt.Errorf("no device matches busid %s", reqBus)
+		return nil, nil, fmt.Errorf("no device matches busid %s", reqBus)
+	}
+	bus := s.GetBus(chosenMeta.BusID)
+	if bus == nil {
+		return nil, nil, fmt.Errorf("device bus disappeared")
+	}
+	release, acquired := s.claimImport(reqBus, bus.GetDeviceContext(chosen), conn)
+	if !acquired {
+		// USB/IP ST_DEV_BUSY. Do not send a success descriptor or allocate a
+		// second Windows device for an already imported controller.
+		reply := usbip.MgmtHeader{Version: usbip.Version, Command: usbip.OpRepImport, Status: 2}
+		_ = reply.Write(conn)
+		return nil, nil, fmt.Errorf("device %s already imported or being removed", reqBus)
 	}
 	var buf bytes.Buffer
 	rep := usbip.MgmtHeader{Version: usbip.Version, Command: usbip.OpRepImport, Status: 0}
@@ -601,9 +624,10 @@ func (s *Server) handleImport(conn net.Conn) (usb.Device, error) {
 	}
 	_ = exp.WriteImport(&buf)
 	if _, err := conn.Write(buf.Bytes()); err != nil {
-		return nil, fmt.Errorf("write import reply failed: %w", err)
+		release()
+		return nil, nil, fmt.Errorf("write import reply failed: %w", err)
 	}
-	return chosen, nil
+	return chosen, release, nil
 }
 
 // getAllDeviceMetas aggregates device metas from all registered busses.
@@ -652,7 +676,13 @@ func (s *Server) handleUrbStream(conn net.Conn, dev usb.Device) error {
 	}
 
 	var owningBus *virtualbus.VirtualBus
+	s.busesMu.Lock()
+	buses := make([]*virtualbus.VirtualBus, 0, len(s.busses))
 	for _, b := range s.busses {
+		buses = append(buses, b)
+	}
+	s.busesMu.Unlock()
+	for _, b := range buses {
 		devices := b.Devices()
 		if slices.Contains(devices, dev) {
 			owningBus = b

@@ -101,6 +101,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             ? Path.Combine(Path.GetTempPath(), "PRO2-ui-smoke-logs") : null);
         userSettings = previewOnly ? new V60UserSettings() : V60UserSettings.Load();
         InitializeRearButtonSettings();
+        InitializeFaceMapping();
         inputSource = pro2Slots[0].InputSource;
         InitializeBleCompatibilitySettings();
         InitializeMultiControllerSafety();
@@ -3048,7 +3049,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                 professionalImuOptions,
                 professionalHidAuditController,
                 new Progress<ProfessionalImuUiSnapshot>(UpdateProfessionalImuSnapshot),
-                userSettings.RearButtons);
+                userSettings.RearButtons,
+                userSettings.FaceButtons);
             session = createdSession;
             await createdSession.StartAsync(cancellationToken);
             SetActiveMode(runtimeProfile.Mode);
@@ -3138,7 +3140,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             ProfessionalImuOptions.Default,
             professionalHidAuditController,
             new Progress<ProfessionalImuUiSnapshot>(UpdateProfessionalImuSnapshot),
-            userSettings.RearButtons);
+            userSettings.RearButtons,
+            userSettings.FaceButtons);
 
         try
         {
@@ -3149,7 +3152,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             slot.RefreshFromSource();
 
             AppendLog("[SLOT_MULTI] slot=" + slot.Index +
-                      " virtual_ready=1 mode=" + slotProfile.Mode + " serial=" + slotProfile.DeviceSpecificSerialNumber +
+                      " virtual_created=1 pnp_ready=pending mode=" + slotProfile.Mode + " serial=" + slotProfile.DeviceSpecificSerialNumber +
                       " device_type=" + slotProfile.DeviceType);
             return true;
         }

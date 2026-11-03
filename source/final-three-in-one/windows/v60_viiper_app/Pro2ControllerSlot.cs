@@ -187,7 +187,8 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
         }
     }
     public string OptimizationSummary => InputSource.CompatibilityOptimizationSummary;
-    public string DisplayStatus => IsSleeping ? Status : InputSource.IsRunning
+    public string DisplayStatus => IsSleeping ? Status : Session?.OutputHealth is { State: not VirtualOutputState.Ready and not VirtualOutputState.Stopped } health
+        ? health.Summary : InputSource.IsRunning
         ? InputSource.IsCompatibilityOptimizationRunning ? OptimizationSummary : "已连接 · 输入、震动与重连独立运行"
         : Status.StartsWith("真实 Pro2 BLE", StringComparison.Ordinal) ? "未连接 · 等待重连" : Status;
     public string DiagnosticSummary
@@ -197,6 +198,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
             var r = InputSource.GetRateEvidence();
             return $"系统 {Environment.OSVersion.Version} · 请求 {r.DescriptorStatus} · 参数 {r.ParameterStatus}" +
                 $"\nNotify P50 / P95：{r.Gaps.P50Ms:F2} / {r.Gaps.P95Ms:F2}ms · 解析失败 {r.ParseFailures}" +
+                "\n虚拟输出：" + (Session?.OutputHealth is { } h ? h.Summary + " · " + h.Detail : "未启动") +
                 "\n" + OptimizationSummary + "\n" + (IsSleeping ? "休眠中；此槽位按地址独立监听唤醒" :
                     InputSource.ConnectionDiagnosis.Title + "\n" + InputSource.ConnectionDiagnosis.Advice);
         }

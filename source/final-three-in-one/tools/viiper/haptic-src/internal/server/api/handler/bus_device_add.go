@@ -74,24 +74,16 @@ func BusDeviceAdd(s *usbs.Server, apiSrv *api.Server) api.HandlerFunc {
 			return apierror.ErrInternal("failed to get device metadata from context")
 		}
 
-		connTimer := device.GetConnTimer(devCtx)
-		if connTimer != nil {
-			connTimer.Reset(apiSrv.Config().DeviceHandlerConnectTimeout)
-		}
-		go func() {
-			select {
-			case <-devCtx.Done():
-				connTimer.Stop()
-				return
-			case <-connTimer.C:
+		if lifetime := device.GetStreamLifetime(devCtx); lifetime != nil {
+			lifetime.ArmIdle(apiSrv.Config().DeviceHandlerConnectTimeout, func() {
 				deviceIDStr := fmt.Sprintf("%d", exportMeta.DevID)
-				if err := s.RemoveDeviceByID(uint32(busID), deviceIDStr); err != nil {
+				if err := s.RemoveDeviceIfContext(uint32(busID), deviceIDStr, devCtx); err != nil {
 					logger.Error("timeout: failed to remove device", "busID", busID, "deviceID", deviceIDStr, "error", err)
 				} else {
 					logger.Info("timeout: removed device (no connection)", "busID", busID, "deviceID", deviceIDStr)
 				}
-			}
-		}()
+			})
+		}
 
 		if apiSrv.Config().AutoAttachLocalClient {
 			err := api.AttachLocalhostClient(

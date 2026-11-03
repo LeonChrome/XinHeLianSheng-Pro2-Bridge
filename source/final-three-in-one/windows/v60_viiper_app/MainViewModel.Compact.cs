@@ -112,9 +112,15 @@ public sealed partial class MainViewModel
     public string CompatibilityTitle => BleCompatibilityInspector.Current.Plan.Title;
     public string CompatibilityGuidance => BleCompatibilityInspector.Current.Plan.Guidance;
     public bool CanConfigureWin10Stack => BleCompatibilityInspector.Current.Plan.CanConfigureWin10Stack;
+    private ViiperBridgeSession? PrimaryOutputSession => session ?? pro2Slots[0].Session;
+    public bool HasVirtualOutputWarning => PrimaryOutputSession?.OutputHealth is { State: not VirtualOutputState.Ready and not VirtualOutputState.Stopped };
+    public string VirtualOutputSummary => PrimaryOutputSession?.OutputHealth.Summary ?? "";
+    public string VirtualOutputDetail => PrimaryOutputSession?.OutputHealth.Detail ?? "";
     private Pro2ConnectionPresentation ConnectionPresentation =>
         IsPrimarySleeping && !inputSource.IsTransportConnected
             ? new("已休眠", "手柄已休眠，按任意键唤醒", "闲置达到设定时间后已让手柄关灯省电；按手柄任意键会自动重连，虚拟手柄保持在线。")
+            : inputSource.IsTransportConnected && HasVirtualOutputWarning
+            ? new("虚拟输出待就绪", VirtualOutputSummary, "实体蓝牙保持连接。" + VirtualOutputDetail)
             : Pro2ConnectionPresentation.Create(inputSource.ConnectionPhase,
             inputSource.IsTransportConnected, Running, Busy, AutoReconnectEnabled, inputSource.IsGameplayReady);
     public string CompactConnectionTitle => ConnectionPresentation.Title;
@@ -196,6 +202,7 @@ public sealed partial class MainViewModel
         RefreshConnectionDiagnosis();
         QueueLowRateAutomaticOptimization();
         foreach (string property in new[] { nameof(CompactPs5Selected),
+                     nameof(HasVirtualOutputWarning), nameof(VirtualOutputSummary), nameof(VirtualOutputDetail),
                      nameof(BleStabilitySummary), nameof(ShowWin11CompatibilityAction), nameof(CanTryWin11Compatibility),
                      nameof(CompactConnectionTitle), nameof(CompactConnectionHint),
                      nameof(CompactConnectText), nameof(CompactCanConnect), nameof(CompactStateText), nameof(CompactFirmware), nameof(CompactFirmwareHint), nameof(CompactHeadset), nameof(EnvironmentReportText) })

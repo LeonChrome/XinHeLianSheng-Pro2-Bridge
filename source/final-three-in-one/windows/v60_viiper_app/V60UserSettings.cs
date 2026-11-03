@@ -15,6 +15,7 @@ public sealed class V60UserSettings
     public string StickProcessingLabel { get; set; } = StickProcessingOption.Default.Label;
     public string SelectedModeKey { get; set; } = "pro2";
     public RearButtonConfiguration RearButtons { get; set; } = new();
+    public FaceButtonConfiguration FaceButtons { get; set; } = new();
     public bool LaunchAtLoginEnabled { get; set; }
     public bool AutoReconnectOnStartupEnabled { get; set; }
     public string[] LastConnectedPro2Addresses { get; set; } = new string[4];
@@ -63,6 +64,7 @@ public sealed class V60UserSettings
                 loaded.SelectedModeKey =
                     NormalizeModeKey(loaded.SelectedModeKey);
                 loaded.RearButtons = (loaded.RearButtons ?? new()).Normalize();
+                loaded.FaceButtons = (loaded.FaceButtons ?? new()).Normalize();
                 loaded.UsbipExecutablePath = UsbipRuntimeLocator.NormalizeExecutablePath(loaded.UsbipExecutablePath);
                 loaded.LastConnectedPro2Addresses =
                     NormalizeAddressSlots(loaded.LastConnectedPro2Addresses);
@@ -99,6 +101,7 @@ public sealed class V60UserSettings
             SelectedModeKey = NormalizeModeKey(SelectedModeKey);
             SlotModeKeys = Pro2SlotModes.Normalize(SlotModeKeys, SelectedModeKey);
             RearButtons = (RearButtons ?? new()).Normalize();
+            FaceButtons = (FaceButtons ?? new()).Normalize();
             UsbipExecutablePath = UsbipRuntimeLocator.NormalizeExecutablePath(UsbipExecutablePath);
             LastConnectedPro2Addresses = NormalizeAddressSlots(LastConnectedPro2Addresses);
             Pro2StickCalibrations = NormalizeStickCalibrations(Pro2StickCalibrations);

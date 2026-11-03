@@ -26,6 +26,18 @@ internal static class Program
         try
         {
             StartupRenderingRegressionTests.Run(Check);
+            V28RegressionTests.Run(Check);
+            if (args.Contains("--v28-only"))
+            {
+                Console.WriteLine("PASS: " + checks + " v2.8 assertions; offline only.");
+                return 0;
+            }
+            if (args.Contains("--capture-usbip-health"))
+            {
+                File.WriteAllText(Path.Combine(output,"actual-virtual-device.txt"), System.Text.Json.JsonSerializer.Serialize(WindowsVirtualDeviceProbe.Capture("054c","0ce6")));
+                File.WriteAllText(Path.Combine(output,"actual-device-events.txt"), WindowsDeviceEventEvidence.CaptureAsync(default).GetAwaiter().GetResult());
+                return 0;
+            }
             if (args.Contains("--multi-only"))
             {
                 MultiControllerRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
@@ -156,9 +168,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.7.4.0", "v2.7.4 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.8.0.0", "v2.8 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.7.4-sleep-connection-lifetime", "v2.7.4 release metadata");
+            "2.8-mapping-usbip-recovery", "v2.8 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -961,7 +973,7 @@ internal static class Program
             (vm.CompactSystemText.Contains("Windows 10") || vm.CompactSystemText.Contains("Windows 11")), "UI system family/version follows runtime metadata");
         Check(vm.CompactCanConnect && vm.CompactConnectText == "连接 Pro2", "offline connection button remains usable");
         var settingsTabs = Descendants<TabControl>(window).First();
-        settingsTabs.SelectedIndex = 3; Pump(window);
+        settingsTabs.SelectedIndex = 4; Pump(window);
         BluetoothRestartRegressionTests.RunUi(window, vm, Check, () => Pump(window), (dialog, name) => Save(dialog, name));
         var selectUsbip = (Button)window.FindName("SelectUsbipPathButton");
         var resetUsbip = (Button)window.FindName("ResetUsbipPathButton");
@@ -1104,12 +1116,11 @@ internal static class Program
         Check(vm.Pro2Slots.All(s => !s.InputSource.RuntimeBatteryRefreshEnabled), "UI switch disables every slot worker");
         vm.RuntimeBatteryRefreshEnabled = true;
         var illustration = new Pro2Illustration();
-        double X(string name) => Canvas.GetLeft((UIElement)illustration.FindName(name));
-        double Y(string name) => Canvas.GetTop((UIElement)illustration.FindName(name));
-        Check(Y("LeftStick") < Y("Dpad") && X("LeftStick") < X("Dpad"), "Pro2 left asymmetric layout");
-        Check(Y("RightStick") > Y("AButton") && X("RightStick") < X("AButton"), "Pro2 right asymmetric layout");
-        Check(Y("XButton") < Y("YButton") && Y("BButton") > Y("YButton") &&
-            X("YButton") < X("AButton"), "Nintendo ABXY layout, not Xbox");
+        var art = (Image)illustration.Content;
+        Check(art.Source is BitmapSource bitmap && bitmap.PixelWidth > 1000 && bitmap.PixelHeight > 500,
+            "controller artwork decodes from the embedded high resolution image");
+        Check(art.Stretch == Stretch.Uniform && System.Windows.Automation.AutomationProperties.GetName(illustration).Contains("上 X、右 A、下 B、左 Y"),
+            "controller illustration keeps proportions and accessible physical button positions");
         TestCompatibleHome(window, vm, source);
         typeof(Pro2BleInputSource).GetMethod("ResetLiveState", sourceFlags)!.Invoke(source, null);
         typeof(Pro2BleInputSource).GetProperty(nameof(Pro2BleInputSource.IsRunning))!.SetValue(source, false);
@@ -1133,8 +1144,8 @@ internal static class Program
             "removed Edge checkbox is absent from UI");
         vm.SelectCompactModeCommand.Execute("Pro2");
         var tabs = (TabControl)window.FindName("MainTabs");
-        Check(tabs.Items.Count == 4 && ((TabItem)tabs.Items[2]).Header.ToString() == "背键 / C 键",
-            "four functional tabs, dedicated rear-button page");
+        Check(tabs.Items.Count == 5 && ((TabItem)tabs.Items[2]).Header.ToString() == "背键 / C 键",
+            "five functional tabs, dedicated rear-button and face-mapping pages");
         Check(vm.RearEditors.Count == 3 && vm.RearEditors[0].Title.Contains("GL") && vm.RearEditors[2].Title == "C 键", "rear keys and C editable");
         vm.RearEditingMode = "PS5";
         Check(vm.RearEditors[0].Buttons.Any(b => b.Label == "×") &&
@@ -1240,6 +1251,15 @@ internal static class Program
         tabs.SelectedIndex = 2; Pump(window); Save(window, "ui-pro1-rear.png");
         vm.SelectCompactModeCommand.Execute("Pro2");
         vm.RearEditingMode = "Xbox";
+        tabs.SelectedIndex = 3; Pump(window);
+        var faceView = Descendants<FaceMappingView>(window).Single();
+        Check(((Image)faceView.FindName("MappingControllerImage")).Source is BitmapSource faceBitmap && faceBitmap.PixelWidth > 1000,
+            "offline mapping page decodes the supplied controller image");
+        vm.FaceEditingMode = ViiperVirtualMode.DualSenseLike;
+        vm.SelectedFacePreset = FaceLayoutPreset.NintendoNames; Pump(window);
+        Check(Descendants<ComboBox>(faceView).Count(c => c.IsVisible) == 6 && vm.FaceRows[1].Target == GamepadButtons.South,
+            "offline PS5 mapping exposes four editable outputs plus mode and preset");
+        Save(window, "ui-face-mapping-ps5.png");
         for (int tab = 0; tab < tabs.Items.Count; tab++)
         {
             tabs.SelectedIndex = tab; vm.ShowDiagnostics = false; Pump(window);
@@ -1360,7 +1380,7 @@ internal static class Program
             for (int tab = 0; tab < tabs.Items.Count; tab++)
             {
                 tabs.SelectedIndex = tab;
-                vm.ShowDiagnostics = tab == 3;
+                vm.ShowDiagnostics = tab == 4;
                 Pump(window);
                 Save(window, "ui-" + size + "-tab-" + tab + ".png");
                 Check(window.ActualWidth > 0 && window.ActualHeight > 0, "WPF layout " + size + "/" + tab);

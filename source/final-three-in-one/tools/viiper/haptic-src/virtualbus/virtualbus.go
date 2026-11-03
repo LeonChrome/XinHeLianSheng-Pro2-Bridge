@@ -114,6 +114,9 @@ func (vb *VirtualBus) Add(dev usb.Device) (context.Context, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = context.WithValue(ctx, device.ExportMetaKey, &meta)
 	ctx = context.WithValue(ctx, device.ConnTimerKey, connTimer)
+	lifetime := device.NewStreamLifetime()
+	ctx = context.WithValue(ctx, device.StreamLifetimeKey, lifetime)
+	context.AfterFunc(ctx, lifetime.Close)
 
 	vb.devices = append(vb.devices, busDevice{dev: dev, meta: meta, ctx: ctx, cancel: cancel})
 	return ctx, nil
@@ -163,10 +166,18 @@ func (vb *VirtualBus) GetBusEmptyContext() context.Context {
 // RemoveDeviceByID removes a device by its  ID (e.g., "1").
 // Returns error if not found.
 func (vb *VirtualBus) RemoveDeviceByID(deviceID string) error {
+	return vb.RemoveDeviceIfContext(deviceID, nil)
+}
+
+// Removal callbacks must not delete a later device which reused the same ID.
+func (vb *VirtualBus) RemoveDeviceIfContext(deviceID string, expected context.Context) error {
 	vb.mtx.Lock()
 	defer vb.mtx.Unlock()
 	for i, d := range vb.devices {
 		if fmt.Sprintf("%d", d.meta.DevID) == deviceID {
+			if expected != nil && d.ctx != expected {
+				return fmt.Errorf("device %s generation changed", deviceID)
+			}
 			if d.cancel != nil {
 				d.cancel()
 			}

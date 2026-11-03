@@ -1,0 +1,6 @@
+Mode: built-in image_gen edit, transparent background.
+Input: user-supplied procon_imagedisplaystand.avif (converted to PNG only to inspect and pass as the edit target).
+Output: Controller-pro2-v2.8.png, embedded WPF resource; preserve alpha and proportions.
+
+Prompt:
+Edit the supplied controller product image for use inside a Windows controller utility. Remove ONLY the display pedestal/stand and the white background. Output a clean transparent cutout of the controller itself, front view exactly as in the supplied image, centered with tight but comfortable padding. Preserve the controller body silhouette, gold/black geometric decoration, green right grip, all sticks, D-pad and every button at its exact existing position. Preserve labels exactly: X at top, A at right, B at bottom, Y at left, plus/minus, Home, Capture, and C. Do not invent buttons, change geometry, rotate, add labels, arrows, hands, text, reflections or a floor. Maintain a sharp product-render appearance and natural original proportions. This is a background/stand removal edit of the provided image, not a redesign.

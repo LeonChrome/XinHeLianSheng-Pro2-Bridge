@@ -19,6 +19,18 @@ public sealed record UsbipAttachmentRepairResult(
 
 public static class ControllerEnumerationDiagnostics
 {
+    public static async Task<UsbipAttachmentObservation> ProbeAttachmentAsync(ViiperDevice device, int apiPort, CancellationToken token)
+    {
+        UsbipRuntime? runtime = UsbipRuntimeLocator.Find();
+        if (runtime == null) return new(UsbipAttachmentState.Unknown, [], "找不到 usbip.exe；请在设置中选择已安装的位置");
+        var result = await RunProcessAsync(runtime.ExePath, ["port"], runtime.DirectoryPath, TimeSpan.FromSeconds(4), token);
+        var ports = result.ExitCode == 0 ? FindUsbipPortsForRemoteDevice(result.CombinedOutput, DeriveUsbPort(apiPort), device.BusId, device.DevId) : [];
+        var pnp = result.ExitCode == 0 && ports.Count > 0 ? await Task.Run(() => WindowsVirtualDeviceProbe.Capture(device.Vid, device.Pid), token)
+            : new VirtualPnpSnapshot(false, [], result.CombinedOutput);
+        var observed = UsbipAttachmentHealth.Evaluate(result.ExitCode == 0, ports, pnp);
+        return result.ExitCode == 0 ? observed : observed with { Detail = "USBIP 查询失败 exit=" + result.ExitCode + " · " + OneLine(result.CombinedOutput) };
+    }
+
     private static readonly Regex PortRegex =
         new(@"^\s*Port\s+(\d+)\s*:", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex VidPidRegex =
@@ -196,7 +208,8 @@ public static class ControllerEnumerationDiagnostics
         ViiperDevice device,
         string host,
         int apiPort,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool reattachExisting = false)
     {
         var lines = new List<string>();
         if (!IsLoopbackHost(host))
@@ -234,9 +247,9 @@ public static class ControllerEnumerationDiagnostics
             .Distinct()
             .Order()
             .ToArray();
-        if (matchingPorts.Length == 1)
+        if (matchingPorts.Length == 1 && !reattachExisting)
         {
-            lines.Add("[USBIP_SINGLETON] state=healthy port=" + matchingPorts[0] +
+            lines.Add("[USBIP_SINGLETON] state=port_present pnp_ready=not_checked port=" + matchingPorts[0] +
                       " remote_bus_dev=" + device.BusId + "/" + device.DevId);
             return new UsbipAttachmentRepairResult(lines, 0, 0, 1);
         }
@@ -246,7 +259,7 @@ public static class ControllerEnumerationDiagnostics
                   " remote_bus_dev=" + device.BusId + "/" + device.DevId);
 
         int detachedCount = 0;
-        foreach (int port in SelectPortsToDetachForSingleton(matchingPorts))
+        foreach (int port in reattachExisting ? matchingPorts : SelectPortsToDetachForSingleton(matchingPorts))
         {
             ProcessResult detach = await RunProcessAsync(
                 runtime.ExePath,
@@ -265,12 +278,17 @@ public static class ControllerEnumerationDiagnostics
 
         if (matchingPorts.Length > 0)
         {
-            await WaitForRemoteDeviceAbsentAsync(
+            bool absent = await WaitForRemoteDeviceAbsentAsync(
                 runtime,
                 usbServerPort,
                 device.BusId,
                 device.DevId,
                 cancellationToken);
+            if (!absent)
+            {
+                lines.Add("[USBIP_SINGLETON] aborted=detach_not_confirmed no_additional_attach=true");
+                return new UsbipAttachmentRepairResult(lines, detachedCount, 0, -1);
+            }
         }
 
         ProcessResult attach = await RunProcessAsync(
@@ -496,12 +514,12 @@ $items | ConvertTo-Json -Depth 5 -Compress
         uint busId,
         string devId)
     {
-        string endpointToken = ":" + usbServerPort + "/" + busId + "-" + devId;
+        string endpointPattern = Regex.Escape(":" + usbServerPort + "/" + busId + "-" + devId) + @"(?=$|[\s/])";
         string remoteBusDevPattern = @"remote\s+bus/dev\s+0*" + busId + @"/0*" +
                                      Regex.Escape(devId) + @"(?:\D|$)";
         return ParseUsbipPortBlocks(output)
             .Where(block =>
-                block.Text.Contains(endpointToken, StringComparison.OrdinalIgnoreCase) ||
+                Regex.IsMatch(block.Text, endpointPattern, RegexOptions.IgnoreCase) ||
                 (block.Text.Contains(":" + usbServerPort + "/", StringComparison.OrdinalIgnoreCase) &&
                  Regex.IsMatch(block.Text, remoteBusDevPattern, RegexOptions.IgnoreCase)))
             .Select(block => block.Port)
@@ -807,6 +825,11 @@ $items | ConvertTo-Json -Depth 5 -Compress
             {
             }
             return new ProcessResult(-2, "", "timeout after " + timeout.TotalSeconds.ToString("F0") + "s");
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+            throw;
         }
 
         string stdout = await stdoutTask;

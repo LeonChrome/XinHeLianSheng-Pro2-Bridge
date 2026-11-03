@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace Y700Switch2V60Viiper;
 
-public sealed class ViiperBridgeSession : IAsyncDisposable
+public sealed partial class ViiperBridgeSession : IAsyncDisposable
 {
     private const ulong PerformanceLogIntervalFrames = 1000;
     private string feedbackSource = "等待游戏反馈";
@@ -24,6 +24,8 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
     private readonly IGamepadInputSource? inputSource;
     private readonly IGamepadOutputSink? outputSink;
     private readonly RearButtonMapper rearButtonMapper = new();
+    private readonly FaceButtonMapper faceButtonMapper = new();
+    private FaceButtonConfiguration faceButtonConfiguration = new();
     private readonly MotionValidityPolicy motionValidityPolicy = new();
     private RearButtonConfiguration rearButtonConfiguration = new();
     private int rearCancelRequested;
@@ -69,7 +71,8 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         ProfessionalImuOptions? professionalImuOptions = null,
         ProfessionalHidAuditController? professionalHidAuditController = null,
         IProgress<ProfessionalImuUiSnapshot>? professionalImuUiProgress = null,
-        RearButtonConfiguration? rearButtons = null)
+        RearButtonConfiguration? rearButtons = null,
+        FaceButtonConfiguration? faceButtons = null)
     {
         this.client = client;
         this.profile = profile;
@@ -85,7 +88,11 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         this.professionalHidAuditController = professionalHidAuditController ?? new ProfessionalHidAuditController();
         this.professionalImuUiProgress = professionalImuUiProgress;
         rearButtonConfiguration = (rearButtons ?? new()).Normalize();
+        faceButtonConfiguration = (faceButtons ?? new()).Normalize();
     }
+
+    public void SetFaceButtons(FaceButtonConfiguration configuration) =>
+        Volatile.Write(ref faceButtonConfiguration, configuration.Normalize());
 
     public void SetRearButtons(RearButtonConfiguration configuration)
     {
@@ -201,6 +208,8 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 ". Please use 清理残留虚拟设备 and retry.");
         }
 
+        // Hold the API lease before enumeration: slow driver startup must not expire the device.
+        SetStream(await client.OpenStreamAsync(device.BusId, device.DevId, cancellationToken));
         UsbipAttachmentRepairResult singletonResult =
             await ControllerEnumerationDiagnostics.EnsureSingleUsbipAttachmentAsync(
                 device,
@@ -224,7 +233,6 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                 singletonResult.FinalPortCount + ". Please retry after using 清理残留虚拟设备.");
         }
 
-        SetStream(await client.OpenStreamAsync(device.BusId, device.DevId, cancellationToken));
         if (inputSource is IGamepadSessionInputSource sessionInputSource)
         {
             int discardedFrames = sessionInputSource.PrepareForConsumerSession();
@@ -253,6 +261,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
 
         inputTask = Task.Run(() => RunLoopAsync("input", InputLoopAsync, cts.Token));
         feedbackTask = Task.Run(() => RunLoopAsync("feedback", FeedbackLoopAsync, cts.Token));
+        attachmentTask = Task.Run(() => MonitorAttachmentAsync(cts.Token));
         if(profile.UsesDualSenseHaptics)
         {
             CancellationToken diagnosticToken=cts.Token;
@@ -290,7 +299,10 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
 
         await DrainTaskAsync(inputTask);
         await DrainTaskAsync(feedbackTask);
+        await DrainTaskAsync(attachmentTask);
+        SetOutputHealth(new(VirtualOutputState.Stopped, "游戏输出已停止", "", OutputHealth.Repairs));
         rearButtonMapper.Reset();
+        faceButtonMapper.Reset();
         motionValidityPolicy.Reset();
         // Stop the physical actuators only after the feedback loop has drained,
         // so no late game frame can overwrite this neutral during mode switch.
@@ -637,6 +649,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
                     ref lastMotionUpdate,
                     ref filteredMotionState);
                 GamepadState physicalControls = continuous;
+                continuous = faceButtonMapper.Apply(continuous, Volatile.Read(ref faceButtonConfiguration).ForMode(profile.Mode));
                 if (inputSource?.IsRunning == true && age <= TimeSpan.FromMilliseconds(100))
                     continuous = rearButtonMapper.Apply(continuous, profile.Mode,
                         Volatile.Read(ref rearButtonConfiguration), loopTicks);
@@ -652,6 +665,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
             else
             {
                 rearButtonMapper.Reset();
+                faceButtonMapper.Reset();
                 currentSameStatePushes = 0;
                 packet = MapInputPacket(null);
                 source = "neutral";
@@ -1367,6 +1381,7 @@ public sealed class ViiperBridgeSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            SetOutputHealth(new(VirtualOutputState.Failed, "虚拟输出中断，请停止后重新进入游戏", name + ": " + ex.Message, OutputHealth.Repairs));
             progress.Report("[VIIPER] " + name + " loop failed: " + ex.Message);
             cts.Cancel();
             if (Interlocked.Exchange(ref faultReported, 1) == 0)

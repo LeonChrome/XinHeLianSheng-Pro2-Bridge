@@ -168,9 +168,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.8.0.0", "v2.8 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.8.1.0", "v2.8.1 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.8-mapping-usbip-recovery", "v2.8 release metadata");
+            "2.8.1-wake-recovery", "v2.8.1 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

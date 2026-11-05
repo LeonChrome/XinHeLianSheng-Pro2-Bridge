@@ -1536,7 +1536,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                 preferred,
                 onlyPreferred,
                 ResolveStickCalibration,
-                cancellationToken);
+                cancellationToken,
+                wakeAdvertisement: TakeWakeAdvertisement(primarySlot));
         }
         finally
         {
@@ -1985,7 +1986,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                               " no_live; retry_delay_ms=" + retryDelay.TotalMilliseconds.ToString("F0") +
                               " failed_streak=" + failedAttemptStreak +
                               " cooldown_guard=1.");
-                    await Task.Delay(retryDelay, cancellationToken);
+                    await WaitForOfflineRetryAsync(pro2Slots[0], retryDelay, cancellationToken);
                 }
             }
         }
@@ -2223,7 +2224,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                               " attempt=" + attempt +
                               " no_live retry_delay_ms=" + retryDelay.TotalMilliseconds.ToString("F0") +
                               " failed_streak=" + failedAttemptStreak);
-                    await Task.Delay(retryDelay, cancellationToken);
+                    await WaitForOfflineRetryAsync(slot, retryDelay, cancellationToken);
                 }
             }
         }
@@ -2270,7 +2271,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                 preferred,
                 onlyPreferred,
                 ResolveStickCalibration,
-                cancellationToken);
+                cancellationToken,
+                wakeAdvertisement: TakeWakeAdvertisement(slot));
         }
         finally
         {

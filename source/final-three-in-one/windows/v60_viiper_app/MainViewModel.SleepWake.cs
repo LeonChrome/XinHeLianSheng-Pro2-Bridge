@@ -25,6 +25,7 @@ public sealed partial class MainViewModel
         public long WakeObservedTicks;
         public bool WakeRateReported;
         public bool WakeRateWasLow;
+        public Pro2WakeAdvertisement? WakeAdvertisement;
     }
 
     public IReadOnlyList<int> AutoSleepMinuteOptions => AutoSleepMinuteChoices;
@@ -78,6 +79,7 @@ public sealed partial class MainViewModel
         state.LastPairingAttemptTicks = 0;
         state.LastSleepAttemptTicks = 0;
         state.Sleeping = false;
+        state.WakeAdvertisement = null;
         slot.IsSleeping = false;
         slot.SleepStatus = AutoSleepEnabled ? "自动休眠：每只手柄独立计时" : "";
         OnPropertyChanged(nameof(IsPrimarySleeping));
@@ -150,6 +152,7 @@ public sealed partial class MainViewModel
             state.Sleeping = true;
             state.SleepingAddress = address;
             state.SleepingSinceUtc = DateTime.UtcNow;
+            state.WakeAdvertisement = null;
             slot.IsSleeping = true;
             await source.StopAsync();
             // The sleep-induced disconnect is expected; do not report it as an outage.
@@ -204,48 +207,11 @@ public sealed partial class MainViewModel
 
         await Pro2SleepSafety.WaitForWakeAsync(async token =>
         {
-        var woke = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var stopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Passive };
-        Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs> onReceived = (_, args) =>
-        {
-            if (Pro2SleepSafety.IsWakeAdvertisement(target, args.BluetoothAddress,
-                args.Advertisement.ManufacturerData.Any(data => data.CompanyId == 0x0553)))
-                woke.TrySetResult(true);
-        };
-        Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementWatcherStoppedEventArgs> onStopped = (_, args) =>
-        {
-            stopped.TrySetResult(true);
-            if (args.Error != Windows.Devices.Bluetooth.BluetoothError.Success)
-                woke.TrySetException(new InvalidOperationException("watcher_stopped=" + args.Error));
-            else woke.TrySetResult(false);
-        };
-        watcher.Received += onReceived;
-        watcher.Stopped += onStopped;
-
-        try
-        {
-            using CancellationTokenRegistration registration =
-                token.Register(() => woke.TrySetCanceled(token));
-            watcher.Start();
-            AppendLog("[PRO2_WAKE] slot=" + slot.Index + " waiting address=" + state.SleepingAddress +
-                      " watcher=" + watcher.Status + " scan=passive");
-            return await woke.Task;
-        }
-        finally
-        {
-            watcher.Received -= onReceived;
-            try
-            {
-                watcher.Stop();
-                if (watcher.Status is not (BluetoothLEAdvertisementWatcherStatus.Stopped or BluetoothLEAdvertisementWatcherStatus.Aborted))
-                    await stopped.Task.WaitAsync(TimeSpan.FromSeconds(2));
-                AppendLog("[PRO2_WAKE_SCAN_RELEASE] slot=" + slot.Index + " stopped=true status=" + watcher.Status + " before_gatt_reconnect=true");
-            }
-            finally { watcher.Stopped -= onStopped; }
-        }
+            state.WakeAdvertisement = await ListenForWakeAdvertisementAsync(slot.Index, target, token);
+            return state.WakeAdvertisement != null;
         }, async (error, token) =>
         {
+            state.WakeAdvertisement = null;
             AppendLog("[PRO2_WAKE] slot=" + slot.Index + " listener_retry=true sleeping_preserved=true error=" + error?.Message);
             slot.Status = "休眠中 · 蓝牙监听暂不可用，正在重试";
             slot.SleepStatus = slot.Status;
@@ -258,10 +224,114 @@ public sealed partial class MainViewModel
         slot.IsSleeping = false;
         slot.Status = "检测到手柄唤醒，正在重连…";
         slot.SleepStatus = slot.Status;
-        AppendLog("[PRO2_WAKE] slot=" + slot.Index + " confirmed_advertisement=true address=" + state.SleepingAddress);
+        AppendLog("[PRO2_WAKE] slot=" + slot.Index + " confirmed_advertisement=true address=" + state.SleepingAddress +
+            " connectable=" + state.WakeAdvertisement?.Connectable +
+            " slept_seconds=" + (DateTime.UtcNow - state.SleepingSinceUtc).TotalSeconds.ToString("F0"));
         UpdateMultiSlotInputStatus();
         RaiseConnectionStateChanged();
         OnPropertyChanged(nameof(IsPrimarySleeping));
+    }
+
+    private async Task<Pro2WakeAdvertisement?> ListenForWakeAdvertisementAsync(
+        int slot, ulong target, CancellationToken token)
+    {
+        var woke = new TaskCompletionSource<Pro2WakeAdvertisement?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Passive };
+        Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs> onReceived = (_, args) =>
+        {
+            if (Pro2SleepSafety.IsWakeAdvertisement(target, args.BluetoothAddress,
+                args.Advertisement.ManufacturerData.Any(data => data.CompanyId == 0x0553)))
+            {
+                var candidate = new Pro2ManualCandidate(args.BluetoothAddress, args.BluetoothAddressType,
+                    args.Advertisement.LocalName ?? "", args.RawSignalStrengthInDBm, true, 30);
+                bool connectable = args.AdvertisementType is BluetoothLEAdvertisementType.ConnectableUndirected
+                    or BluetoothLEAdvertisementType.ConnectableDirected ||
+                    args.AdvertisementType == BluetoothLEAdvertisementType.Extended && args.IsConnectable;
+                if (candidate.IsValid && (DateTimeOffset.UtcNow - args.Timestamp).TotalSeconds is >= -1 and <= 5)
+                    woke.TrySetResult(new(candidate, Stopwatch.GetTimestamp(), connectable));
+            }
+        };
+        Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementWatcherStoppedEventArgs> onStopped = (_, args) =>
+        {
+            stopped.TrySetResult(true);
+            if (args.Error != Windows.Devices.Bluetooth.BluetoothError.Success)
+                woke.TrySetException(new InvalidOperationException("watcher_stopped=" + args.Error));
+            else woke.TrySetResult(null);
+        };
+        watcher.Received += onReceived;
+        watcher.Stopped += onStopped;
+
+        try
+        {
+            using CancellationTokenRegistration registration =
+                token.Register(() => woke.TrySetCanceled(token));
+            watcher.Start();
+            AppendLog("[PRO2_WAKE] slot=" + slot + " waiting address=" + target.ToString("X12") +
+                      " watcher=" + watcher.Status + " scan=passive");
+            return await woke.Task;
+        }
+        finally
+        {
+            watcher.Received -= onReceived;
+            try
+            {
+                watcher.Stop();
+                if (watcher.Status is not (BluetoothLEAdvertisementWatcherStatus.Stopped or BluetoothLEAdvertisementWatcherStatus.Aborted))
+                    await stopped.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                AppendLog("[PRO2_WAKE_SCAN_RELEASE] slot=" + slot + " stopped=true status=" + watcher.Status + " before_gatt_reconnect=true");
+            }
+            finally { watcher.Stopped -= onStopped; }
+        }
+    }
+
+    private async Task WaitForOfflineRetryAsync(Pro2ControllerSlot slot, TimeSpan delay, CancellationToken token)
+    {
+        string savedAddress = LastKnownPro2AddressForSlot(slot);
+        string reason = slot.InputSource.ConnectionDiagnosis.Code;
+        if ((slot.Index == 1 && manualReconnectTarget != null) ||
+            reason is not ("no_pro2" or "no_advertisements" or "saved_not_seen") ||
+            !BleDiagnosticTargetResolver.TryParsePublicAddress(savedAddress, out ulong target))
+        {
+            await Task.Delay(delay, token);
+            return;
+        }
+
+        // Even during the long offline backoff, listen for this slot's wake
+        // beacon. No connection is attempted unless this address is heard.
+        long started = Stopwatch.GetTimestamp();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(delay);
+        try
+        {
+            var advertisement = await ListenForWakeAdvertisementAsync(slot.Index, target, deadline.Token);
+            token.ThrowIfCancellationRequested();
+            if (advertisement != null)
+            {
+                AutoSleepState(slot.Index).WakeAdvertisement = advertisement;
+                AppendLog("[PRO2_BLE_RECOVERY] slot=" + slot.Index + " action=offline_backoff_interrupted_by_wake address=" +
+                    advertisement.Candidate.AddressText + " connectable=" + advertisement.Connectable);
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !token.IsCancellationRequested) { }
+        catch (Exception ex) when (!token.IsCancellationRequested)
+        {
+            AppendLog("[PRO2_BLE_RECOVERY] slot=" + slot.Index + " offline_listener_error=" + ex.Message);
+        }
+        TimeSpan remaining = delay - Stopwatch.GetElapsedTime(started);
+        if (remaining > TimeSpan.Zero) await Task.Delay(remaining, token);
+        token.ThrowIfCancellationRequested();
+    }
+
+    // Consume under the connection gate. A delayed observation falls back to a
+    // fresh scan, still restricted to the same controller for this wake attempt.
+    private Pro2WakeAdvertisement? TakeWakeAdvertisement(Pro2ControllerSlot slot)
+    {
+        var state = AutoSleepState(slot.Index);
+        var advertisement = state.WakeAdvertisement;
+        state.WakeAdvertisement = null;
+        return advertisement;
     }
 
     private void RecordWakeRateOutcome(Pro2ControllerSlot slot)

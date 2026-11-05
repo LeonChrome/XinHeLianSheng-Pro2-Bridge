@@ -783,6 +783,8 @@ public sealed partial class Pro2BleInputSource :
         return report;
     }
 
+    private readonly Pro2BleConnectionRecovery connectionRecovery = new();
+
     public async Task StartAsync(
         IProgress<string> progress,
         IReadOnlySet<string> excludedAddresses,
@@ -790,7 +792,8 @@ public sealed partial class Pro2BleInputSource :
         bool onlyPreferredAddresses,
         Func<string, Pro2StickCalibrationProfile?>? stickCalibrationResolver,
         CancellationToken cancellationToken,
-        Pro2ManualCandidate? manualCandidate = null)
+        Pro2ManualCandidate? manualCandidate = null,
+        Pro2WakeAdvertisement? wakeAdvertisement = null)
     {
         if (IsRunning)
         {
@@ -799,11 +802,24 @@ public sealed partial class Pro2BleInputSource :
         }
 
         long connectionAttemptStarted = Stopwatch.GetTimestamp();
-        lock (connectionEvidenceGate) connectionEvidence = new();
+        BleConnectionAttemptEvidence? previousFailure;
+        lock (connectionEvidenceGate)
+        {
+            previousFailure = lastConnectionFailure;
+            connectionEvidence = new();
+        }
         try
         {
         cancellationToken.ThrowIfCancellationRequested();
         await StopAsync();
+        if (connectionRecovery.IsDraining)
+        {
+            ConnectionStage("GATT 等待释放", previousFailure?.Address);
+            RecordConnectionFailure("gatt_draining", "上一轮 Windows 蓝牙请求尚未返回");
+            Status = "正在等待上一轮 Windows 蓝牙连接请求结束，随后自动重试。";
+            progress.Report("[PRO2_BLE_RECOVERY] action=wait_for_previous_windows_request new_gatt_request=false");
+            return;
+        }
         win11BeforeParameters = null;
         win11AfterCustomParameters = null;
         win11ParameterRouteStatus = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
@@ -827,6 +843,15 @@ public sealed partial class Pro2BleInputSource :
         {
             foreach (string address in preferredAddresses) preferred.Add(address);
         }
+        bool useWakeAdvertisement = manualCandidate == null && wakeAdvertisement is not null &&
+            wakeAdvertisement.IsUsable(excludedAddresses, preferred, onlyPreferredAddresses);
+        if (manualCandidate == null && wakeAdvertisement != null &&
+            !excludedAddresses.Contains(wakeAdvertisement.Candidate.AddressText) &&
+            (!onlyPreferredAddresses || preferred.Count == 0 || preferred.Contains(wakeAdvertisement.Candidate.AddressText)))
+        {
+            preferred = new(StringComparer.OrdinalIgnoreCase) { wakeAdvertisement.Candidate.AddressText };
+            onlyPreferredAddresses = true;
+        }
         TimeSpan scanDuration = TimeSpan.FromSeconds(customConnectionParameterExperiment ? 20 : 8);
         long discoveryStarted = Stopwatch.GetTimestamp();
         List<BleCandidate> candidates;
@@ -839,6 +864,16 @@ public sealed partial class Pro2BleInputSource :
                 { IsKnownAddressProbe = true, IsManualSelection = true }];
             progress.Report("[BLE_MANUAL] selected=" + manualCandidate.AddressDetail +
                 " score=" + manualCandidate.Score + " exclusive=true exact_uuid_gate=true");
+        }
+        else if (useWakeAdvertisement)
+        {
+            var wake = wakeAdvertisement!.Candidate;
+            candidates = [new(wake.Address, wake.AddressType, wake.Name, wake.Rssi, wake.NintendoManufacturer, wake.Score)
+                { IsKnownAddressProbe = true, IsWakeAdvertisement = true }];
+            UpdateConnectionEvidence(e => e with { Advertisements = 1, Candidates = 1, ScanModes = "wake_passive",
+                ScanTrace = "wake_passive fresh advertisement; reusing observed address/type\n" });
+            progress.Report("[PRO2_BLE_RECOVERY] action=use_fresh_wake_advertisement address=" + wake.AddressText +
+                " age_ms=" + Stopwatch.GetElapsedTime(wakeAdvertisement.ObservedTicks).TotalMilliseconds.ToString("F0"));
         }
         else candidates = await ScanCandidatesAsync(progress, scanDuration, cancellationToken,
             Pro2DiscoveryPolicy.AllowsEarlyCompletion(Environment.GetCommandLineArgs(), customConnectionParameterExperiment)
@@ -896,6 +931,7 @@ public sealed partial class Pro2BleInputSource :
         int skippedNonPreferred = 0;
         int skippedReserved = 0;
         int attemptedCandidates = 0;
+        bool retriedServiceDiscovery = false;
         foreach (var item in orderedCandidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -927,7 +963,26 @@ public sealed partial class Pro2BleInputSource :
                                     ? "saved_profile"
                                     : "fixed_1600_fallback") +
                                 " " + calibrationSummary);
-                if (await ConnectCandidateAsync(candidate, progress, cancellationToken))
+                bool knownTarget = candidate.IsWakeAdvertisement || preferred.Contains(candidateAddress);
+                bool serviceFirst = candidate.IsWakeAdvertisement ||
+                    (!candidate.IsManualSelection && knownTarget &&
+                    Pro2BleConnectionRecovery.IsServiceFailure(previousFailure, candidateAddress));
+                bool connected = await ConnectCandidateAsync(candidate, progress, cancellationToken, serviceFirst);
+                BleConnectionAttemptEvidence? failure;
+                lock (connectionEvidenceGate) failure = connectionEvidence;
+                if (!connected && !retriedServiceDiscovery && !serviceFirst && !candidate.IsManualSelection &&
+                    knownTarget && !connectionRecovery.IsDraining &&
+                    Stopwatch.GetElapsedTime(candidateStarted) < TimeSpan.FromSeconds(5) &&
+                    Pro2BleConnectionRecovery.IsServiceFailure(failure, candidateAddress))
+                {
+                    retriedServiceDiscovery = true;
+                    progress.Report("[PRO2_BLE_RECOVERY] action=retry_same_target trigger=" + failure!.Outcome +
+                        " route=service_first address=" + candidateAddress);
+                    await CloseCurrentAsync("释放失败连接，重新打开本只 Pro2。");
+                    await Task.Delay(750, cancellationToken);
+                    connected = await ConnectCandidateAsync(candidate, progress, cancellationToken, serviceFirst: true);
+                }
+                if (connected)
                 {
                     connectedLabel = DescribeCandidate(candidate);
                     lock (gate)
@@ -956,6 +1011,12 @@ public sealed partial class Pro2BleInputSource :
                 await CloseCurrentAsync("已取消 Pro2 连接。");
                 throw;
             }
+            catch (TimeoutException ex)
+            {
+                RecordConnectionFailure("timeout", ex.Message);
+                progress.Report("[PRO2_BLE_RECOVERY] timeout=" + ex.Message +
+                    " pending_windows_request=" + connectionRecovery.IsDraining);
+            }
             catch (Exception ex)
             {
                 RecordConnectionFailure(ex is UnauthorizedAccessException ? "AccessDenied" : "exception",
@@ -970,6 +1031,7 @@ public sealed partial class Pro2BleInputSource :
             UpdateConnectionEvidence(e => e with { CandidateTrace = e.CandidateTrace +
                 $"目标 {candidateAddress} · {e.Stage} · {e.Outcome} · {e.Error}\n" });
             await CloseCurrentAsync("候选 BLE 未确认 live，继续尝试下一项。");
+            if (connectionRecovery.IsDraining) break;
         }
 
         if (skippedNonPreferred > 0)
@@ -1218,20 +1280,16 @@ public sealed partial class Pro2BleInputSource :
     private async Task<bool> ConnectCandidateAsync(
         BleCandidate candidate,
         IProgress<string> progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool serviceFirst)
     {
         ResetLiveState();
         BeginProtocolAudit(progress);
         ConnectionStage("打开设备", FormatAddress(candidate.Address));
         SetConnectionPhase(Pro2ConnectionPhase.Connecting);
-        BluetoothLEDevice? opened;
-        using (var openDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
-        {
-            openDeadline.CancelAfter(TimeSpan.FromSeconds(10));
-            try { opened = await BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType).AsTask(openDeadline.Token); }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            { RecordConnectionFailure("timeout", "device open deadline"); return false; }
-        }
+        BluetoothLEDevice? opened = await connectionRecovery.AwaitAsync(
+            BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType).AsTask(),
+            TimeSpan.FromSeconds(10), result => result?.Dispose(), cancellationToken);
         if (opened == null)
         {
             RecordConnectionFailure("device_null", "FromBluetoothAddressAsync=null");
@@ -1247,24 +1305,25 @@ public sealed partial class Pro2BleInputSource :
                         " name=" + (opened.Name ?? candidate.Name ?? "<unnamed>"));
         if (opened.ConnectionStatus == BluetoothConnectionStatus.Connected) AuditConnectionActive("windows");
 
-        await ObserveGattSessionAsync(opened, progress);
-        ObserveWindowsConnectionParameters(opened, progress);
-        await Task.Delay(500, cancellationToken);
-        if (!candidate.IsManualSelection && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
-            BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters)
+        if (!serviceFirst)
         {
-            TryRequestWindows11ThroughputPreference(opened, "initial", progress);
+            ConnectionStage("打开 GATT 会话");
+            await ObserveGattSessionAsync(opened, progress, cancellationToken);
+            ObserveWindowsConnectionParameters(opened, progress);
+            await Task.Delay(500, cancellationToken);
+            if (!candidate.IsManualSelection && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+                BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters)
+                TryRequestWindows11ThroughputPreference(opened, "initial", progress);
         }
 
         ConnectionStage("GATT 服务发现");
-        GattDeviceServicesResult services;
-        using (var discoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
-        {
-            discoveryDeadline.CancelAfter(TimeSpan.FromSeconds(candidate.IsKnownAddressProbe ? 10 : 20));
-            try { services = await opened.GetGattServicesAsync(BluetoothCacheMode.Uncached).AsTask(discoveryDeadline.Token); }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            { RecordConnectionFailure("timeout", "GATT service discovery deadline"); return false; }
-        }
+        if (serviceFirst)
+            progress.Report("[PRO2_BLE_RECOVERY] route=service_first maintain_after_identity=true address=" +
+                FormatAddress(candidate.Address));
+        GattDeviceServicesResult services = await connectionRecovery.AwaitAsync(
+            opened.GetGattServicesAsync(BluetoothCacheMode.Uncached).AsTask(),
+            TimeSpan.FromSeconds(candidate.IsKnownAddressProbe || serviceFirst ? 10 : 20),
+            DisposeLateServices, cancellationToken);
         if (services.Status != GattCommunicationStatus.Success)
         {
             RecordConnectionFailure(services.Status.ToString(), "ATT=" + (services.ProtocolError?.ToString("X2") ?? "none"));
@@ -1274,9 +1333,8 @@ public sealed partial class Pro2BleInputSource :
 
         ownedGattServices.AddRange(services.Services);
         ConnectionStage("GATT 特征发现");
-        await DiscoverGattChannelsAsync(services.Services, progress,
-            candidate.IsManualSelection ? cancellationToken : CancellationToken.None);
-        if (candidate.IsKnownAddressProbe)
+        await DiscoverGattChannelsAsync(services.Services, progress, cancellationToken);
+        if (candidate.IsKnownAddressProbe || serviceFirst)
         {
             bool exactPro2 = commandCharacteristic?.Uuid == CmdUuid && ackCharacteristic?.Uuid == AckUuid &&
                 fd2Characteristic?.Uuid == NotifyFd2Uuid;
@@ -1288,7 +1346,13 @@ public sealed partial class Pro2BleInputSource :
             }
             progress.Report("[BLE_KNOWN_PROBE] identity_verified=true via exact Pro2 cmd/ack/FD2 UUIDs; starting normal initialization.");
         }
-        if (candidate.IsManualSelection && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
+        if (serviceFirst)
+        {
+            ConnectionStage("打开 GATT 会话");
+            await ObserveGattSessionAsync(opened, progress, cancellationToken);
+            ObserveWindowsConnectionParameters(opened, progress);
+        }
+        if ((candidate.IsManualSelection || serviceFirst) && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
             BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters)
             TryRequestWindows11ThroughputPreference(opened, "initial", progress);
         transportConnected = true;
@@ -1322,7 +1386,7 @@ public sealed partial class Pro2BleInputSource :
         ackCharacteristic.ValueChanged += OnAckValueChanged;
         ConnectionStage("ACK 通知订阅");
 
-        if (!await SubscribeAsync(ackCharacteristic, "ack", progress))
+        if (!await SubscribeAsync(ackCharacteristic, "ack", progress, cancellationToken))
         {
             return false;
         }
@@ -1402,7 +1466,7 @@ public sealed partial class Pro2BleInputSource :
 
         fd2Characteristic.ValueChanged += OnNotifyValueChanged;
         ConnectionStage("FD2 通知订阅");
-        if (!await SubscribeAsync(fd2Characteristic, "fd2-exclusive", progress))
+        if (!await SubscribeAsync(fd2Characteristic, "fd2-exclusive", progress, cancellationToken))
         {
             fd2Characteristic.ValueChanged -= OnNotifyValueChanged;
             return false;
@@ -1608,8 +1672,9 @@ public sealed partial class Pro2BleInputSource :
 
         foreach (GattDeviceService service in services)
         {
-            GattCharacteristicsResult chars =
-                await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached).AsTask(cancellationToken);
+            GattCharacteristicsResult chars = await connectionRecovery.AwaitAsync(
+                service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached).AsTask(),
+                TimeSpan.FromSeconds(10), null, cancellationToken);
             if (chars.Status != GattCommunicationStatus.Success)
             {
                 serviceSummaries.Add(service.Uuid + ":status=" + chars.Status);
@@ -1728,6 +1793,16 @@ public sealed partial class Pro2BleInputSource :
         progress.Report("[PRO2_BLE_GATT] services=" + services.Count +
                         " selection=" + mode +
                         " summary=" + summary);
+    }
+
+    private static void DisposeLateServices(GattDeviceServicesResult result)
+    {
+        if (result.Status != GattCommunicationStatus.Success) return;
+        foreach (var service in result.Services)
+        {
+            try { service.Dispose(); }
+            catch (Exception) { }
+        }
     }
 
     private async Task ConfigureFd2ReportRateAsync(
@@ -2080,6 +2155,15 @@ public sealed partial class Pro2BleInputSource :
                 if (localWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Started ||
                     localWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Created)
                     localWatcher.Stop();
+                if (localWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Stopping)
+                {
+                    try { await scanDone.Task.WaitAsync(TimeSpan.FromSeconds(2)); }
+                    catch (TimeoutException)
+                    {
+                        stopError = BluetoothError.OtherError;
+                        progress.Report("[PRO2_DISCOVERY_TIMING] scan=" + scanLabel + " stop_confirmed=false");
+                    }
+                }
             }
             finally
             {
@@ -2097,7 +2181,7 @@ public sealed partial class Pro2BleInputSource :
         cancellationToken.ThrowIfCancellationRequested();
         lock (found)
         {
-            List<BleCandidate> result = found.Values
+            List<BleCandidate> result = localWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Stopping ? [] : found.Values
                 .OrderByDescending(c => c.Score)
                 .ThenByDescending(c => c.Rssi)
                 .ToList();
@@ -2343,13 +2427,16 @@ public sealed partial class Pro2BleInputSource :
     private async Task<bool> SubscribeAsync(
         GattCharacteristic characteristic,
         string label,
-        IProgress<string> progress)
+        IProgress<string> progress,
+        CancellationToken cancellationToken)
     {
         GattCommunicationStatus status = GattCommunicationStatus.Unreachable;
         for (int attempt = 1; attempt <= 3; attempt++)
         {
-            status = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
-                GattClientCharacteristicConfigurationDescriptorValue.Notify);
+            status = await connectionRecovery.AwaitAsync(
+                characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
+                    GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask(),
+                TimeSpan.FromSeconds(10), null, cancellationToken);
             progress.Report("[PRO2_BLE] subscribe " + label +
                             " attempt=" + attempt +
                             " status=" + status +
@@ -2361,7 +2448,7 @@ public sealed partial class Pro2BleInputSource :
                 return true;
             }
 
-            await Task.Delay(350 * attempt);
+            await Task.Delay(350 * attempt, cancellationToken);
         }
 
         RecordConnectionFailure(status.ToString(), "CCCD Notify " + label + " attempts=3");
@@ -2894,12 +2981,14 @@ public sealed partial class Pro2BleInputSource :
 
     private async Task ObserveGattSessionAsync(
         BluetoothLEDevice opened,
-        IProgress<string> progress)
+        IProgress<string> progress,
+        CancellationToken cancellationToken)
     {
         try
         {
-            GattSession? session =
-                await GattSession.FromDeviceIdAsync(opened.BluetoothDeviceId);
+            GattSession? session = await connectionRecovery.AwaitAsync(
+                GattSession.FromDeviceIdAsync(opened.BluetoothDeviceId).AsTask(),
+                TimeSpan.FromSeconds(6), result => result?.Dispose(), cancellationToken);
             if (session == null)
             {
                 progress.Report("[PRO2_BLE_LINK] GATT session observation unavailable: null session.");
@@ -2922,7 +3011,7 @@ public sealed partial class Pro2BleInputSource :
                             " can_maintain=" + session.CanMaintainConnection +
                             " maintain_connection=" + session.MaintainConnection);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not TimeoutException && !cancellationToken.IsCancellationRequested)
         {
             progress.Report("[PRO2_BLE_LINK] GATT session observation unavailable: " +
                             ex.GetType().Name + ": " + ex.Message);
@@ -4669,6 +4758,7 @@ public sealed partial class Pro2BleInputSource :
     {
         public bool IsKnownAddressProbe { get; init; }
         public bool IsManualSelection { get; init; }
+        public bool IsWakeAdvertisement { get; init; }
     }
 
     private sealed record GattServiceProbe(

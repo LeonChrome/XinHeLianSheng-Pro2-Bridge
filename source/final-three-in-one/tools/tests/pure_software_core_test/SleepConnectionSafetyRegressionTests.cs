@@ -133,6 +133,43 @@ internal static class SleepConnectionSafetyRegressionTests
             check(waits.Where((_, i) => i != 1).All(t => t.IsCanceled), "stop listener cancels only waiters, no invented wake");
         }
         check(!Pro2SleepSafety.IsWakeAdvertisement(1, 1, false), "non Nintendo advertisement cannot wake slot");
+        var target = new Pro2ManualCandidate(0x38C6CE27FC2D,
+            Windows.Devices.Bluetooth.BluetoothAddressType.Random, "Pro2", -39, true, 30);
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var observed = new Pro2WakeAdvertisement(target, now, true);
+        var none = new HashSet<string>();
+        check(observed.IsUsable(none, none, false) &&
+            observed.Candidate.AddressType == Windows.Devices.Bluetooth.BluetoothAddressType.Random,
+            "direct wake preserves the current advertisement address type");
+        check(!(observed with { ObservedTicks = now - 8 * System.Diagnostics.Stopwatch.Frequency }).IsUsable(none, none, false) &&
+            !(observed with { Connectable = false }).IsUsable(none, none, false),
+            "expired and nonconnectable observations require fresh discovery");
+        check(!observed.IsUsable(new HashSet<string> { target.AddressText }, none, false) &&
+            !observed.IsUsable(none, new HashSet<string> { "00:00:00:00:00:01" }, true),
+            "wake cannot steal another slot or override a pinned address");
+        var recovery = new Pro2BleConnectionRecovery();
+        var late = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var released = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await recovery.AwaitAsync(late.Task, TimeSpan.FromMilliseconds(20), n => released.TrySetResult(n), default);
+            check(false, "timed out request must release the caller");
+        }
+        catch (TimeoutException)
+        {
+            check(recovery.IsDraining && !released.Task.IsCompleted, "deadline releases caller while previous Windows operation is still pending");
+        }
+        late.SetResult(42);
+        check(await released.Task.WaitAsync(TimeSpan.FromSeconds(2)) == 42, "late GATT result released rather than installed as new owner");
+        using (var drained = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            while (recovery.IsDraining) await Task.Delay(5, drained.Token);
+        check(await recovery.AwaitAsync(Task.FromResult(43), TimeSpan.FromSeconds(1), null, default) == 43,
+            "fresh connection can proceed after previous operation drains");
+        var serviceFailure = new BleConnectionAttemptEvidence { Address = target.AddressText, Stage = "GATT 服务发现", Outcome = "Unreachable" };
+        check(Pro2BleConnectionRecovery.IsServiceFailure(serviceFailure, target.AddressText) &&
+            !Pro2BleConnectionRecovery.IsServiceFailure(serviceFailure, "00:00:00:00:00:01") &&
+            !Pro2BleConnectionRecovery.IsServiceFailure(serviceFailure with { Stage = "ACK 通知订阅" }, target.AddressText),
+            "service-first recovery is isolated to the address and stage that actually failed");
         const ulong a = 0xBCC746A58DD2, b = 0xA8595F197E53;
         check(Pro2SleepSafety.ResolveHost("", [a]) == a, "single exposed radio resolves host");
         check(Pro2SleepSafety.ResolveHost("BluetoothLE#BluetoothLEa8:59:5f:19:7e:53-38:c6:ce:27:fc:2d", [a, b]) == b,

@@ -52,6 +52,8 @@ public sealed record BleConnectionDiagnosis(bool Visible, string Code, string Ti
                 : D("no_advertisements", "扫描期间没有收到 BLE 广播", "确认 Windows 蓝牙已开启，并让 Pro2 靠近电脑开启配对广播。尚不能区分附近没有广播与系统、适配器或驱动异常。");
         if (e.Outcome == "Unreachable")
             return D("unreachable", "目标蓝牙服务不可达", "系统未能完成本次 GATT 通信。确认手柄仍可连接、未被其他设备占用；持续失败再检查官方驱动。不能据此认定蓝牙版本不兼容。");
+        if (e.Outcome == "gatt_draining")
+            return D("gatt_draining", "Windows 仍在结束上一轮蓝牙请求", "请求释放后会自动重试。若持续卡在这里，可用设置中的“重启蓝牙”恢复适配器。");
         if (e.Outcome == "channels_missing")
             return D("channels_missing", "候选未提供完整的 Pro2 接口", "确认选择了真实 Pro2 和正确模式。保留接口记录供兼容性排查，程序不会向未确认的设备发送初始化命令。");
         if (e.Outcome == "notify_timeout")

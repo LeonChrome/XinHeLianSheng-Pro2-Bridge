@@ -40,7 +40,7 @@ public sealed partial class Pro2BleInputSource
             e = e with { Outcome = cancelled ? "cancelled" : IsRunning ? "connected" : e.Outcome == "running" ? "operation_failed" : e.Outcome };
             connectionEvidence = e;
             if (e.Outcome == "connected" || cancelled) lastConnectionFailure = null;
-            else lastConnectionFailure = e;
+            else if (e.Outcome != "gatt_draining") lastConnectionFailure = e;
             string line = $"{e.StartedAt:HH:mm:ss} address={e.Address} stage={e.Stage} result={e.Outcome} detail={e.Error}";
             connectionAttemptHistory.Enqueue(line);
             while (connectionAttemptHistory.Count > 8) connectionAttemptHistory.Dequeue();

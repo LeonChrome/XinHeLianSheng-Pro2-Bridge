@@ -102,6 +102,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         userSettings = previewOnly ? new V60UserSettings() : V60UserSettings.Load();
         InitializeRearButtonSettings();
         InitializeFaceMapping();
+        InitializeStickDeadzones();
         inputSource = pro2Slots[0].InputSource;
         InitializeBleCompatibilitySettings();
         InitializeMultiControllerSafety();
@@ -222,11 +223,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         inputSource.SetRumbleGain(rumbleMultiplier);
         inputSource.SetStickProcessingMode(SelectedStickProcessingOption.Mode);
         ApplyPro2SlotRuntimeOptions();
-        if (!previewOnly)
-        {
-            RefreshRuntimeReadiness();
-            _ = RefreshRuntimeReadinessAsync();
-        }
         AppendLog("[SESSION_LOG] " + sessionLog.FilePath);
         AppendLog("[SESSION_RECENT_LOG] " + sessionLog.RecentFilePath);
         AppendLog("[UI_RENDERING] " + StartupRenderingPolicy.Telemetry);
@@ -246,7 +242,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             "pro2_usb_repeats_are_not_fd2=true other_modes=source_paced " +
             "digital_edges=bounded_fifo ps5_invalid_gravity=positive_y " +
             "stick=source_calibrated_no_extra_center_snap pcm=two_peak_lossy");
-        AppendLog("[BLE_COMPATIBILITY] " + BleCompatibilityInspector.Current.Telemetry);
+        if (!Bootstrap.SafeStartup) AppendLog("[BLE_COMPATIBILITY] " + BleCompatibilityInspector.Current.Telemetry);
         AppendLog("[LOG_POLICY] previous logs preserved; async bounded manager log limit=" +
                   (SessionLogWriter.MaxLogBytes / 1024 / 1024) +
                   "MB; recent status remains live in a bounded 128KB snapshot; VIIPER server log level=info.");
@@ -270,7 +266,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                   " stick=" + SelectedStickProcessingOption.Label +
                   " audio_guard=" + AudioEndpointGuardEnabled +
                   " backend=" + SelectedBackendOption.Label);
-        InitializeEnvironmentInfo();
+        AppendLog("[STICK_DEADZONE] " + userSettings.StickDeadzones.Telemetry);
     }
 
     public string Host
@@ -916,6 +912,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             slot.InputSource.SetRumbleGain(rumbleMultiplier);
             slot.InputSource.SetRuntimeBatteryRefreshEnabled(runtimeBatteryRefreshEnabled);
             slot.InputSource.SetStickProcessingMode(SelectedStickProcessingOption.Mode);
+            slot.InputSource.SetStickDeadzones(userSettings.StickDeadzones);
             ApplySavedStickCalibration(
                 slot,
                 LastKnownPro2AddressForSlot(slot),
@@ -1770,39 +1767,22 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         if (IsLoopbackHost(Host))
         {
             UsbipRuntime? runtime = FindConfiguredUsbip();
-            UsbipProbeResult? probe = runtime == null
-                ? null
-                : await UsbipRuntimeLocator.ProbeAsync(runtime, cancellationToken);
+            if (runtime == null && await AskForMissingUsbipAsync(cancellationToken)) runtime = FindConfiguredUsbip();
             if (runtime == null)
             {
-                Status = "首次运行需要安装 USBIP 内核驱动，正在打开内置安装向导。完成后将继续启动所选角色。";
-                AppendLog("[FIRST_RUN] usbip preflight failed: usbip.exe not found" +
-                          "; launching embedded installer.");
+                Status = "未找到 USBIP，正在打开内置安装向导。安装后继续检查；可手动指定非默认路径。";
+                AppendLog("[FIRST_RUN] usbip_executable_missing=true installing_bundled=true");
                 await InstallUsbipAsync(cancellationToken);
                 runtime = FindConfiguredUsbip();
-                if (runtime == null)
-                {
-                    throw new InvalidOperationException(
-                        "USBIP 驱动尚未就绪。请完成 EXE 内置的正式安装向导；若安装器要求重启，请重启 Windows 后再次选择角色。" +
-                        UsbipPortableInstallHint);
-                }
-
-                probe = await UsbipRuntimeLocator.ProbeAsync(runtime, cancellationToken);
-                if (!probe.Ready)
-                {
-                    throw new InvalidOperationException(
-                        "USBIP 内核驱动检测未通过：" + probe.Detail +
-                        "。若刚完成安装，请重启 Windows 后再次选择角色。");
-                }
+                if (runtime == null) usbipPickerOffered = false;
+                if (runtime == null && await AskForMissingUsbipAsync(cancellationToken)) runtime = FindConfiguredUsbip();
             }
-            else if (probe is not { Ready: true })
+            if (runtime == null) throw new InvalidOperationException("未找到 USBIP 程序。请完成内置安装，或在设置中手动选择 usbip.exe。" + UsbipPortableInstallHint);
+            UsbipProbeResult probe = await UsbipRuntimeLocator.ProbeAsync(runtime, cancellationToken);
+            if (!probe.Ready)
             {
-                Status = "USBIP 程序已安装，但内核驱动未就绪。若刚安装/修复过，请重启 Windows；重启后仍失败再点“安装/修复 USBIP”。";
-                AppendLog("[FIRST_RUN] usbip.exe found but driver probe failed; not relaunching installer automatically. detail=" +
-                          (probe?.Detail ?? "unknown"));
-                throw new InvalidOperationException(
-                    "USBIP 已安装但驱动未就绪：" + (probe?.Detail ?? "unknown") +
-                    "。通常是刚安装后尚未重启 Windows；请重启后再打开本 EXE。");
+                AppendLog("[FIRST_RUN] executable_found=true source=" + runtime.Source + " exe=\"" + runtime.ExePath + "\" probe=" + probe.Detail);
+                throw new InvalidOperationException("已找到 USBIP，但程序 / 驱动检查未通过：" + probe.Detail + "。可重新绑定 usbip.exe 或使用安装/修复；仅在安装器要求时重启 Windows。");
             }
         }
 
@@ -4452,6 +4432,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task RefreshRuntimeReadinessAsync(CancellationToken cancellationToken = default)
     {
+        if (previewOnly)
+        {
+            UpdateUsbipLocation(FindConfiguredUsbip());
+            RuntimeReadinessText = "界面预览：不启动 USBIP 或查询驱动。";
+            return;
+        }
         try
         {
             UsbipRuntime? usbip = FindConfiguredUsbip();

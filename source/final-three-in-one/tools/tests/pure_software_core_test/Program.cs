@@ -27,6 +27,15 @@ internal static class Program
         {
             StartupRenderingRegressionTests.Run(Check);
             V28RegressionTests.Run(Check);
+            V29RegressionTests.Run(Check, output);
+            if (args.Contains("--inspect-game-readonly"))
+            {
+                string path = args[Array.IndexOf(args, "--inspect-game-readonly") + 1];
+                var snapshot = new GameGlyphPatchService().InspectAsync(path).GetAwaiter().GetResult();
+                File.WriteAllText(Path.Combine(output,"installed-game-inspection.json"), System.Text.Json.JsonSerializer.Serialize(snapshot));
+                Console.WriteLine(snapshot.Message);
+                return snapshot.VersionMatches ? 0 : 1;
+            }
             if (args.Contains("--v28-only"))
             {
                 Console.WriteLine("PASS: " + checks + " v2.8 assertions; offline only.");
@@ -168,9 +177,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.8.1.0", "v2.8.1 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "2.9.0.0", "v2.9.0 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.8.1-wake-recovery", "v2.8.1 release metadata");
+            "2.9.0-compatibility-controls", "v2.9.0 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -984,8 +993,8 @@ internal static class Program
         var usbipSettings = (V60UserSettings)typeof(MainViewModel).GetField("userSettings", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(vm)!;
         Check(usbipSettings.UsbipExecutablePath == usbipFixture && vm.UsbipLocationText.Contains(usbipFixture) &&
             vm.UsbipLocationText.Contains("手动指定"), "selected file feeds actual VM lookup/display without modifying user settings in preview");
-        Check(vm.LogText.Contains("executable_found_probe_failed") && !vm.LogText.Contains("installer="),
-            "invalid executable fixture is not ready and selecting it never launches installer");
+        Check(vm.RuntimeReadinessText.Contains("界面预览") && !vm.LogText.Contains("installer="),
+            "preview selection does not execute fixture, mark driver ready, or launch installer");
         AwaitUi(vm.SelectUsbipPathAsync(Path.Combine(output, "missing", "usbip.exe")), window);
         Check(usbipSettings.UsbipExecutablePath == usbipFixture && vm.Status.Contains("路径未保存"),
             "bad selection leaves last chosen runtime intact");
@@ -1260,6 +1269,18 @@ internal static class Program
         Check(Descendants<ComboBox>(faceView).Count(c => c.IsVisible) == 6 && vm.FaceRows[1].Target == GamepadButtons.South,
             "offline PS5 mapping exposes four editable outputs plus mode and preset");
         Save(window, "ui-face-mapping-ps5.png");
+        var zoneExpander = Descendants<Expander>(faceView).Single(e => e.Header?.ToString() == "摇杆中心死区");
+        zoneExpander.IsExpanded = true; Pump(window);
+        var zoneSliders = Descendants<Slider>(faceView).Where(s => s.IsVisible).ToArray();
+        Check(zoneSliders.Length == 2, "two independent deadzone controls are visible offline");
+        zoneSliders.Single(s => System.Windows.Automation.AutomationProperties.GetName(s) == "左摇杆死区").Value = 0;
+        zoneSliders.Single(s => System.Windows.Automation.AutomationProperties.GetName(s) == "右摇杆死区").Value = 1.5;
+        Pump(window); vm.SaveStickDeadzonesCommand.Execute(null);
+        Check(vm.LeftStickDeadzone == 0 && vm.RightStickDeadzone == 1.5 && persisted.StickDeadzones == new StickDeadzoneSettings(0,1.5),
+            "real sliders bind and save independent deadzones without physical connection");
+        Save(window,"ui-stick-deadzone.png");
+        vm.ResetStickDeadzonesCommand.Execute(null); vm.SaveStickDeadzonesCommand.Execute(null);
+        zoneExpander.IsExpanded = false; Pump(window);
         for (int tab = 0; tab < tabs.Items.Count; tab++)
         {
             tabs.SelectedIndex = tab; vm.ShowDiagnostics = false; Pump(window);

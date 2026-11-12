@@ -70,17 +70,39 @@ public partial class MainWindow : Window
         {
             viewModel.PropertyChanged += MainViewModel_PropertyChanged;
             viewModel.UserNotificationRequested += MainViewModel_UserNotificationRequested;
+            viewModel.RequestUsbipExecutableAsync = token =>
+            {
+                token.ThrowIfCancellationRequested();
+                var picker = new Microsoft.Win32.OpenFileDialog
+                {
+                    Title = "未找到 USBIP · 已安装请选择 usbip.exe；未安装可取消后使用内置安装器",
+                    Filter = "USBIP 程序 (usbip.exe)|usbip.exe",
+                    CheckFileExists = true,
+                    Multiselect = false
+                };
+                return System.Threading.Tasks.Task.FromResult(picker.ShowDialog(this) == true ? picker.FileName : null);
+            };
         }
         Loaded += MainWindow_Loaded;
         SourceInitialized += MainWindow_SourceInitialized;
         StateChanged += MainWindow_StateChanged;
         Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
-        if (!IsUiSmokeRun()) CreateTrayIcon();
+        if (!IsUiSmokeRun() && !Bootstrap.SafeStartup)
+        {
+            try { CreateTrayIcon(); }
+            catch (Exception ex)
+            {
+                Bootstrap.Write("optional_tray_failed " + ex);
+                try { trayIcon?.Dispose(); trayMenu?.Dispose(); } catch { }
+                trayIcon = null; trayMenu = null;
+            }
+        }
     }
 
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
     {
+        if (Bootstrap.SafeStartup) return;
         try
         {
             IntPtr handle = new WindowInteropHelper(this).Handle;
@@ -141,6 +163,11 @@ public partial class MainWindow : Window
 
         if (DataContext is MainViewModel viewModel)
         {
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+            Bootstrap.Write("window_loaded");
+            try { await viewModel.InitializeAfterWindowShownAsync(); }
+            catch (OperationCanceledException) { return; }
+            if (Bootstrap.SafeStartup) return;
             if (Array.Exists(Environment.GetCommandLineArgs(), argument =>
                 string.Equals(argument, "--connect-pro2", StringComparison.OrdinalIgnoreCase)))
             {
@@ -406,7 +433,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (IsUiSmokeRun())
+        if (IsUiSmokeRun() || trayIcon == null)
         {
             return;
         }

@@ -18,7 +18,7 @@ public enum GameGlyphPatchStatus { MissingGame, NotInstalled, Installed, Partial
 public sealed record GameGlyphInstallation(string GameRoot, string DisplayName, string SteamAppId, string Source);
 public sealed record GameGlyphPatchSnapshot(GameGlyphPatchStatus Status, string GameRoot, string Message,
     bool VersionMatches, bool GameRunning, bool CanInstall, bool CanRestore, string LogPath,
-    string InstalledPatchVersion = "", string ExpectedPatchVersion = "");
+    string InstalledPatchVersion = "", string ExpectedPatchVersion = "", string CompatibilityDetail = "");
 public sealed record GameGlyphPatchResult(bool Success, bool RequiresElevation, string Message,
     GameGlyphPatchSnapshot Snapshot, string LogPath);
 public sealed class GameGlyphPatchFile
@@ -215,17 +215,21 @@ public sealed class GameGlyphPatchService
             bool conflict = existing.Any(f => !package.IsKnownFile(f.Name, f.Length, f.Sha256));
             bool running = isGameRunning(root);
             string version = package.KnownSets.FirstOrDefault(set => set.Files.All(f => existing.Any(e => Same(f, e))))?.Version ?? "";
-            bool compatible = File.Exists(Path.Combine(target, "ProjectPBZ-Windows.utoc")) &&
+            bool exactBuild = File.Exists(Path.Combine(target, "ProjectPBZ-Windows.utoc")) &&
                 Hash(Path.Combine(root, "platform", "steam", "PBZ.exe"), ct).Equals(package.Manifest.TestedGameExeSha256, StringComparison.OrdinalIgnoreCase) &&
                 Hash(Path.Combine(target, "ProjectPBZ-Windows.utoc"), ct).Equals(package.Manifest.TestedGameUtocSha256, StringComparison.OrdinalIgnoreCase);
+            var resourceCheck = exactBuild ? new GameGlyphCompatibilityResult(true, "已验证的游戏版本。") :
+                GameGlyphCompatibility.Check(target, package.GetFileBytes("PRO2_PBZ_Glyphs_0_P.utoc"), ct);
+            bool compatible = resourceCheck.Compatible;
+            string compatibilityNote = exactBuild ? "" : "\n" + resourceCheck.Detail;
             bool canRestore = existing.Count > 0 && !conflict && !running;
             bool canApply = compatible && !conflict && !running && (version != package.Manifest.Version || existing.Count != 3);
             if (conflict) return new(GameGlyphPatchStatus.Conflict, root, "同名补丁文件被其他内容占用或修改；不会覆盖或删除。", compatible, running, false, false, log, version, package.Manifest.Version);
             if (running) return new(GameGlyphPatchStatus.Busy, root, "请先正常退出游戏，再安装或还原图标。助手可以保持运行。", compatible, true, false, false, log, version, package.Manifest.Version);
-            if (!compatible) return new(GameGlyphPatchStatus.UnsupportedVersion, root, existing.Count > 0 ? "游戏版本已变化；请先还原旧图标补丁，等待匹配版本。" : "此游戏版本尚未适配，暂不安装图标补丁。", false, false, false, canRestore, log, version, package.Manifest.Version);
-            if (version.Length > 0) return new(GameGlyphPatchStatus.Installed, root, version == package.Manifest.Version ? "已使用 Pro2 按键图标。" : "检测到旧图标补丁，可以更新。", true, false, canApply, canRestore, log, version, package.Manifest.Version);
+            if (!compatible) return new(GameGlyphPatchStatus.UnsupportedVersion, root, "当前游戏的图标资源结构不匹配，可还原旧补丁。" + compatibilityNote, false, false, false, canRestore, log, version, package.Manifest.Version, resourceCheck.Detail);
+            if (version.Length > 0) return new(GameGlyphPatchStatus.Installed, root, (version == package.Manifest.Version ? "已使用 Pro2 按键图标。" : "检测到旧图标补丁，可以更新。") + compatibilityNote, true, false, canApply, canRestore, log, version, package.Manifest.Version, resourceCheck.Detail);
             if (existing.Count > 0) return new(GameGlyphPatchStatus.Partial, root, "图标补丁不完整，可以修复或还原。", true, false, true, true, log, "", package.Manifest.Version);
-            return new(GameGlyphPatchStatus.NotInstalled, root, "可以为此游戏安装 Pro2 按键图标。", true, false, true, false, log, "", package.Manifest.Version);
+            return new(GameGlyphPatchStatus.NotInstalled, root, "可以为此游戏安装 Pro2 按键图标。" + compatibilityNote, true, false, true, false, log, "", package.Manifest.Version, resourceCheck.Detail);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -265,7 +269,7 @@ public sealed class GameGlyphPatchService
                     throw new InvalidDataException("修改前的图标备份校验失败，未继续操作。");
             }
             AtomicJson(Path.Combine(backup, "before.json"), new { Root = root, Operation = restore ? "Restore" : "Apply", Expected = package.Manifest.Version, Existing = existing, CreatedUtc = DateTimeOffset.UtcNow });
-            Log(root, op, "begin", new { restore, version = package.Manifest.Version, existing = existing.Select(f => f.Name).ToArray(), originalArchivesOverwritten = false });
+            Log(root, op, "begin", new { restore, version = package.Manifest.Version, compatibility = before.CompatibilityDetail, existing = existing.Select(f => f.Name).ToArray(), originalArchivesOverwritten = false });
             if (!restore)
             {
                 foreach (var file in package.Manifest.Files)

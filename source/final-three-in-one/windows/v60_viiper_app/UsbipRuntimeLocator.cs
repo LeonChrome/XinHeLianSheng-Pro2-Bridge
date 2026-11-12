@@ -70,14 +70,15 @@ public static class UsbipRuntimeLocator
 
     public static async Task<UsbipProbeResult> ProbeAsync(
         UsbipRuntime runtime,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string command = "port")
     {
         try
         {
             using Process? process = Process.Start(new ProcessStartInfo
             {
                 FileName = runtime.ExePath,
-                Arguments = "port",
+                Arguments = command,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -89,13 +90,17 @@ public static class UsbipRuntimeLocator
                 return new UsbipProbeResult(false, "usbip.exe 无法启动");
             }
 
+            // Drain both pipes while waiting. A busy machine with many ports
+            // can fill stdout, otherwise blocking the child and faking failure.
+            Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+            Task<string> stderr = process.StandardError.ReadToEndAsync();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(5));
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException)
             {
                 try
                 {
@@ -104,16 +109,18 @@ public static class UsbipRuntimeLocator
                 catch
                 {
                 }
+                try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)); } catch { }
+                cancellationToken.ThrowIfCancellationRequested();
                 return new UsbipProbeResult(false, "usbip port 检测超过 5 秒");
             }
 
-            string output = ((await process.StandardOutput.ReadToEndAsync()) + " " +
-                             (await process.StandardError.ReadToEndAsync())).Trim();
+            string output = ((await stdout) + " " + (await stderr)).Trim();
+            if (output.Length > 8192) output = output[..4096] + "\n[output truncated]\n" + output[^4096..];
             return process.ExitCode == 0
                 ? new UsbipProbeResult(true, string.IsNullOrWhiteSpace(output) ? "driver command ready" : output)
                 : new UsbipProbeResult(
                     false,
-                    "usbip port exit=" + process.ExitCode +
+                    "usbip " + command + " exit=" + process.ExitCode +
                     (string.IsNullOrWhiteSpace(output) ? "" : " / " + output));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -238,6 +245,9 @@ public static class UsbipRuntimeLocator
             foreach (string candidate in GetPathCandidates(path)) yield return (candidate, "path_" + target);
         }
         foreach (var candidate in InstalledProductCandidates()) yield return candidate;
+        foreach (var candidate in RunningClientCandidates()) yield return candidate;
+        yield return (Path.Combine(AppContext.BaseDirectory, "usbip.exe"), "near_application");
+        yield return (Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "USBip", "usbip.exe"), "per_user_install");
         foreach (string localRoot in LocalSearchRoots())
         {
             foreach (string found in TryFindUnder(localRoot)) yield return (found, "near_application");
@@ -261,10 +271,13 @@ public static class UsbipRuntimeLocator
             try
             {
                 using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
-                using (RegistryKey? appPath = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\usbip.exe"))
+                foreach (string executableName in new[] { "usbip.exe", "wusbip.exe" })
                 {
-                    string path = NormalizeExecutablePath(appPath?.GetValue(null) as string);
-                    if (path.Length > 0) candidates.Add((path, "app_paths_" + hive + "_" + view));
+                    using RegistryKey? appPath = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\" + executableName);
+                    foreach (string path in GetInstallRecordCandidatePaths(null, appPath?.GetValue(null) as string, null))
+                        candidates.Add((path, "app_paths_" + hive + "_" + view));
+                    foreach (string sibling in GetPathCandidates(appPath?.GetValue("Path") as string))
+                        candidates.Add((sibling, "app_paths_" + hive + "_" + view));
                 }
                 using RegistryKey? uninstall = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
                 if (uninstall == null)
@@ -335,7 +348,9 @@ public static class UsbipRuntimeLocator
         IEnumerable<string> files;
         try
         {
-            files = Directory.EnumerateFiles(root, "usbip.exe", SearchOption.AllDirectories)
+            files = Directory.EnumerateFiles(root, "usbip.exe", new EnumerationOptions
+                { RecurseSubdirectories = true, IgnoreInaccessible = true, MaxRecursionDepth = 4,
+                  AttributesToSkip = FileAttributes.ReparsePoint })
                 .Take(8)
                 .ToList();
         }
@@ -349,6 +364,31 @@ public static class UsbipRuntimeLocator
             yield return file;
         }
     }
+
+    private static IEnumerable<(string Path, string Source)> RunningClientCandidates()
+    {
+        var candidates = new List<(string, string)>();
+        foreach (Process process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                try
+                {
+                    if (!IsUsbipClientProcessName(process.ProcessName)) continue;
+                    string? dir = Path.GetDirectoryName(process.MainModule?.FileName);
+                    if (string.IsNullOrWhiteSpace(dir)) continue;
+                    candidates.Add((Path.Combine(dir, "usbip.exe"), "running_client"));
+                    candidates.Add((Path.Combine(dir, "bin", "usbip.exe"), "running_client"));
+                }
+                catch { /* Protected/unrelated processes are not queried further. */ }
+            }
+        }
+        return candidates;
+    }
+
+    public static bool IsUsbipClientProcessName(string name) =>
+        name.StartsWith("usbip", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("wusbip", StringComparison.OrdinalIgnoreCase);
 
     private static IEnumerable<string> ProgramFilesRoots()
     {

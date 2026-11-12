@@ -505,6 +505,8 @@ public sealed partial class Pro2BleInputSource :
         }
     }
 
+    public void SetStickDeadzones(StickDeadzoneSettings settings) => parser.SetStickDeadzones(settings);
+
     public void SetStickProcessingMode(StickProcessingMode mode)
     {
         lock (gate)
@@ -2076,7 +2078,7 @@ public sealed partial class Pro2BleInputSource :
                 lock (found)
                 {
                     rejectedAdvertisementCount++;
-                    if (rejectedSamples.Count < 6 && !string.IsNullOrWhiteSpace(name))
+                    if (rejectedSamples.Count < 10 && !rejectedSamples.Any(s => s.StartsWith("addr=" + addressText + " ", StringComparison.Ordinal)))
                     {
                         rejectedSamples.Add(DescribeRejectedAdvertisement(args, nintendo, nameMatch));
                     }
@@ -2187,7 +2189,9 @@ public sealed partial class Pro2BleInputSource :
                 .ToList();
             UpdateConnectionEvidence(e => e with { Advertisements = e.Advertisements + rawAdvertisementCount,
                 Candidates = e.Candidates + result.Count, ScanError = stopError.ToString(), ScanModes = e.ScanModes + scanLabel + " ",
-                ScanTrace = e.ScanTrace + scanLabel + " status=" + stopError + " ads=" + rawAdvertisementCount + " candidates=" + result.Count + "\n" });
+                ScanTrace = e.ScanTrace + scanLabel + " status=" + stopError + " ads=" + rawAdvertisementCount + " candidates=" + result.Count +
+                    " unnamed=" + emptyNameAdvertisementCount + " nintendo=" + nintendoAdvertisementCount + " name_match=" + nameMatchAdvertisementCount + "\n" +
+                    (result.Count == 0 ? "未匹配广播样本（可在手动模式核对，未主动连接）：\n" + string.Join("\n", rejectedSamples) + "\n" : "") });
             progress.Report("[PRO2_BLE] " + scanLabel + " scan result count=" + result.Count +
                             " stop_error=" + stopError);
             progress.Report("[PRO2_BLE_DIAG] " + scanLabel +
@@ -2382,24 +2386,20 @@ public sealed partial class Pro2BleInputSource :
                " name=\"" + SanitizeDeviceId(name) + "\"" +
                " nintendo_mfg=" + nintendo +
                " name_match=" + nameMatch +
-               " mfg=" + companyIds;
+               " mfg=" + companyIds +
+               " services=" + string.Join(",", args.Advertisement.ServiceUuids.Take(4)) +
+               " packet=" + args.AdvertisementType;
     }
 
     private static BleCandidate? CandidateFromAdvertisement(BluetoothLEAdvertisementReceivedEventArgs args)
     {
         string name = args.Advertisement.LocalName ?? "";
         bool nintendo = args.Advertisement.ManufacturerData.Any(m => m.CompanyId == NintendoCompanyId);
-        bool nameMatch = NameLooksLikeSwitchController(name);
-        if (!nintendo && !nameMatch)
+        int score = Pro2AdvertisementIdentity.Score(name, nintendo, args.Advertisement.ServiceUuids);
+        if (score == 0)
         {
             return null;
         }
-
-        int score = 0;
-        if (nameMatch) score += 40;
-        if (nintendo) score += 30;
-        if (name.Contains("Pro", StringComparison.OrdinalIgnoreCase)) score += 10;
-        if (name.Contains("Controller", StringComparison.OrdinalIgnoreCase)) score += 10;
 
         return new BleCandidate(
             args.BluetoothAddress,
@@ -2412,16 +2412,7 @@ public sealed partial class Pro2BleInputSource :
 
     private static bool NameLooksLikeSwitchController(string name)
     {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return false;
-        }
-
-        string lower = name.ToLowerInvariant();
-        return lower.Contains("pro controller") ||
-               lower.Contains("switch") ||
-               lower.Contains("nintendo") ||
-               lower.Contains("pro2");
+        return Pro2AdvertisementIdentity.NameMatches(name);
     }
 
     private async Task<bool> SubscribeAsync(

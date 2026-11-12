@@ -99,9 +99,11 @@ internal static class RearButtonSafetyRegressionTests
     private static void EditorValidation()
     {
         var editor = new RearButtonEditor("GL", false, new() { Enabled = true, Buttons = GamepadButtons.South });
-        int changes = 0; editor.PropertyChanged += (_, _) => changes++;
+        int changes = 0; var changedFields = new HashSet<string>();
+        editor.PropertyChanged += (_, e) => { changes++; changedFields.Add(e.PropertyName ?? ""); };
         editor.Delay = "10"; editor.Duration = "90"; editor.Gap = "70"; editor.Count = "2";
-        check(changes == 4, "all timing field edits notify draft tracking");
+        check(new[] { nameof(editor.Delay), nameof(editor.Duration), nameof(editor.Gap), nameof(editor.Count) }.All(changedFields.Contains),
+            "all timing field edits notify draft tracking even with visual preview notifications");
         editor.Action = "顺序按键"; editor.AddStepCommand.Execute(null); int before = changes;
         editor.Steps[0].Delay = "5"; editor.Steps[0].First = GamepadButtons.East;
         check(changes > before, "step timing and button edits notify parent draft");

@@ -48,7 +48,7 @@ public sealed record BleConnectionDiagnosis(bool Visible, string Code, string Ti
             return D("saved_not_seen", "未发现本槽位保存的手柄", "已看到其他候选，但地址不属于本只。请唤醒本只手柄；换手柄时使用手动选择。");
         if (e.Outcome == "no_candidate")
             return e.Advertisements > 0
-                ? D("no_pro2", "收到 BLE 广播，未匹配到 Pro2", "确认手柄处于 PRO2 模式并开启配对广播，且未连接其他设备。扫描收到其他设备，不等于已看到这只手柄。")
+                ? D("no_pro2", "收到 BLE 广播，未匹配到 Pro2", "确认手柄处于 PRO2 模式并开启配对广播。可用首页“手动模式”核对附近地址，选择后会先验证 Pro2 接口。此阶段与 USBIP 无关；若广播列表仍无手柄，检查是否连到其他设备及厂商蓝牙驱动。")
                 : D("no_advertisements", "扫描期间没有收到 BLE 广播", "确认 Windows 蓝牙已开启，并让 Pro2 靠近电脑开启配对广播。尚不能区分附近没有广播与系统、适配器或驱动异常。");
         if (e.Outcome == "Unreachable")
             return D("unreachable", "目标蓝牙服务不可达", "系统未能完成本次 GATT 通信。确认手柄仍可连接、未被其他设备占用；持续失败再检查官方驱动。不能据此认定蓝牙版本不兼容。");

@@ -18,9 +18,21 @@
       <TextBlock Text="映射预设" FontWeight="SemiBold"/>
       <ComboBox x:Name="FacePresetPicker" ItemsSource="{Binding FacePresets}" DisplayMemberPath="Label" SelectedValuePath="Preset" SelectedValue="{Binding SelectedFacePreset}" Margin="0,8,0,8"/>
       <TextBlock Text="{Binding FacePresetHint}" Style="{StaticResource Caption}" MinHeight="40"/>
-      <Image x:Name="MappingControllerImage" Source="/PRO2ControllerAssistant;component/Assets/Controller-pro2-v2.8.png" Height="155" Stretch="Uniform" Margin="-8,16,-8,10" RenderOptions.BitmapScalingMode="HighQuality"/>
+      <Image x:Name="MappingControllerImage" Source="/PRO2ControllerAssistant;component/Assets/Controller-pro2-v2.8.png" Height="135" Stretch="Uniform" Margin="-8,16,-8,10" RenderOptions.BitmapScalingMode="HighQuality"/>
       <TextBlock Text="实体 Pro2：上 X · 右 A · 下 B · 左 Y" HorizontalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="#294E40"/>
       <TextBlock Text="以右侧实际输出为准。同一输出模式共用一份配置。" Style="{StaticResource Caption}" Margin="0,14,0,0"/>
+<Expander Header="摇杆中心死区" Margin="0,12,0,0" IsExpanded="False">    <StackPanel>
+     <DockPanel><TextBlock Text="摇杆中心死区" FontSize="18" FontWeight="SemiBold"/><TextBlock Text="四种模式共用" Style="{StaticResource Caption}" HorizontalAlignment="Right"/></DockPanel>
+     <TextBlock Text="向左调小可保留细微移动；0% 关闭软件死区。过小可能漂移，游戏内的死区仍需在游戏中调整。" Style="{StaticResource Caption}" Margin="0,6,0,14"/>
+     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <StackPanel><DockPanel><TextBlock Text="左摇杆" FontWeight="SemiBold"/><TextBlock Text="{Binding LeftStickDeadzoneText}" HorizontalAlignment="Right"/></DockPanel>
+       <Slider Minimum="0" Maximum="20" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding LeftStickDeadzone, Mode=TwoWay}" Margin="0,12,0,10" AutomationProperties.Name="左摇杆死区"/></StackPanel>
+      <StackPanel Grid.Column="2"><DockPanel><TextBlock Text="右摇杆" FontWeight="SemiBold"/><TextBlock Text="{Binding RightStickDeadzoneText}" HorizontalAlignment="Right"/></DockPanel>
+       <Slider Minimum="0" Maximum="20" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding RightStickDeadzone, Mode=TwoWay}" Margin="0,12,0,10" AutomationProperties.Name="右摇杆死区"/></StackPanel>
+     </Grid>
+     <WrapPanel><Button Content="保存死区" Command="{Binding SaveStickDeadzonesCommand}" Padding="14,8"/><Button Content="恢复 4%" Command="{Binding ResetStickDeadzonesCommand}" Padding="14,8"/><TextBlock Text="{Binding StickDeadzoneStatus}" Style="{StaticResource Caption}" VerticalAlignment="Center"/></WrapPanel>
+    </StackPanel>
+</Expander>
      </StackPanel>
     </Border>
     <Border Grid.Column="2" Style="{StaticResource Panel}" VerticalAlignment="Top">
@@ -44,6 +56,7 @@
      </StackPanel>
     </Border>
    </Grid>
+
    <TextBlock Text="这里改变手柄输出，不会自动改游戏里的按键图标。Steam Input 或游戏再次改键时，会在本页结果上继续生效。" Style="{StaticResource Caption}" Margin="0,14,0,0"/>
   </StackPanel>
  </ScrollViewer>

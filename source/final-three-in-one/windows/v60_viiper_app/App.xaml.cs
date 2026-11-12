@@ -93,7 +93,7 @@ public partial class App : System.Windows.Application
             }
 
             System.Windows.MessageBox.Show(
-                "PRO2 手柄助手已在运行。请双击系统托盘中的助手图标打开；若正在退出，请稍后再试。",
+                "PRO2 手柄助手已在运行。请从任务栏或系统托盘打开现有窗口；若正在退出，请稍后再试。",
                 "PRO2 手柄助手",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -103,7 +103,7 @@ public partial class App : System.Windows.Application
 
         // Acquire the shared mutex before stale-process cleanup. A second click
         // must not terminate the live manager and drop its BLE connection.
-        if (!bleDiagnosticCli && !uiSmoke)
+        if (!bleDiagnosticCli && !uiSmoke && !Bootstrap.SafeStartup)
             StartupProcessGuard.CleanupConflictingProcesses();
         base.OnStartup(e);
         if (bleDiagnosticCli)
@@ -116,6 +116,7 @@ public partial class App : System.Windows.Application
         MainWindow window = new();
         if (uiSmoke) window.ShowActivated = false;
         MainWindow = window;
+        Bootstrap.Write("window_constructed");
         window.Show();
         if (uiSmoke) _ = FinishUiSmokeAsync(window);
     }
@@ -132,6 +133,7 @@ public partial class App : System.Windows.Application
                 "VERSION=" + System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(
                     typeof(App).Assembly)?.InformationalVersion + "\r\n" +
                 "UI_RENDERING=" + StartupRenderingPolicy.Telemetry + "\r\n" +
+                "STARTUP_SAFE=" + Bootstrap.SafeStartup + "\r\n" +
                 "GYRO_QUALITY=" + Pro2QualityMode.GyroEnabled + "\r\n" +
                 "HAPTICS_QUALITY=" + Pro2QualityMode.HapticsEnabled + "\r\n" +
                 "BATTERY_INIT_SNAPSHOT=" + Pro2InitialBatterySnapshot.IsRequested(Environment.GetCommandLineArgs()) + "\r\n" +

@@ -10,7 +10,6 @@ public sealed class Pro2HidReportParser
     public const uint Fd2HeadsetPresentMask = 0x10000000u;
     private const ushort Center12 = GamepadState.AxisCenter;
     private const ushort CenterLearnMaxDelta = 256;
-    private const ushort AxisDeadzone = 64;
     private const ushort FullScaleRange = 1600;
     private readonly object gate = new();
     private readonly AxisCalibration standardAxis = new();
@@ -23,6 +22,15 @@ public sealed class Pro2HidReportParser
     public Pro2HidReportParser(bool gyroQualityMode)
     {
         qualityMotion = gyroQualityMode ? new() : null;
+    }
+
+    public void SetStickDeadzones(StickDeadzoneSettings settings)
+    {
+        lock (gate)
+        {
+            standardAxis.ApplyDeadzones(settings.Normalize());
+            legacyAxis.ApplyDeadzones(settings.Normalize());
+        }
     }
 
     public string StartManualGyroCalibration()
@@ -515,6 +523,18 @@ public sealed class Pro2HidReportParser
             new(Center12, Center12, Center12, Center12);
         public Pro2StickCalibrationProfile Profile => profile;
         public bool CaptureActive => capture != null;
+        public StickDeadzoneSettings Deadzones { get; private set; } = new();
+        public void ApplyDeadzones(StickDeadzoneSettings next)
+        {
+            if (Deadzones == next) return;
+            Deadzones = next;
+            // The legacy auto-center learner must not absorb deliberate small
+            // movements when a user explicitly reduces/removes the deadzone.
+            // Preserve the separately saved physical calibration as the origin.
+            CenterLx = profile.CenterLx; CenterLy = profile.CenterLy;
+            CenterRx = profile.CenterRx; CenterRy = profile.CenterRy;
+            ResetSums();
+        }
         public string Summary =>
             profile.Summary +
             (capture == null
@@ -662,7 +682,7 @@ public sealed class Pro2HidReportParser
 
         public void LearnIfCentered(GamepadButtons buttons, ushort lx, ushort ly, ushort rx, ushort ry)
         {
-            if (profile.CenterCalibrated || capture != null)
+            if (profile.CenterCalibrated || capture != null || Deadzones.LeftPercent != 4 || Deadzones.RightPercent != 4)
             {
                 return;
             }
@@ -699,22 +719,21 @@ public sealed class Pro2HidReportParser
             int delta = value - center;
             bool negative = delta < 0;
             int magnitude = negative ? -delta : delta;
-            if (magnitude <= AxisDeadzone)
-            {
-                return Center12;
-            }
+            double percent = axis is StickAxis.Lx or StickAxis.Ly ? Deadzones.LeftPercent : Deadzones.RightPercent;
+            int axisDeadzone = (int)Math.Round(FullScaleRange * percent / 100);
+            if (magnitude <= axisDeadzone) return Center12;
 
             int directionalRange = FullScaleRange;
             if (profile.RangeCalibrated)
             {
                 int measuredRange = negative ? center - minimum : maximum - center;
                 directionalRange = Math.Max(
-                    AxisDeadzone + 1,
+                    axisDeadzone + 1,
                     (int)Math.Round(measuredRange * CalibratedEndpointReserve));
             }
-            int usable = directionalRange - AxisDeadzone;
+            int usable = directionalRange - axisDeadzone;
             int target = negative ? Center12 : GamepadState.AxisMax - Center12;
-            int scaled = ((magnitude - AxisDeadzone) * target + usable / 2) / usable;
+            int scaled = ((magnitude - axisDeadzone) * target + usable / 2) / usable;
             if (scaled > target)
             {
                 scaled = target;

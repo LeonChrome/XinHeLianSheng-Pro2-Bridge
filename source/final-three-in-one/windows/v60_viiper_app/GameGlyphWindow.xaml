@@ -39,7 +39,7 @@
                         <TextBlock x:Name="StatusMessage" Text="自动查找后检测游戏版本。" Foreground="#52685D" TextWrapping="Wrap" Margin="0,7,0,0"/>
                         <TextBlock Text="上 X　右 A　下 B　左 Y" FontSize="16" FontWeight="SemiBold" Foreground="#245344" Margin="0,14,0,0"/>
                         <TextBlock Text="含通用提示、菜单／教程动作表、文本内嵌按键及物品／装备选中提示。整张手柄示意图和触摸板方向手势保留。" FontSize="12" Foreground="#667870" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                        <TextBlock Text="修改前请退出游戏。只添加独立图标补丁，不覆盖原游戏包；游戏更新后需重新检查兼容性。" FontSize="12" Foreground="#667870" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                        <TextBlock Text="按图标资源标识检查兼容性，不再锁定游戏 EXE 版本。修改前请退出游戏；只添加独立补丁，可一键还原。游戏大改资源后可能仍需适配。" FontSize="12" Foreground="#667870" TextWrapping="Wrap" Margin="0,8,0,0"/>
                     </StackPanel>
                 </Border>
             </StackPanel>

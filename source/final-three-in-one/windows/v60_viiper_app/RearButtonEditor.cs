@@ -42,6 +42,9 @@ public sealed class RearButtonChoice : RearEditorObservable
 
 public sealed class RearStepEditor : RearEditorObservable
 {
+    private int stepNumber;
+    public int StepNumber { get => stepNumber; internal set { if (stepNumber == value) return; stepNumber = value; Changed(nameof(StepTitle)); } }
+    public string StepTitle => "第 " + StepNumber + " 步";
     public IReadOnlyList<RearButtonChoice> Choices { get; }
     public bool Ps5 { get; }
     private Ps5TouchGesture touchAction;
@@ -125,8 +128,27 @@ public sealed class RearButtonEditor : RearEditorObservable
     public string Gap { get => gap; set { if (gap == value) return; gap = value; Changed(); } }
     public string Count { get => count; set { if (count == value) return; count = value; Changed(); } }
     public ObservableCollection<RearButtonChoice> Buttons { get; }
+    private RearButtonChoice Choice(GamepadButtons key) => Buttons.First(c => c.Key == key);
+    public RearButtonChoice NorthChoice => Choice(GamepadButtons.North);
+    public RearButtonChoice EastChoice => Choice(GamepadButtons.East);
+    public RearButtonChoice SouthChoice => Choice(GamepadButtons.South);
+    public RearButtonChoice WestChoice => Choice(GamepadButtons.West);
+    public RearButtonChoice UpChoice => Choice(GamepadButtons.DPadUp);
+    public RearButtonChoice DownChoice => Choice(GamepadButtons.DPadDown);
+    public RearButtonChoice LeftChoice => Choice(GamepadButtons.DPadLeft);
+    public RearButtonChoice RightChoice => Choice(GamepadButtons.DPadRight);
+    public IEnumerable<RearButtonChoice> OtherButtons => Buttons.Where(c => (c.Key &
+        (GamepadButtons.North | GamepadButtons.East | GamepadButtons.South | GamepadButtons.West |
+         GamepadButtons.DPadUp | GamepadButtons.DPadDown | GamepadButtons.DPadLeft | GamepadButtons.DPadRight)) == 0);
+    public string ActionSummary => (Enabled ? "" : "未启用 · ") + (Delay == "0" ? "" : "等待 " + Delay + "ms → ") + MappingSummary +
+        (IsRepeat ? " → 连发 " + Duration + "/" + Gap + "ms" : IsSequence ? " → " + Steps.Count + " 个后续动作" : IsTimed ? " → " + Duration + "ms 后松开" : " → 松开停止");
+    public string SequencePreview => "起始：" + MappingSummary + string.Concat(Steps.Select(s =>
+        " → " + string.Join("+", s.Choices.Where(c => c.Key != GamepadButtons.None && (c.Key & (s.First | s.Second)) != 0).Select(c => c.Label)) +
+        (s.TouchAction != Ps5TouchGesture.None ? "[" + Ps5TouchGestures.Choices.First(c => c.Gesture == s.TouchAction).Label + "]" : "") + " (" + s.Delay + "+" + s.Duration + "ms)"));
     public ObservableCollection<RearStepEditor> Steps { get; } = [];
     public ICommand AddStepCommand { get; }
+    public ICommand ClearSelectionCommand { get; }
+    public ICommand RepeatPresetCommand { get; }
     public RearButtonEditor(string title, bool ps5, RearButtonBinding binding, bool nintendo = false)
     {
         Title = title; Ps5 = ps5; Nintendo = nintendo; binding = binding.Normalize();
@@ -139,8 +161,19 @@ public sealed class RearButtonEditor : RearEditorObservable
         Buttons = new(RearButtonChoice.Choices(ps5, nintendo).Where(c => c.Key != GamepadButtons.None));
         foreach (var choice in Buttons) choice.Selected = (binding.Buttons & choice.Key) != 0;
         foreach (var choice in Buttons) choice.PropertyChanged += (_, _) => Changed(nameof(MappingSummary));
-        Steps.CollectionChanged += (_, _) => Changed(nameof(Steps));
+        Steps.CollectionChanged += (_, _) => { for (int i = 0; i < Steps.Count; i++) Steps[i].StepNumber = i + 2; Changed(nameof(Steps)); };
         foreach (var step in binding.Steps) AddStep(step);
+        PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(Action) or nameof(Enabled) or nameof(MappingSummary) or nameof(Delay) or nameof(Duration) or nameof(Gap) or nameof(Count) or nameof(Steps))
+            { Changed(nameof(ActionSummary)); Changed(nameof(SequencePreview)); }
+        };
+        ClearSelectionCommand = new RelayCommand(_ => { foreach (var c in Buttons) c.Selected = false; TouchAction = Ps5TouchGesture.None; });
+        RepeatPresetCommand = new RelayCommand(p =>
+        {
+            Action = Actions[2]; Duration = Gap = (p as string) switch { "slow" => "160", "fast" => "40", _ => "80" };
+            Count = "0";
+        });
         AddStepCommand = new RelayCommand(_ =>
         {
             if (Steps.Count < 16) AddStep(new() { Buttons = GamepadButtons.South, DelayMs = 100 });

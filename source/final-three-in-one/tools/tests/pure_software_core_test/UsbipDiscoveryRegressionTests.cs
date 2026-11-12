@@ -8,6 +8,9 @@ internal static class UsbipDiscoveryRegressionTests
 {
     public static void Run(Action<bool, string> check, string output)
     {
+        check(UsbipRuntimeLocator.IsUsbipClientProcessName("wusbip") && UsbipRuntimeLocator.IsUsbipClientProcessName("USBIP-GUI"),
+            "native Windows USBIP GUI and other client names provide executable-directory evidence");
+        check(!UsbipRuntimeLocator.IsUsbipClientProcessName("explorer"), "unrelated process modules not queried for USBIP discovery");
         const string custom = @"D:\Other Apps\USBIP 中文, tools\usbip.exe";
         foreach (string icon in new[] { '"' + custom + "\",0", '"' + custom + "\",-123", custom + ",0", '"' + custom + '"' })
             check(UsbipRuntimeLocator.ParseRegisteredExecutablePath(icon) == custom, "quoted/custom icon path parsed: " + icon);

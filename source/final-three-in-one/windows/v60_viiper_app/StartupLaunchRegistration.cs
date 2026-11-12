@@ -36,7 +36,8 @@ public static class StartupLaunchRegistration
             return;
         }
 
-        string? executable = Environment.ProcessPath;
+        string? executable = Environment.GetEnvironmentVariable("PRO2_LAUNCHER_PATH");
+        if (string.IsNullOrWhiteSpace(executable) || !System.IO.File.Exists(executable)) executable = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(executable))
         {
             executable = Process.GetCurrentProcess().MainModule?.FileName;

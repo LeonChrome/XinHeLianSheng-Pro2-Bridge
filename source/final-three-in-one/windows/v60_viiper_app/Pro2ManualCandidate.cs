@@ -15,7 +15,7 @@ public sealed record Pro2ManualCandidate(ulong Address, BluetoothAddressType Add
     public string AddressDetail => AddressText + (AddressType == BluetoothAddressType.Random ? " · 随机地址" : " · 公共地址");
     public string Confidence => Score >= 60 ? "高匹配" : Score >= 30 ? "可能是 Pro2" : "低匹配";
     public string Signal => Rssi + " dBm";
-    public string Evidence => NintendoManufacturer ? "Nintendo 广播标识" : Score >= 30 ? "设备名称匹配" : "未匹配 Pro2 标识";
+    public string Evidence => NintendoManufacturer ? "Nintendo 广播标识" : Score >= 80 ? "Pro2 UUID 广播线索" : Score >= 30 ? "设备名称匹配" : "未匹配 Pro2 标识";
     public bool IsValid => Address > 0 && Address <= 0xFFFFFFFFFFFF &&
         AddressType is BluetoothAddressType.Public or BluetoothAddressType.Random;
     public static IReadOnlyList<Pro2ManualCandidate> Sort(IEnumerable<Pro2ManualCandidate> candidates) =>

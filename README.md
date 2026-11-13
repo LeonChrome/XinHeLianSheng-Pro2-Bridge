@@ -6,7 +6,7 @@
 
 EXE 首次打开会准备内置运行文件，请稍等几秒。ZIP 需先完整解压。两者均自带 .NET 和 VIIPER。
 
-**[v3.0 多输入预览](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v3.0-preview)**：新增 Pro1 蓝牙／USB、Pro2 USB 输入，以及 Pro1 蓝牙 NFC 只读实验。新通路已通过离线回放，尚待实机验收；稳定版继续保留 v2.9。[接入与限制](docs/physical-inputs.md)
+**[v3.0.1 多输入预览](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/tag/pro2-v3.0.1-preview)**：新增 Pro1 蓝牙／USB、Pro2 USB 输入，以及 Pro1 蓝牙 NFC 只读实验。新通路已通过离线回放，尚待实机验收；稳定版继续保留 v2.9。[接入与限制](docs/physical-inputs.md)
 
 ## 主要功能
 

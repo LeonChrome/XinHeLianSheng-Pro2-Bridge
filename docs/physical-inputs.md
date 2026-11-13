@@ -9,6 +9,8 @@
 
 从首页 **输入 / NFC** 选择槽位和实体设备。回到首页或多手柄窗口选择输出模式。原 Pro2 BLE 仍从首页连接，也可在输入窗口切回。
 
+Pro2 USB 请先接入助手，再启动 Steam。Steam 可能独占厂商 USB 接口；遇到拒绝访问时先正常退出 Steam 及其他手柄工具，不要因此重装驱动。v3.0.1 已兼容系统写入的单数／复数接口 GUID，并去掉本机固件不应答的可选 NFC 旁路初始化。
+
 ## 频率与功能边界
 
 Pro2 USB 以真实约 250Hz 为目标，按实际 HID 输入测量；新接入路线尚待实机验收。Pro1 使用原生报告频率，不承诺真实 250Hz。不把三个 IMU 样本、ACK、NFC 响应、重复虚拟输出算作新按键报告。
@@ -35,6 +37,6 @@ Pro1 输出模式转回实体 Pro1：100% 强度时保留原生八字节 HD 震�
 
 新增测试使用生产解析器和生产虚拟输入/震动循环，覆盖三种输入帧、四种输出、USB 无 ACK 的 ForceUSB、同一设备重复占用、取消/失败后的资源释放、输入源替换、NFC 成功/超时/取消与输入恢复。
 
-回放不需要实体手柄；**回放通过不等于已完成 Pro1 蓝牙、USB 和实体 amiibo 的硬件验收**。真实验证应至少记录 5 分钟输入、按键/摇杆/体感、震动压力和拔插恢复；NFC 需另行使用实体卡确认。
+回放不需要实体手柄；**回放通过不等于已完成全部硬件验收**。v3.0.1 在本机 Pro2 USB 完成约 30 秒真实输入测试：249.99Hz，P50 4.00ms、P95 4.02ms，解析失败 0。Pro1、实卡 NFC、各输出模式的长时间游戏仍需验证；完整验收还应记录震动压力与拔插恢复。
 
 协议参考：[SDL Pro1 驱动](https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_switch.c)、[SDL Pro2 驱动](https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_switch2.c)、[Nintendo Switch 协议研究](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering)、[Switch 2 协议研究](https://github.com/ndeadly/switch2_controller_research)。实现保留在现有 C# 输入和 VIIPER 输出架构中；未引入其他项目的完整程序或内核驱动。

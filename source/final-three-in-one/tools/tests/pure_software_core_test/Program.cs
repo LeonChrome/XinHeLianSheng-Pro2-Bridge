@@ -25,6 +25,43 @@ internal static class Program
         Directory.CreateDirectory(output);
         try
         {
+            if (args.Contains("--capture-usb-input"))
+            {
+                var devices=NintendoHidDevice.Enumerate().Where(d=>d.Kind==NintendoInputKind.Pro2Usb).ToArray();
+                if(devices.Length!=1) throw new InvalidOperationException("Expected one physical Pro2 USB; found "+devices.Length);
+                var logGate=new object();
+                var source=new NintendoPhysicalInputSource(devices[0],line=>{lock(logGate){File.AppendAllText(Path.Combine(output,"physical-usb-live.log"),DateTimeOffset.Now.ToString("HH:mm:ss.fff")+" "+line+Environment.NewLine);Console.WriteLine(line);}});
+                using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(55));
+                try
+                {
+                    source.ConnectAsync(deadline.Token).GetAwaiter().GetResult();
+                    Task.Delay(TimeSpan.FromSeconds(30),deadline.Token).GetAwaiter().GetResult();
+                    var measured=source.Snapshot();
+                    File.WriteAllText(Path.Combine(output,"physical-usb-result.json"),System.Text.Json.JsonSerializer.Serialize(measured));
+                    Console.WriteLine("PHYSICAL_USB_RESULT "+source.MetricsSummary);
+                    return measured.Running&&measured.Reports>=5000&&measured.Hz>=230 ? 0 : 2;
+                }
+                finally { source.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+            }
+            if (args.Contains("--probe-usb-command-interface"))
+            {
+                var devices=NintendoHidDevice.Enumerate().Where(d=>d.Kind==NintendoInputKind.Pro2Usb).ToArray();
+                if(devices.Length!=1) throw new InvalidOperationException("Expected one physical Pro2 USB; found "+devices.Length);
+                var trace=new StringBuilder();
+                var identity=System.Security.Principal.WindowsIdentity.GetCurrent();
+                trace.AppendLine("elevated="+new System.Security.Principal.WindowsPrincipal(identity).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator));
+                var type=typeof(NintendoHidDevice).Assembly.GetType("Y700Switch2V60Viiper.Pro2UsbCommands")!;
+                IDisposable channel;
+                try { channel=(IDisposable)type.GetMethod("Open",BindingFlags.Public|BindingFlags.Static)!.Invoke(null,[devices[0],new Action<string>(line=>{trace.AppendLine(line);Console.WriteLine(line);})])!; }
+                catch(Exception error) { trace.AppendLine(error.ToString()); throw; }
+                finally { File.WriteAllText(Path.Combine(output,"usb-interface-trace.txt"),trace.ToString()); }
+                using var openedChannel=channel;
+                File.WriteAllText(Path.Combine(output,"actual-usb-interface-probe.txt"),
+                    "PHYSICAL_PRO2_USB_COMMAND_INTERFACE=OPENED\nDEVICE="+devices[0].PhysicalId+
+                    "\nCOMMANDS_SENT=0\nDRIVER_CHANGES=0\nDATA_RATE_MEASURED=false\n");
+                Console.WriteLine("PASS: existing physical Pro2 WinUSB interface opened; commands_sent=0 driver_changes=0");
+                return 0;
+            }
             StartupRenderingRegressionTests.Run(Check);
             V28RegressionTests.Run(Check);
             V29RegressionTests.Run(Check, output);
@@ -183,9 +220,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.0.0.0", "v3.0.0 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.0.1.0", "v3.0.1 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.0.0-physical-inputs", "v3.0.0 release metadata");
+            "3.0.1-physical-inputs", "v3.0.1 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -494,7 +531,7 @@ internal static class Program
             "Intel Corporation", Win11ValidatedConnectionProfile.ValidatedDriverVersion, "offline", "offline");
         var adapters = new BluetoothAdapterDiagnosticInfo?[] {
             valid, null, valid with { Vid = "0BDA" }, valid with { Pid = "0852" },
-            valid with { DriverProvider = "Other" }, valid with { DriverVersion = "23.0.0.0" },
+            valid with { DriverProvider = "Other" }, valid with { DriverVersion = "23.0.1.0" },
             valid with { DriverProvider = null! }, valid with { DriverVersion = null! }
         };
         foreach (bool windows in new[] { false, true })

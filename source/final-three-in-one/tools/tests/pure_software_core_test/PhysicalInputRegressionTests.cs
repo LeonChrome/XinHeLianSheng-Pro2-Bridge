@@ -12,6 +12,11 @@ internal static class PhysicalInputRegressionTests
 {
     public static async Task RunAsync(Action<bool,string> check,string output)
     {
+        var nativeGuid=new Guid("6F13725E-EF0E-4FD3-AE5F-B2DE989EC825");
+        check(NintendoHidDevice.ParseInterfaceGuids(null,nativeGuid.ToString("B")).SequenceEqual(new[]{nativeGuid}),
+            "WinUSB MS OS descriptor singular REG_SZ interface GUID is discovered");
+        check(NintendoHidDevice.ParseInterfaceGuids(new[]{"invalid",nativeGuid.ToString()},nativeGuid.ToString("B")).SequenceEqual(new[]{nativeGuid}),
+            "plural multi-string and singular GUIDs are validated and deduplicated");
         check(NintendoHidDevice.IsPhysicalChain([@"HID\VID_057E&PID_2069",@"USB\VID_057E&PID_2069\A",@"USB\ROOT_HUB30\A",@"PCI\X"]),"physical USB ancestry accepted");
         check(NintendoHidDevice.IsPhysicalChain([@"HID\NINTENDO",@"BTHENUM\DEV_1234",@"USB\VID_0BDA"]),"classic Bluetooth HID accepted");
         check(!NintendoHidDevice.IsPhysicalChain([@"HID\VID_057E&PID_2009",@"USBIP_VHCI\X",@"USB\ROOT_HUB30\A"]),"virtual Nintendo PID never becomes input");
@@ -245,7 +250,7 @@ internal static class PhysicalInputRegressionTests
     private sealed class FakeUsb(FakeHid io):INintendoUsbCommandChannel
     {
         public byte[] Send(byte command,byte sub,byte[] data)
-        {if(command==3&&sub==13)for(int i=0;i<3;i++)io.Feed(Input(NintendoInputKind.Pro2Usb));return [command,1,0,sub,0,0xf8,0,0];}
+        {if(command==1)throw new IOException("This firmware has no ACK for optional NFC initialization");if(command==3&&sub==13)for(int i=0;i<3;i++)io.Feed(Input(NintendoInputKind.Pro2Usb));return [command,1,0,sub,0,0xf8,0,0];}
         public void Dispose(){}
     }
 }

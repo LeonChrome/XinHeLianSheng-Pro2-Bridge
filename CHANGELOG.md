@@ -1,5 +1,13 @@
 # Changelog
 
+## PRO2 手柄助手 v3.0.1 · USB 修复预览
+
+- 修正单数 WinUSB 接口 GUID 漏查，增加接口占用与错误码诊断。
+- 去掉会阻断旧固件 USB 初始化的可选 NFC 旁路命令。
+- 本机真实 Pro2 USB 约 30 秒实测 249.99Hz，P50 4.00ms、P95 4.02ms，解析失败 0。先接入助手，再启动 Steam。
+
+[版本说明](docs/RELEASE_v3.0.1_ZH.md)
+
 ## PRO2 手柄助手 v3.0 · 多输入预览
 
 - 在现有四槽位和四种输出中接入 Pro1 传统蓝牙 HID、Pro1 USB、Pro2 USB，不替换 Pro2 BLE。

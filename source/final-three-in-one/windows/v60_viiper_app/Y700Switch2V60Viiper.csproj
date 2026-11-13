@@ -12,10 +12,10 @@
     <AssemblyTitle>PRO2 手柄助手</AssemblyTitle>
     <Product>PRO2 手柄助手</Product>
     <Description>适用于 Windows 10 / 11 x64 的 Pro2 纯软件手柄助手，支持 Pro2、Pro1、Xbox 与 PS5 兼容模式</Description>
-    <Version>3.0.0</Version>
-    <AssemblyVersion>3.0.0.0</AssemblyVersion>
-    <FileVersion>3.0.0.0</FileVersion>
-    <InformationalVersion>3.0.0-physical-inputs</InformationalVersion>
+    <Version>3.0.1</Version>
+    <AssemblyVersion>3.0.1.0</AssemblyVersion>
+    <FileVersion>3.0.1.0</FileVersion>
+    <InformationalVersion>3.0.1-physical-inputs</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>true</PublishSingleFile>
@@ -37,7 +37,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(CompatibilityRendering)' == 'true'">
     <DefineConstants>$(DefineConstants);PRO2_COMPATIBILITY_RENDERING</DefineConstants>
-    <InformationalVersion>3.0.0-physical-inputs-ui-compatible</InformationalVersion>
+    <InformationalVersion>3.0.1-physical-inputs-ui-compatible</InformationalVersion>
     <AssemblyTitle>PRO2 手柄助手 · 兼容启动版</AssemblyTitle>
     <Product>PRO2 手柄助手 · 兼容启动版</Product>
   </PropertyGroup>

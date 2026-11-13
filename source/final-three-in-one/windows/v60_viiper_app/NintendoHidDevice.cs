@@ -20,6 +20,10 @@ public sealed record NintendoHidDevice(string Path, string InstanceId, string Ph
     public string Label => (Kind switch { NintendoInputKind.Pro1Bluetooth => "Pro1 · 蓝牙",
         NintendoInputKind.Pro1Usb => "Pro1 · USB", _ => "Pro2 · USB" }) + " · " + PhysicalId;
     public bool IsPro1 => Kind != NintendoInputKind.Pro2Usb;
+    public static IReadOnlyList<Guid> ParseInterfaceGuids(params object?[] registryValues) => registryValues
+        .SelectMany(value => value is string[] many ? many : value is string one ? [one] : Array.Empty<string>())
+        .Select(value => Guid.TryParse(value, out var parsed) ? parsed : Guid.Empty)
+        .Where(value => value != Guid.Empty).Distinct().ToArray();
     // Identity must include the physical parent, not VID/PID (our outputs use those too).
     public static bool IsPhysicalChain(IEnumerable<string> nodes)
     {
@@ -189,8 +193,9 @@ internal sealed class Pro2UsbCommands : INintendoUsbCommandChannel
     [StructLayout(LayoutKind.Sequential)] private struct Pipe { public int Type; public byte Id; public ushort MaxPacket; public byte Interval; }
     private Pro2UsbCommands(SafeFileHandle handle, IntPtr usb, byte inputPipe, byte outputPipe)
     { this.handle = handle; this.usb = usb; this.inputPipe = inputPipe; this.outputPipe = outputPipe; }
-    public static Pro2UsbCommands Open(NintendoHidDevice device)
+    public static Pro2UsbCommands Open(NintendoHidDevice device, Action<string>? log = null)
     {
+        log ??= _ => { };
         // The device's actual interface GUID is supplied by its installed INF/OS
         // descriptor, not by our virtual controller's private WinUSB GUID.
         var guids = new HashSet<Guid>();
@@ -202,36 +207,46 @@ internal sealed class Pro2UsbCommands : INintendoUsbCommandChannel
             foreach (string instance in group?.GetSubKeyNames() ?? [])
             {
                 using var parameters = group!.OpenSubKey(instance + @"\Device Parameters");
-                object? values = parameters?.GetValue("DeviceInterfaceGUIDs");
-                foreach (string value in values is string[] many ? many : values is string one ? [one] : [])
-                    if (Guid.TryParse(value, out var guid)) guids.Add(guid);
+                // Microsoft OS descriptor bindings may publish REG_SZ singular;
+                // INF-installed bindings commonly publish plural REG_MULTI_SZ.
+                foreach (Guid guid in NintendoHidDevice.ParseInterfaceGuids(
+                    parameters?.GetValue("DeviceInterfaceGUIDs"), parameters?.GetValue("DeviceInterfaceGUID")))
+                    guids.Add(guid);
             }
         }
+        log("[USB_INTERFACE_PROBE] registry_guids="+string.Join(",",guids));
+        string failure="no_matching_device_interface";
         foreach (Guid guid in guids)
         foreach (var entry in HidNative.Interfaces(guid))
         {
             string[] chain = HidNative.Ancestors(entry.DevInst);
-            if (!NintendoHidDevice.IsPhysicalChain(chain) || !chain.Contains(device.PhysicalId, StringComparer.OrdinalIgnoreCase)) continue;
+            bool matches=NintendoHidDevice.IsPhysicalChain(chain) && chain.Contains(device.PhysicalId, StringComparer.OrdinalIgnoreCase);
+            log("[USB_INTERFACE_PROBE] interface="+entry.InstanceId+" physical_match="+matches+" path="+entry.Path);
+            if (!matches) continue;
             var h = HidNative.Open(entry.Path, 0xc0000000, true);
-            if (h.IsInvalid) { h.Dispose(); continue; }
-            if (!WinUsb_Initialize(h, out var usb)) { h.Dispose(); continue; }
+            if (h.IsInvalid) { failure="CreateFile win32="+Marshal.GetLastWin32Error(); log("[USB_INTERFACE_PROBE] "+failure); h.Dispose(); continue; }
+            if (!WinUsb_Initialize(h, out var usb)) { failure="WinUsb_Initialize win32="+Marshal.GetLastWin32Error(); log("[USB_INTERFACE_PROBE] "+failure); h.Dispose(); continue; }
             bool success = false;
             try
             {
-                if (!WinUsb_QueryInterfaceSettings(usb, 0, out var descriptor)) continue;
+                if (!WinUsb_QueryInterfaceSettings(usb, 0, out var descriptor)) { failure="QueryInterfaceSettings win32="+Marshal.GetLastWin32Error(); log("[USB_INTERFACE_PROBE] "+failure); continue; }
                 byte input = 0, output = 0;
                 for (byte i = 0; i < descriptor.Endpoints; i++)
                     if (WinUsb_QueryPipe(usb, 0, i, out var pipe) && pipe.Type == 2)
                     { if ((pipe.Id & 0x80) != 0) input = pipe.Id; else output = pipe.Id; }
-                if (input == 0 || output == 0) continue;
+                log($"[USB_INTERFACE_PROBE] interface_number={descriptor.Number} endpoints={descriptor.Endpoints} input=0x{input:X2} output=0x{output:X2}");
+                if (input == 0 || output == 0) { failure="bulk_endpoints_missing"; continue; }
                 uint timeout = 1200;
-                if (!WinUsb_SetPipePolicy(usb, input, 3, 4, ref timeout) || !WinUsb_SetPipePolicy(usb, output, 3, 4, ref timeout)) continue;
+                if (!WinUsb_SetPipePolicy(usb, input, 3, 4, ref timeout) || !WinUsb_SetPipePolicy(usb, output, 3, 4, ref timeout)) { failure="SetPipePolicy win32="+Marshal.GetLastWin32Error(); log("[USB_INTERFACE_PROBE] "+failure); continue; }
                 success = true;
                 return new(h, usb, input, output);
             }
             finally { if (!success) { WinUsb_Free(usb); h.Dispose(); } }
         }
-        throw new IOException("未找到此 Pro2 的 USB 命令接口。需系统已为厂商接口安装 WinUSB；本程序不会替换手柄 HID 或蓝牙驱动。请保留诊断并使用现有 BLE 连接。");
+        string advice=failure=="CreateFile win32=5"
+            ? "请先正常退出 Steam 及其他手柄工具，再接入本程序；连接后可重新打开 Steam。若仍被拒绝，再检查设备访问权限。"
+            : "请查看 USB_INTERFACE_PROBE 的接口与系统错误记录，核对对应厂商接口。";
+        throw new IOException("Pro2 USB 命令接口未打开（"+failure+"）。"+advice);
     }
     public byte[] Send(byte command, byte subcommand, byte[] data)
     {
@@ -262,7 +277,10 @@ internal sealed class Pro2UsbCommands : INintendoUsbCommandChannel
         (byte c, byte s, string data)[] commands = [
             (7,1,""), (12,2,"27000000"), (17,1,""),
             (10,8,"01FFFFFFFFFFFFFFFF3500460000000000000000"),
-            (12,4,"27000000"), (1,12,""), (1,1,""),
+            // NFC side-channel commands (01/0C and 01/01) are not required for
+            // HID game input. Some real firmware does not ACK the empty 01/01;
+            // do not make that optional peripheral initialization a prerequisite.
+            (12,4,"27000000"),
             (3,10,"05000000"), (3,13,"0100FFFFFFFFFFFF")];
         foreach (var (c,s,data) in commands)
         { channel.Send(c,s,Convert.FromHexString(data)); log($"[NINTENDO_USB_INIT] command={c:X2}/{s:X2} ack=matched"); }

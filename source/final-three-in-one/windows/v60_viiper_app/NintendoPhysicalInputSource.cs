@@ -122,7 +122,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
             }
             else
             {
-                usbCommands=suppliedCommands ?? Pro2UsbCommands.Open(device);
+                usbCommands=suppliedCommands ?? Pro2UsbCommands.Open(device,log);
                 await Task.Run(()=>Pro2UsbCommands.Initialize(usbCommands,log),token);
             }
             initialized=true;

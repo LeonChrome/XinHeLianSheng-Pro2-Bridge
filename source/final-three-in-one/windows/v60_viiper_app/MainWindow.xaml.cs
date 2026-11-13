@@ -12,6 +12,15 @@ namespace Y700Switch2V60Viiper;
 
 public partial class MainWindow : Window
 {
+    private PhysicalInputsWindow? physicalInputsWindow;
+    private void PhysicalInputs_Click(object sender, RoutedEventArgs e)
+    {
+        if (physicalInputsWindow != null) { physicalInputsWindow.Activate(); return; }
+        if (DataContext is not MainViewModel vm) return;
+        physicalInputsWindow = new PhysicalInputsWindow(vm) { Owner = this };
+        physicalInputsWindow.Closed += (_, _) => physicalInputsWindow = null;
+        physicalInputsWindow.Show();
+    }
     private MultiControllerWindow? multiControllerWindow;
     private void MultiController_Click(object sender, RoutedEventArgs e)
     {

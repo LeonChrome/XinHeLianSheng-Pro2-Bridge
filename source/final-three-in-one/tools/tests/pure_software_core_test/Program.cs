@@ -28,6 +28,12 @@ internal static class Program
             StartupRenderingRegressionTests.Run(Check);
             V28RegressionTests.Run(Check);
             V29RegressionTests.Run(Check, output);
+            PhysicalInputRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
+            if (args.Contains("--physical-only"))
+            {
+                Console.WriteLine("PASS: " + checks + " physical-input assertions; offline protocol replay only.");
+                return 0;
+            }
             if (args.Contains("--inspect-game-readonly"))
             {
                 string path = args[Array.IndexOf(args, "--inspect-game-readonly") + 1];
@@ -177,9 +183,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "2.9.0.0", "v2.9.0 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.0.0.0", "v3.0.0 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "2.9.0-compatibility-controls", "v2.9.0 release metadata");
+            "3.0.0-physical-inputs", "v3.0.0 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1289,6 +1295,12 @@ internal static class Program
             Check(scrolls.All(s => s.ComputedHorizontalScrollBarVisibility != Visibility.Visible), "no default horizontal scroll " + tab);
             Check(scrolls.All(s => s.ComputedVerticalScrollBarVisibility != Visibility.Visible), "no default vertical scroll " + tab);
         }
+        var physicalWindow = new PhysicalInputsWindow(vm) { Owner = window };
+        physicalWindow.Show(); Pump(physicalWindow); Save(physicalWindow, "ui-physical-inputs-nfc.png");
+        Check(physicalWindow.FindName("SlotChoice") is ComboBox { Items.Count: 4 }, "physical input window exposes four independent slots");
+        Check(physicalWindow.FindName("NfcButton") is Button { IsEnabled: false }, "NFC cannot start without a supported physical source");
+        Check(physicalWindow.FindName("Devices") is ListBox { Items.Count: 0 }, "preview does not enumerate or open real controllers");
+        physicalWindow.Close();
         vm.RearEditingMode = "PS5"; vm.ResetRearButtonsCommand.Execute(null); vm.SelectedRearIndex = 2;
         Check(window.FindName("MultiControllerButton") is Button, "multi-controller entry is on home");
         var multiWindow = new MultiControllerWindow(vm) { Owner = window };

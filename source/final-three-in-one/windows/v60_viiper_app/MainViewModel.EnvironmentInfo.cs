@@ -44,7 +44,7 @@ public sealed partial class MainViewModel
     }
     public string EnvironmentHomeSummaryHint => EnvironmentHomeSummary + Environment.NewLine +
         "系统默认适配器不代表已确认此手柄的连接归属；完整信息可查看、复制或保存。";
-    public string EnvironmentReportText => environmentMetadata + Environment.NewLine + MultiControllerDiagnostics + Environment.NewLine +
+    public string EnvironmentReportText => environmentMetadata + Environment.NewLine + PhysicalInputsReport + Environment.NewLine + MultiControllerDiagnostics + Environment.NewLine +
         "USBIP 程序定位\n" + UsbipLocationText + "\n" + RuntimeReadinessText + "\n" +
         "FD2 / Parsed 是实体 BLE 输入；USBIP 状态用于检查虚拟手柄，两者分开判断。\n" +
         VirtualOutputDiagnosticText + deviceEventEvidence + Environment.NewLine +

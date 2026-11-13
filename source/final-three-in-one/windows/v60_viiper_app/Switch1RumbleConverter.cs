@@ -60,6 +60,7 @@ public static class Switch1RumbleConverter
             "switch1-hd-converted") with
         {
             PlayerLedMask = led,
+            NativePro1Rumble = feedback[..8].ToArray(),
             FrequencyClamps = frequencyClamps,
             ConversionTelemetry = $"frequency_mapping={Pro2RumbleFrequencyPolicy.Mapping} frequency_clamps={frequencyClamps}" +
                 $" source_left_hz={left.LowHz},{left.HighHz} source_right_hz={right.LowHz},{right.HighHz}"

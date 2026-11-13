@@ -913,6 +913,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             slot.InputSource.SetRuntimeBatteryRefreshEnabled(runtimeBatteryRefreshEnabled);
             slot.InputSource.SetStickProcessingMode(SelectedStickProcessingOption.Mode);
             slot.InputSource.SetStickDeadzones(userSettings.StickDeadzones);
+            slot.PhysicalInput?.SetDeadzones(userSettings.StickDeadzones);
+            slot.PhysicalInput?.SetRumbleGain(rumbleMultiplier);
             ApplySavedStickCalibration(
                 slot,
                 LastKnownPro2AddressForSlot(slot),
@@ -1567,6 +1569,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
     {
         cancellationToken.ThrowIfCancellationRequested();
         await StopAutoReconnectAsync();
+        if (PrimaryPhysical is { } physical) { await physical.DisposeAsync(); pro2Slots[0].PhysicalInput = null; }
         await bleOperationGate.WaitAsync(cancellationToken);
         try
         {
@@ -1586,6 +1589,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task CalibrateSourceGyroAsync(CancellationToken cancellationToken)
     {
+        foreach (var slot in pro2Slots.Where(s => s.PhysicalInput?.IsRunning == true))
+            AppendLog("[PHYSICAL_GYRO_CAL] " + slot.PhysicalInput!.StartGyroCalibration());
         Pro2BleInputSource[] liveSources = pro2Slots
             .Where(slot => slot.InputSource.IsRunning)
             .Select(slot => slot.InputSource)
@@ -1593,7 +1598,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             .ToArray();
         if (liveSources.Length == 0)
         {
-            Status = "没有已连接的真实 Pro2，无法校准陀螺仪。";
+            Status = pro2Slots.Any(s => s.PhysicalInput?.IsRunning == true) ? "陀螺仪三秒校准已开始，请静置手柄。" : "没有已连接的实体手柄，无法校准陀螺仪。";
             AppendLog("[PRO2_GYRO_CAL] rejected=no_live_source");
             return;
         }
@@ -1642,6 +1647,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task EnterGameAsync(CancellationToken cancellationToken, bool allowAutomaticConnect)
     {
+        if (PrimaryPhysical != null) { await EnterPhysicalGameAsync(cancellationToken); return; }
         long enterStarted = Stopwatch.GetTimestamp();
         if (!allowAutomaticConnect && !inputSource.IsRunning)
         {
@@ -1707,6 +1713,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         CancellationToken cancellationToken)
     {
         SelectMode(profile.Mode);
+        if (PrimaryPhysical != null)
+        {
+            if (!Running) await EnterPhysicalGameAsync(cancellationToken);
+            else await ApplySlotModeAsync(pro2Slots[0], cancellationToken);
+            return;
+        }
         if (Running && activeMode.HasValue && IsMultiSlotMode(activeMode.Value) && IsMultiSlotMode(profile.Mode))
         {
             await ApplySlotModeAsync(pro2Slots[0], cancellationToken);
@@ -2018,6 +2030,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
 
         slot.Enabled = true;
+        if (slot.PhysicalInput != null)
+        {
+            if (slot.PhysicalInput.IsRunning) { await EnsureViiperReadyAsync(cancellationToken); await StartSingleSlotSessionAsync(slot, RuntimeProfileForSlot(slot), cancellationToken); StartPhysicalReconnect(slot); }
+            return;
+        }
         if (!Running || !activeMode.HasValue || !IsMultiSlotMode(activeMode.Value))
         {
             ViiperDeviceProfile targetProfile = IsMultiSlotMode(selectedMode)
@@ -2600,6 +2617,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
 
         await slot.StopAutoReconnectAsync();
+        await StopPhysicalReconnectAsync(slot);
+        if (slot.PhysicalInput is { } physical) { await physical.DisposeAsync(); slot.PhysicalInput = null; }
         await bleOperationGate.WaitAsync(cancellationToken);
         try
         {
@@ -2843,9 +2862,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
 
         int virtualCount = pro2Slots.Count(slot => slot.VirtualDeviceRunning);
-        int liveCount = pro2Slots.Count(slot => slot.InputSource.IsRunning);
+        int liveCount = pro2Slots.Count(slot => slot.ActiveInput.IsRunning);
         InputStatus = ActiveProfile.Label + " 多手柄：虚拟实例 " + virtualCount +
-                      " 个，真实 Pro2 BLE live " + liveCount +
+                      " 个，实体输入在线 " + liveCount +
                       " 个。启用的 Slot 会独立扫描、独立回传震动。";
         Status = InputStatus;
         RaiseConnectionStateChanged();
@@ -2895,6 +2914,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         foreach (Pro2ControllerSlot slot in pro2Slots)
         {
             await slot.StopAutoReconnectAsync();
+            await StopPhysicalReconnectAsync(slot);
             slot.RefreshFromSource();
         }
     }
@@ -3021,8 +3041,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                 new ViiperProtocolClient(Host, ParsePort()),
                 runtimeProfile,
                 progress,
-                inputSource,
-                inputSource,
+                pro2Slots[0].ActiveInput,
+                pro2Slots[0].ActiveInput,
                 faultProgress,
                 gyro.Mode,
                 gyroAxisInversion,
@@ -3112,8 +3132,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             new ViiperProtocolClient(Host, ParsePort()),
             slotProfile,
             progress,
-            slot.InputSource,
-            slot.InputSource,
+            slot.ActiveInput,
+            slot.ActiveInput,
             faultProgress,
             ViiperGyroModeOption.Default.Mode,
             default,
@@ -3761,10 +3781,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                 {
                     await source.DisposeAsync();
                 }
+                foreach (var slot in pro2Slots)
+                    if (slot.PhysicalInput is { } physical) { await physical.DisposeAsync(); slot.PhysicalInput = null; }
             }
             catch (Exception ex)
             {
-                AppendLog("[SHUTDOWN] Pro2 BLE cleanup warning: " + ex.Message);
+                AppendLog("[SHUTDOWN] physical input cleanup warning: " + ex.Message);
             }
 
             if (viiperProcess != null)

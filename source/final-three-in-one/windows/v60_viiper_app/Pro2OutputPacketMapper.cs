@@ -3,7 +3,8 @@ using System;
 namespace Y700Switch2V60Viiper;
 
 public sealed record Pro2OutputPacket(byte[] Report, string Source, bool Active, byte? PlayerLedMask,
-    bool PreserveNativePayload = false, string ConversionTelemetry = "", int FrequencyClamps = 0);
+    bool PreserveNativePayload = false, string ConversionTelemetry = "", int FrequencyClamps = 0,
+    byte[]? NativePro1Rumble = null);
 
 public static class Pro2OutputPacketMapper
 {

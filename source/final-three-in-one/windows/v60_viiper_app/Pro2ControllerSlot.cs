@@ -27,6 +27,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
             ? "已启用，等待进入游戏。"
             : "未启用。";
         InputSource = new Pro2BleInputSource();
+        ActiveInput = new SlotInputRouter(InputSource);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -57,6 +58,15 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
             OnPropertyChanged(); OnPropertyChanged(nameof(RateSummary)); OnPropertyChanged(nameof(DisplayStatus)); }
     }
     public Pro2BleInputSource InputSource { get; }
+    public SlotInputRouter ActiveInput { get; }
+    private NintendoPhysicalInputSource? physicalInput;
+    public NintendoPhysicalInputSource? PhysicalInput
+    {
+        get => physicalInput;
+        set { physicalInput = value; ActiveInput.Switch((IGamepadInputSource?)value ?? InputSource); OnPropertyChanged(); }
+    }
+    public CancellationTokenSource? PhysicalReconnectCts { get; set; }
+    public Task? PhysicalReconnectTask { get; set; }
     public ViiperBridgeSession? Session { get; set; }
     public CancellationTokenSource? AutoReconnectCts { get; set; }
     public Task? AutoReconnectTask { get; set; }
@@ -169,7 +179,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
         Name +
         (Enabled ? " · ON" : " · OFF") +
         (VirtualDeviceRunning ? " · USB" : "") +
-        (InputSource.IsRunning ? " · BLE " + InputSource.LinkRateClass : "") +
+        (PhysicalInput != null ? " · " + PhysicalInput.Device.Kind : InputSource.IsRunning ? " · BLE " + InputSource.LinkRateClass : "") +
         (AutoReconnectEnabled ? " · AUTO" : "") +
         (string.IsNullOrWhiteSpace(ConnectedAddress) ? "" : " · " + ConnectedAddress);
 
@@ -177,6 +187,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
     {
         get
         {
+            if (PhysicalInput is { } physical) { var s = physical.Snapshot(); return s.Running ? $"真实 HID {s.Hz:F1} Hz · P95 {s.GapP95:F2}ms" : physical.Status; }
             var r = InputSource.GetRateEvidence();
             if (IsSleeping) return "已休眠 · 按任意键唤醒";
             if (!r.Connected || !r.Running) return "未连接";
@@ -186,15 +197,16 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
                 (r.HighRate ? "高速" : r.GameplayReady ? "可游玩，建议优化" : "低速，待优化");
         }
     }
-    public string OptimizationSummary => InputSource.CompatibilityOptimizationSummary;
+    public string OptimizationSummary => PhysicalInput != null ? "使用实体 HID 原生报告频率" : InputSource.CompatibilityOptimizationSummary;
     public string DisplayStatus => IsSleeping ? Status : Session?.OutputHealth is { State: not VirtualOutputState.Ready and not VirtualOutputState.Stopped } health
-        ? health.Summary : InputSource.IsRunning
+        ? health.Summary : PhysicalInput != null ? PhysicalInput.Status : InputSource.IsRunning
         ? InputSource.IsCompatibilityOptimizationRunning ? OptimizationSummary : "已连接 · 输入、震动与重连独立运行"
         : Status.StartsWith("真实 Pro2 BLE", StringComparison.Ordinal) ? "未连接 · 等待重连" : Status;
     public string DiagnosticSummary
     {
         get
         {
+            if (PhysicalInput is { } physical) return physical.MetricsSummary + "\n虚拟输出：" + (Session?.OutputHealth.Summary ?? "未启动");
             var r = InputSource.GetRateEvidence();
             return $"系统 {Environment.OSVersion.Version} · 请求 {r.DescriptorStatus} · 参数 {r.ParameterStatus}" +
                 $"\nNotify P50 / P95：{r.Gaps.P50Ms:F2} / {r.Gaps.P95Ms:F2}ms · 解析失败 {r.ParseFailures}" +
@@ -206,8 +218,8 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
 
     public void RefreshFromSource()
     {
-        ConnectedAddress = InputSource.ConnectedAddress;
-        if (InputSource.IsRunning) Status = InputSource.Status;
+        ConnectedAddress = PhysicalInput?.Device.PhysicalId ?? InputSource.ConnectedAddress;
+        if (ActiveInput.IsRunning) Status = ActiveInput.Status;
         OnPropertyChanged(nameof(Headline));
         OnPropertyChanged(nameof(ModeSummary));
         OnPropertyChanged(nameof(RateSummary));

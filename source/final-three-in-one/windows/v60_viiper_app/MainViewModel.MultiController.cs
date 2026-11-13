@@ -9,7 +9,7 @@ namespace Y700Switch2V60Viiper;
 
 public sealed partial class MainViewModel
 {
-    public string MultiControllerSummary => $"已连接 {pro2Slots.Count(s => s.InputSource.IsRunning)} / 4 · 休眠 {pro2Slots.Count(s => s.IsSleeping)} · 每只独立输入、震动与重连";
+    public string MultiControllerSummary => $"已连接 {pro2Slots.Count(s => s.ActiveInput.IsRunning)} / 4 · 休眠 {pro2Slots.Count(s => s.IsSleeping)} · 每只独立输入、震动与重连";
     private ICommand? removeSlotCommand, optimizeSlotCommand, applySlotModeCommand;
     public ICommand ApplyPro2SlotModeCommand => applySlotModeCommand ??= new RelayCommand(parameter =>
         RunExclusiveAsync("应用单只手柄模式", async token =>
@@ -110,9 +110,9 @@ public sealed partial class MainViewModel
     }
 
     public string MultiControllerDiagnostics => "多手柄状态（缓存；无额外 GATT 查询）\n" +
-        string.Join("\n\n", pro2Slots.Where(s => s.Enabled || s.VirtualDeviceRunning || s.InputSource.IsRunning).Select(s =>
+        string.Join("\n\n", pro2Slots.Where(s => s.Enabled || s.VirtualDeviceRunning || s.ActiveInput.IsRunning).Select(s =>
             s.Name + " · " + s.ConnectedAddress + " · " + s.ModeSummary + " · " + s.RateSummary + "\n" + s.DiagnosticSummary + "\n" +
-            s.InputSource.ConnectionDiagnosticText + "\n" + s.InputSource.GetAdaptiveDiagnosticText(includeHistory: false))) +
+            (s.PhysicalInput != null ? s.PhysicalInput.MetricsSummary : s.InputSource.ConnectionDiagnosticText + "\n" + s.InputSource.GetAdaptiveDiagnosticText(includeHistory: false)))) +
         "\n系统默认适配器不是各链路归属证明；多只手柄同时达到 133Hz 需要实测。\n";
 
     private IReadOnlyList<BlePeerRate> CapturePeerRates(int except) => pro2Slots.Where(s => s.Index != except)

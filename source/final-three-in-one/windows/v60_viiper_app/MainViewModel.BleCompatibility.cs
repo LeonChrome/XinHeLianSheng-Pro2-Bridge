@@ -9,7 +9,7 @@ public sealed partial class MainViewModel
 {
     private int bleAutoOptimizationQueued;
     private bool win10BleHomePanelExpanded;
-    public bool ShowWin10BleHomeAction => BleTurboUiPresentation.ShowHomeAction(
+    public bool ShowWin10BleHomeAction => PrimaryPhysical == null && BleTurboUiPresentation.ShowHomeAction(
         OperatingSystem.IsWindows(), Environment.OSVersion.Version.Build);
     public bool Win10BleHomePanelExpanded
     {
@@ -95,7 +95,7 @@ public sealed partial class MainViewModel
 
     private void QueueLowRateAutomaticOptimization()
     {
-        if (pro2Slots[0].AutoReconnectEnabled) return; // Per-slot loop owns serialized optimization.
+        if (PrimaryPhysical != null || pro2Slots[0].AutoReconnectEnabled) return; // Per-slot loop owns serialized optimization.
         if (previewOnly || shuttingDown || !AutoOptimizeBle || Busy || !HasLowRateWarning ||
             !inputSource.CanOptimizeConnectionCompatibility ||
             Interlocked.Exchange(ref bleAutoOptimizationQueued, 1) != 0) return;

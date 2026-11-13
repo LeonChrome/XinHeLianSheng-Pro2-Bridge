@@ -17,10 +17,13 @@ public sealed partial class MainViewModel
         bool success = false;
         await RunExclusiveAsync("手动连接 Pro2", async token =>
         {
+            if (PrimaryPhysical != null) { Status = "请先在“输入 / NFC”将手柄 1 改用 Pro2 BLE。"; return; }
             bool resumePrimary = AutoReconnectEnabled;
             bool[] resumeSlots = pro2Slots.Select(slot => slot.AutoReconnectEnabled).ToArray();
             string previousAddress = inputSource.ConnectedAddress;
-            await StopAutoReconnectAsync();
+            // A BLE manual scan must not pause USB/Classic reconnect guards.
+            await StopPrimaryBleReconnectOnlyAsync();
+            foreach (var slot in pro2Slots.Skip(1)) await slot.StopAutoReconnectAsync();
             AppendLog("[BLE_MANUAL] session_begin auto_reconnect_paused=true");
             try { success = await showDialog(token); }
             finally

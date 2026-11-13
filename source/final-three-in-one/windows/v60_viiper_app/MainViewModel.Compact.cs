@@ -42,7 +42,7 @@ public sealed partial class MainViewModel
     public ICommand CompactStopCommand => compactStopCommand ??=
         new RelayCommand(_ => RunExclusiveAsync("停止输出与自动重连", _ => StopAsync()));
     public bool CompactCanStop => !Busy &&
-        (Running || AutoReconnectEnabled || pro2Slots.Any(slot => slot.AutoReconnectEnabled));
+        (Running || AutoReconnectEnabled || pro2Slots.Any(slot => slot.AutoReconnectEnabled || slot.PhysicalInput != null));
 
     public bool CompactPs5Selected => IsDualSenseSelected;
     public double RumblePercent
@@ -56,6 +56,7 @@ public sealed partial class MainViewModel
     {
         get
         {
+            if (PrimaryPhysical is { } physical) return physical.IsRunning ? "原生 HID 输入 · 不补帧" : physical.Status;
             Pro2RateEvidence rate = inputSource.GetRateEvidence();
             if (!rate.Connected || !rate.Running) return "连接后持续测量真实输入";
             if (rate.LastInputAgeMs is not (>= 0 and < 500)) return "输入停顿 · 查看连接状态";
@@ -74,6 +75,7 @@ public sealed partial class MainViewModel
     {
         get
         {
+            if (PrimaryPhysical != null) return "读取实体 HID 报告；档位不是精确容量，未知时不按电压推算。";
             var battery = inputSource.GetBatterySnapshot();
             string unavailable = inputSource.BatteryLevelReadStatus == "read_not_permitted"
                 ? " 手柄拒绝直接读取档位（ATT 0x02）；定时更新使用新的通知报告，不重复 Read。"
@@ -94,14 +96,15 @@ public sealed partial class MainViewModel
     public string CompactRawRate => compactRawRate;
     public string CompactParsedRate => compactParsedRate;
     public string CompactInputAge => compactInputAge;
-    public string CompactFirmware => Pro2DevicePresentation.Firmware(inputSource.FirmwareInfo, inputSource.IsTransportConnected);
-    public string CompactFirmwareHint => inputSource.FirmwareInfo is { } info
+    public string CompactFirmware => PrimaryPhysical != null ? "未读取" : Pro2DevicePresentation.Firmware(inputSource.FirmwareInfo, inputSource.IsTransportConnected);
+    public string CompactFirmwareHint => PrimaryPhysical != null ? "当前输入：" + PrimaryPhysical.Device.Kind : inputSource.FirmwareInfo is { } info
         ? "蓝牙补丁 " + info.BluetoothPatchVersion + " · DSP " + (info.DspVersion ?? "未报告")
         : "连接时读取手柄的实际固件版本";
     public string CompactHeadset
     {
         get
         {
+            if (PrimaryPhysical is { } physical) return physical.Device.IsPro1 ? "无耳机孔" : physical.TryGetLatest(out var physicalState, out var physicalAge) && physicalAge.TotalSeconds < 2 && physicalState.HeadsetPresenceKnown ? physicalState.HeadsetPresent ? "已插入" : "未插入" : "未知";
             bool fresh = inputSource.TryGetLatest(out var state, out var age) && age.TotalMilliseconds < 2000;
             return Pro2DevicePresentation.Headset(state, fresh, inputSource.IsTransportConnected);
         }
@@ -117,7 +120,10 @@ public sealed partial class MainViewModel
     public string VirtualOutputSummary => PrimaryOutputSession?.OutputHealth.Summary ?? "";
     public string VirtualOutputDetail => PrimaryOutputSession?.OutputHealth.Detail ?? "";
     private Pro2ConnectionPresentation ConnectionPresentation =>
-        IsPrimarySleeping && !inputSource.IsTransportConnected
+        PrimaryPhysical is { } physical
+            ? new(physical.IsRunning ? "已连接" : "输入离线", physical.IsRunning ? "手柄已连接 · " + physical.Device.Kind : "等待实体手柄返回",
+                physical.IsRunning ? "按实体 HID 输入转发；USB 与传统蓝牙不使用 Pro2 BLE 参数。" : physical.Status)
+            : IsPrimarySleeping && !inputSource.IsTransportConnected
             ? new("已休眠", "手柄已休眠，按任意键唤醒", "闲置达到设定时间后已让手柄关灯省电；按手柄任意键会自动重连，虚拟手柄保持在线。")
             : inputSource.IsTransportConnected && HasVirtualOutputWarning
             ? new("虚拟输出待就绪", VirtualOutputSummary, "实体蓝牙保持连接。" + VirtualOutputDetail)
@@ -125,13 +131,13 @@ public sealed partial class MainViewModel
             inputSource.IsTransportConnected, Running, Busy, AutoReconnectEnabled, inputSource.IsGameplayReady);
     public string CompactConnectionTitle => ConnectionPresentation.Title;
     public string CompactConnectionHint => ConnectionPresentation.Hint;
-    public string CompactConnectText => inputSource.ConnectionPhase == Pro2ConnectionPhase.Scanning ? "正在搜索…" :
+    public string CompactConnectText => PrimaryPhysical != null ? Running ? "游戏输出已启动" : "进入游戏" : inputSource.ConnectionPhase == Pro2ConnectionPhase.Scanning ? "正在搜索…" :
         inputSource.ConnectionPhase == Pro2ConnectionPhase.Connecting ? "正在连接…" :
         inputSource.ConnectionPhase == Pro2ConnectionPhase.Initializing ? "正在初始化…" :
         inputSource.IsTransportConnected && inputSource.ConnectionPhase == Pro2ConnectionPhase.Measuring ? "正在测速…" :
         inputSource.IsRunning && !inputSource.IsGameplayReady && !Running ? "等待输入恢复" :
         Running ? "游戏输出已启动" : inputSource.IsRunning ? "进入游戏" : "连接 Pro2";
-    public bool CompactCanConnect => CanOperate && !Running &&
+    public bool CompactCanConnect => PrimaryPhysical != null ? CanOperate && !Running && PrimaryPhysical.IsRunning : CanOperate && !Running &&
         inputSource.ConnectionPhase is not (Pro2ConnectionPhase.Scanning or Pro2ConnectionPhase.Connecting or
             Pro2ConnectionPhase.Initializing or Pro2ConnectionPhase.Measuring) &&
         (!inputSource.IsRunning || inputSource.IsGameplayReady);
@@ -156,6 +162,7 @@ public sealed partial class MainViewModel
 
     public void RefreshCompactTelemetry()
     {
+        if (PrimaryPhysical is { } physical) { RefreshPhysicalCompactTelemetry(physical); return; }
         var counters = inputSource.GetCompactCounters();
         long now = Stopwatch.GetTimestamp();
         if (compactSampleTicks != 0)
@@ -204,7 +211,7 @@ public sealed partial class MainViewModel
         foreach (string property in new[] { nameof(CompactPs5Selected),
                      nameof(HasVirtualOutputWarning), nameof(VirtualOutputSummary), nameof(VirtualOutputDetail),
                      nameof(BleStabilitySummary), nameof(ShowWin11CompatibilityAction), nameof(CanTryWin11Compatibility),
-                     nameof(CompactConnectionTitle), nameof(CompactConnectionHint),
+                     nameof(PrimaryInputLabel), nameof(CompactConnectionTitle), nameof(CompactConnectionHint),
                      nameof(CompactConnectText), nameof(CompactCanConnect), nameof(CompactStateText), nameof(CompactFirmware), nameof(CompactFirmwareHint), nameof(CompactHeadset), nameof(EnvironmentReportText) })
             OnPropertyChanged(property);
         OnPropertyChanged(nameof(CompactCanStop));

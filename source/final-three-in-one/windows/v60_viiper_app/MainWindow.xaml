@@ -155,7 +155,7 @@
                         </Border>
                         <Grid Margin="0,0,0,18">
                             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-                            <StackPanel><TextBlock Text="真实 FD2 输入" Style="{StaticResource MutedText}"/>
+                            <StackPanel><TextBlock Text="{Binding PrimaryInputLabel}" Style="{StaticResource MutedText}"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,5,0,0"><TextBlock Text="{Binding CompactInputRate}" FontSize="26" FontWeight="SemiBold"/><TextBlock Text=" Hz" Foreground="{StaticResource Muted}" VerticalAlignment="Bottom" Margin="0,0,0,4"/></StackPanel>
                                 <TextBlock Text="{Binding BleStabilitySummary}" ToolTip="{Binding BleOptimizationSummary}" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,3,8,0"/>
                             </StackPanel>
@@ -254,6 +254,7 @@
                             <Button Content="{Binding CompactConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding CompactCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
                             <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}"/>
                             <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding CompactCanStop}"/>
+                            <Button Content="输入 / NFC…" Click="PhysicalInputs_Click" ToolTip="接入 Pro1 蓝牙／USB、Pro2 USB，按槽位读取 NFC"/>
                             <Button x:Name="MultiControllerButton" Content="多手柄…" Click="MultiController_Click" ToolTip="添加第二至第四只 Pro2，逐只查看速率与重连状态"/>
                             <Button x:Name="Win10OneClickButton" Content="一键优化到 133Hz · Win10" Click="OneClickWin10Optimize_Click" Style="{StaticResource Primary}"
                                     IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10OneClick, Converter={StaticResource BoolVisibility}}"

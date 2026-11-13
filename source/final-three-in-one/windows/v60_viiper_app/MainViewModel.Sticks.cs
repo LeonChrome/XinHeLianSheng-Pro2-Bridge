@@ -28,7 +28,7 @@ public sealed partial class MainViewModel
         var previous = userSettings.StickDeadzones;
         try { userSettings.StickDeadzones = next; if (!previewOnly) userSettings.Save(); }
         catch (Exception ex) { userSettings.StickDeadzones = previous; StickDeadzoneStatus = "保存失败：" + FirstLine(ex.Message); return; }
-        foreach (var slot in pro2Slots) slot.InputSource.SetStickDeadzones(next);
+        foreach (var slot in pro2Slots) { slot.InputSource.SetStickDeadzones(next); slot.PhysicalInput?.SetDeadzones(next); }
         StickDeadzoneStatus = "已保存并应用 · 四种模式共用";
         AppendLog("[STICK_DEADZONE] " + next.Telemetry);
     }

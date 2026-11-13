@@ -7,7 +7,7 @@ public sealed partial class MainViewModel
     private BleLowRateDiagnosis lowRateDiagnosis = BleLowRateDiagnosis.Hidden;
     private Pro2RateEvidence? lowRateEvidenceSnapshot;
     private string lastLowRateLogKey = "none";
-    public bool HasLowRateWarning => lowRateDiagnosis.Visible;
+    public bool HasLowRateWarning => PrimaryPhysical == null && lowRateDiagnosis.Visible;
     public string LowRateTitle => lowRateDiagnosis.Title;
     public string LowRateSummary => lowRateDiagnosis.Summary;
     public string LowRateAdvice => lowRateDiagnosis.Advice;

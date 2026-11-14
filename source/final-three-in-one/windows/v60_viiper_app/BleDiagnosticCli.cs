@@ -37,6 +37,12 @@ internal static class BleDiagnosticCli
         string? preferredAddress = ParseOption(args, "--preferred-address");
         bool explicitPreferredAddress = !string.IsNullOrWhiteSpace(preferredAddress);
         bool customWin11 = Win11CustomConnectionParameters.IsCliRequested(args);
+        bool adaptivePresets=args.Contains("--ble-adaptive-presets",StringComparer.OrdinalIgnoreCase);
+        if(adaptivePresets&&customWin11)
+        {
+            WriteLine("[BLE_DIAGNOSTIC] refused=do_not_combine_adaptive_and_custom_experiments radio_opened=false");
+            return 7;
+        }
 #if PRO2_OUTPUT_ISOLATION_EXPERIMENT
         bool outputIsolation = Array.Exists(args, a => string.Equals(a, "--ble-output-isolation", StringComparison.OrdinalIgnoreCase));
         bool notifyLayer = Array.Exists(args, a => string.Equals(a, "--ble-notify-layer", StringComparison.OrdinalIgnoreCase));
@@ -99,13 +105,15 @@ internal static class BleDiagnosticCli
         }
 #endif
         using var timeout = new CancellationTokenSource(
-            TimeSpan.FromSeconds(rateWatch ? watchSeconds + 240 : outputIsolation ? 600 : notifyLayer ? 240 : durationSeconds + (customWin11 ? 100 : 45)));
+            TimeSpan.FromSeconds(rateWatch ? watchSeconds + 240 : outputIsolation ? 600 : notifyLayer ? 240 : durationSeconds + (adaptivePresets?180:customWin11 ? 100 : 45)));
         IProgress<string> progress = customWin11 ? new DirectProgress<string>(WriteLine) : new Progress<string>(WriteLine);
         var source = new Pro2BleInputSource();
+        source.AutoOptimizeBleEnabled=adaptivePresets;
         try
         {
             WriteLine("[BLE_TURBO_CLI] begin duration_s=" + durationSeconds +
                       " preferred_address=" + (preferredAddress ?? "none"));
+            WriteLine("[BLE_DIAGNOSTIC] adaptive_presets="+adaptivePresets+" virtual_output=false driver_changes=false registry_changes=false");
             if (customWin11)
             {
                 WriteLine("[WIN11_7P5_ABI] diagnostic_only=true virtual_device_started=false system_writes=false");

@@ -154,8 +154,17 @@ public static class BleAdaptiveSessionRunner
             if (!backend.Connected) return DisconnectedResult();
             backend.Report("方案测试完成 · 正在复核最终连接 10 秒");
             BleAdaptiveMeasurement final = await backend.MeasureAsync("FINAL", token);
+            latest = final;
+            if (!backend.Connected || !final.Sample.Connected) return DisconnectedResult();
             if (!PeersHealthy()) return await RestoreForPeerRegressionAsync();
-            BleAdaptivePresetDecision finalDecision = BleAdaptivePresetPolicy.VerifyFinal(best, final);
+            BleAdaptivePresetDecision finalDecision = winner == null
+                ? BleAdaptivePresetPolicy.VerifyFinal(best, final)
+                : BleAdaptivePresetPolicy.VerifyFinal(native, best, final);
+            if (finalDecision.Code == "final_playable_preserved")
+            {
+                backend.Report(finalDecision.Summary);
+                trials.Add(new(winner!.Id + "_FINAL", true, final, finalDecision.Code));
+            }
             if (!finalDecision.Retain && winner != null && backend.Connected)
             {
                 // An unverified winner is not remembered. Restore the original request

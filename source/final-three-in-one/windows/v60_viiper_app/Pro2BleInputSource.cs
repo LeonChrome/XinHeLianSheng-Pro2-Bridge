@@ -1498,9 +1498,15 @@ public sealed partial class Pro2BleInputSource :
             SetConnectionPhase(Pro2ConnectionPhase.Measuring);
             if (!await EnsureUsableBlePerformanceAsync(progress, cancellationToken))
             {
+                RecordConnectionFailure(transportConnected?"input_rate_below_live":"link_disconnected",MetricsSummary);
+                progress.Report("[FD2_ACCEPTANCE] result=rejected transport_connected="+transportConnected+" "+MetricsSummary);
                 return false;
             }
-            if (!transportConnected) return false;
+            if (!transportConnected)
+            {
+                RecordConnectionFailure("link_disconnected","Windows reported disconnection after FD2 measurement.");
+                return false;
+            }
 
             lock (gate)
             {
@@ -3194,12 +3200,16 @@ public sealed partial class Pro2BleInputSource :
     {
         if (AutoOptimizeBleEnabled && !customConnectionParameterExperiment)
         {
-            await RunAdaptiveConnectionOptimizationAsync(progress, cancellationToken, initializing: true);
+            var optimization=await RunAdaptiveConnectionOptimizationAsync(progress, cancellationToken, initializing: true);
             Pro2RateEvidence evidence = GetRateEvidence();
             // Do not use the lifetime average spanning several slow/fast presets.
             // A live low-rate connection remains open; 60Hz gameplay acceptance is separate.
-            return transportConnected && ShouldKeepLiveInput(evidence.Fd2Hz, evidence.ParsedHz,
+            bool keep=transportConnected && ShouldKeepLiveInput(evidence.Fd2Hz, evidence.ParsedHz,
                 evidence.Fd2Count, evidence.ParsedCount);
+            progress.Report("[FD2_ACCEPTANCE] optimizer_result="+optimization.Code+" keep_live_connection="+keep+
+                " measured_fd2_hz="+evidence.Fd2Hz.ToString("F2")+" measured_parsed_hz="+evidence.ParsedHz.ToString("F2")+
+                " gameplay_min_hz=60 high_rate_not_inferred_from_interval=true metrics_scope=see_field_names "+MetricsSummary);
+            return keep;
         }
         int nativeObservationMs = WindowsBlePreferencePolicy.NativeObservationMilliseconds(
             OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000), PureSoftware133Mode.IsEnabled);

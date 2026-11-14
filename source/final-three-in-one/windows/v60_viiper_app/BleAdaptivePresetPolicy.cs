@@ -170,6 +170,26 @@ public static class BleAdaptivePresetPolicy
             IsPlayable(final) ? "最终窗口可游玩，但没有达到 133Hz 级。" : "已记录当前最佳低速路线，不承诺最低 66Hz。");
     }
 
+    /// <summary>
+    /// High-rate verification remains strict. A below-target final window may
+    /// still justify keeping a playable preset over a much slower native link.
+    /// Compare that fallback with native as well as the retained timing: a small
+    /// rate drop from the best trial is not proof that native is preferable.
+    /// </summary>
+    public static BleAdaptivePresetDecision VerifyFinal(BleAdaptiveMeasurement native,
+        BleAdaptiveMeasurement retained, BleAdaptiveMeasurement final)
+    {
+        var strict = VerifyFinal(retained, final);
+        if (strict.Retain || !IsPlayable(final) || MeetsTarget(final) ||
+            !Valid(native, false) || !MatchingWindows(native, final) ||
+            !Valid(retained, false) || !MatchingWindows(retained, final) ||
+            GapRegressed(retained, final)) return strict;
+        var comparedWithNative = EvaluateCandidate(native, native, final);
+        return comparedWithNative.Retain
+            ? new(true, "final_playable_preserved", "最终窗口仍达到 60Hz 且优于原连接，保留兼容游玩预设；未通过 133Hz 级验收。")
+            : strict;
+    }
+
     public static bool IsCacheUsable(BleAdaptiveCachedPreset entry, BleAdaptiveEnvironmentKey current,
         DateTimeOffset nowUtc, out string code)
     {

@@ -62,6 +62,10 @@ public sealed record BleConnectionDiagnosis(bool Visible, string Code, string Ti
             return D("channels_missing", "候选未提供完整的 Pro2 接口", "确认选择了真实 Pro2 和正确模式。保留接口记录供兼容性排查，程序不会向未确认的设备发送初始化命令。");
         if (e.Outcome == "notify_timeout")
             return D("notify_timeout", "已订阅通知，但未收到有效 FD2 输入", "连接尚未完成输入验收。可能是报告模式或传输异常；查看初始化和通知记录，不能用虚拟输出频率代替真实输入。");
+        if(e.Outcome=="input_rate_below_live")
+            return D("input_rate_below_live","已收到 FD2，但当前输入过低","GATT 和 FD2 已有响应，实测速率未达到连接保留门槛。下方记录包含最终方案、真实通知、解析和回调耗时；达到 60Hz 才开放游戏输出，不能仅凭 7.5ms 判断已恢复 133Hz。");
+        if(e.Outcome=="link_disconnected")
+            return D("link_disconnected","测量期间 Windows 报告连接断开","本轮参数和历史频率不算当前连接成功。请保持手柄可连接，程序将按原流程重试；断开前的输入与参数记录保留在诊断中。");
         return D("operation_failed", "蓝牙连接在“" + e.Stage + "”阶段失败", "查看系统返回码与失败阶段；原因尚未确认。程序已保留记录，不会仅凭驱动日期或蓝牙版本给出结论。");
     }
 }

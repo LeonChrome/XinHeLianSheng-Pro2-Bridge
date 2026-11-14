@@ -135,6 +135,37 @@ internal static class BleAdaptivePresetRegressionTests
             BleAdaptivePresetPolicy.VerifyFinal(Sample(200, 50, 100), Sample(200, 50, 100)).Code == "final_low_rate_verified",
             "final fallback distinguishes playable and still-low actual results");
 
+        var slowNative = Sample(103, 180.077425, 240.1873) with
+        { Sample = Sample(103, 180.077425, 240.1873).Sample with { DurationSeconds = 10.009973, LastInputAgeMs = 129.6769, ConnectionIntervalUnits = 48 } };
+        var measuredBest = Sample(702, 22.9712, 30.0481) with
+        { Sample = Sample(702, 22.9712, 30.0481).Sample with { DurationSeconds = 10.015458, LastInputAgeMs = 11.0194, ConnectionIntervalUnits = 6 } };
+        var measuredFinal = Sample(680, 22.66732, 30.1057) with
+        { Sample = Sample(680, 22.66732, 30.1057).Sample with { DurationSeconds = 10.0143096, LastInputAgeMs = 9.3799, ConnectionIntervalUnits = 6 } };
+        check(!BleAdaptivePresetPolicy.VerifyFinal(measuredBest, measuredFinal).Retain &&
+            BleAdaptivePresetPolicy.VerifyFinal(slowNative, measuredBest, measuredFinal) is { Retain: true, Code: "final_playable_preserved" },
+            "captured 70.09165 to 67.90283Hz final window remains playable instead of restoring 10.28974Hz native");
+        check(!BleAdaptivePresetPolicy.MeetsTarget(measuredFinal), "captured playable recovery is never certified as 133Hz");
+        foreach (var unsafeFinal in new[]
+        {
+            measuredFinal with { CompletedAgeSeconds = 16 },
+            measuredFinal with { Sample = measuredFinal.Sample with { Connected = false } },
+            measuredFinal with { Sample = measuredFinal.Sample with { LastInputAgeMs = 500 } },
+            measuredFinal with { Sample = measuredFinal.Sample with { ParsedCount = 600 } },
+            measuredFinal with { Sample = measuredFinal.Sample with { DurationSeconds = 9.99 } },
+            measuredFinal with { Sample = measuredFinal.Sample with { P95GapMs = 45 }, MaximumGapMs = 60 },
+            measuredFinal with { MaximumGapMs = 120 },
+            Sample(500, 22.66732, 30.1057)
+        })
+            check(!BleAdaptivePresetPolicy.VerifyFinal(slowNative, measuredBest, unsafeFinal).Retain,
+                "playable retention does not bypass freshness, parsing, connection, full window, timing or 60Hz checks");
+        check(!BleAdaptivePresetPolicy.VerifyFinal(Sample(800, 15, 30), Sample(1000, 15, 30), Sample(660, 15, 30)).Retain,
+            "an inferior final preset is not retained over a faster native link");
+        check(!BleAdaptivePresetPolicy.VerifyFinal(slowNative, Sample(1400, 8, 20), Sample(1330, 8, 20)).Retain,
+            "playable fallback cannot override strict high-rate verification when the final itself is in the high-rate class");
+        var belowTarget = BleAdaptivePresetPolicy.VerifyFinal(slowNative, target, Sample(1270, 8, 22.5));
+        check(belowTarget is { Retain: true, Code: "final_playable_preserved" } && !BleAdaptivePresetPolicy.MeetsTarget(Sample(1270, 8, 22.5)),
+            "a final below the 128Hz target can remain playable but cannot inherit the earlier target claim");
+
         var now = new DateTimeOffset(2026, 10, 10, 12, 0, 0, TimeSpan.Zero);
         var key = new BleAdaptiveEnvironmentKey(26200, new string('A', 64), "USB\\VID_8087&PID_0026", "one-radio-8087-0026",
             "Intel", "22.250.0.2", "2023-06-01");

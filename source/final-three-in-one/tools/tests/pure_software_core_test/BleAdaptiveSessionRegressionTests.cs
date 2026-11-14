@@ -154,6 +154,56 @@ internal static class BleAdaptiveSessionRegressionTests
             partialResult.Trials.Skip(1).All(t => t.Decision == "measured_rate_regressed"),
             "each later 20Hz regression restores retained best 66Hz rather than baseline or last request");
 
+        BleAdaptiveMeasurement Captured(double duration, int count, double age, double p95, double maximum, ushort interval) =>
+            new(new(duration, count, count, age, true, true, p95, interval), 0, maximum);
+        var capturedNative = Captured(10.009973, 103, 129.6769, 180.077425, 240.1873, 48);
+        var capturedBest = Captured(10.015458, 702, 11.0194, 22.9712, 30.0481, 6);
+        var capturedFinal = Captured(10.0143096, 680, 9.3799, 22.66732, 30.1057, 6);
+        var capturedLater = new[]
+        {
+            Captured(10.0110226, 362, 13.4849, 45.0672, 75.163, 12),
+            Captured(10.0108048, 422, 33.8001, 30.4641, 49.2752, 12),
+            Captured(10.0070975, 423, .7135, 44.932465, 45.2596, 12)
+        };
+        MockBackend CapturedRun(BleAdaptiveMeasurement final, params BleAdaptiveMeasurement[] restore) =>
+            new(new[] { capturedNative, capturedBest }.Concat(capturedLater).Append(final).Concat(restore).ToArray());
+        var capturedReplay = CapturedRun(capturedFinal);
+        var capturedResult = await Run(capturedReplay);
+        check(capturedResult.FinalVerified && capturedResult.Selected?.Preset == BleAdaptivePreset.Win11Fixed7p5 &&
+            capturedResult.Code == "final_playable_preserved" && capturedResult.Final == capturedFinal &&
+            capturedReplay.ActivePreset == BleAdaptivePreset.Win11Fixed7p5 && capturedReplay.Requests.All(r => r != null) &&
+            !capturedReplay.MeasurePhases.Contains("RESTORE_VERIFY"),
+            "exact captured four-preset replay retains the final 67.90283Hz link and never restores the measured 10.28974Hz native profile");
+        check(!BleAdaptivePresetPolicy.MeetsTarget(capturedResult.Final) &&
+            capturedResult.Trials.Last().Decision == "final_playable_preserved" &&
+            capturedReplay.Reports.Any(r => r.Contains("未通过 133Hz", StringComparison.Ordinal)),
+            "compatibility retention records its reason and never reports an earlier or configured rate as achieved 133Hz");
+        var lowCache = new BleAdaptiveCachedPreset(new(26300, new string('A', 64), "USB\\fixture", "fixture", "fixture", "fixture", "fixture"),
+            BleAdaptivePreset.Win11Fixed7p5, capturedNative, capturedFinal, DateTimeOffset.UtcNow);
+        var cachedBackend = new MockBackend();
+        check(await BleCachedConnectionStartup.TryAsync(caps, cachedBackend, lowCache, default) == null && cachedBackend.Requests.Count == 0 && cachedBackend.MeasurePhases.Count == 0,
+            "a cached compatible 67.9Hz result cannot enter the verified-high-rate startup shortcut");
+        foreach (var badFinal in new[]
+        {
+            capturedFinal with { CompletedAgeSeconds = 16 },
+            capturedFinal with { Sample = capturedFinal.Sample with { LastInputAgeMs = 500 } },
+            capturedFinal with { MaximumGapMs = 120 },
+            capturedFinal with { Sample = capturedFinal.Sample with { P95GapMs = 45 }, MaximumGapMs = 60 },
+            Sample(500, 22.66732, 30.1057)
+        })
+        {
+            var unsafeReplay = CapturedRun(badFinal, capturedNative);
+            var unsafeResult = await Run(unsafeReplay);
+            check(unsafeResult.Selected == null && unsafeReplay.ActivePreset == null && unsafeReplay.MeasurePhases.Last() == "RESTORE_VERIFY",
+                "unsafe final window still triggers measured restoration rather than compatible retention");
+        }
+        var disconnectedFinal = CapturedRun(capturedFinal with { Sample = capturedFinal.Sample with { Connected = false } });
+        var disconnectedFinalResult = await Run(disconnectedFinal);
+        check(disconnectedFinalResult.Code == "link_disconnected" && !disconnectedFinalResult.FinalVerified &&
+            disconnectedFinalResult.Selected == null && !disconnectedFinalResult.Final.Sample.Connected &&
+            disconnectedFinal.MeasurePhases.Last() == "FINAL" && disconnectedFinal.Requests.All(r => r != null),
+            "a disconnect in the final window clears historical winner identity without issuing another request on the dead link");
+
         var finalRegression = new MockBackend(native20, native66, native20, native20, native20, native20, native20);
         var finalRegressionResult = await Run(finalRegression);
         check(finalRegressionResult.Selected == null && finalRegression.ActivePreset == null &&

@@ -222,6 +222,7 @@ public static class BleAdaptiveDiagnostics
         "invalid_or_stale_measurement" or "unequal_windows" => "测量无效、陈旧或窗口不匹配，不能保留本方案。",
         "final_target_verified" => "最终窗口达高速门槛；后续仍持续监测。",
         "final_playable_verified" => "最终窗口可游玩，未达高速门槛。",
+        "final_playable_preserved" => "最终窗口仍达 60Hz 且优于原连接，保留当前方案；未通过稳定高速复核，不退回更慢原连接。",
         "final_low_rate_verified" => "最终窗口仍低速，不承诺最低 66Hz。",
         "final_measurement_invalid" => "最终窗口无效，不能宣称稳定。",
         "final_verification_regressed" => "最终复核降速或卡顿，不能宣称稳定高速。",

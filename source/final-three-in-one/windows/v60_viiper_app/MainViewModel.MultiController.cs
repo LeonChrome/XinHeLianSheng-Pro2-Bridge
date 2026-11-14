@@ -127,7 +127,7 @@ public sealed partial class MainViewModel
         "\n系统默认适配器不是各链路归属证明；多只手柄同时达到 133Hz 需要实测。\n";
 
     private IReadOnlyList<BlePeerRate> CapturePeerRates(int except) => pro2Slots.Where(s => s.Index != except)
-        .Select(s => { var r = s.InputSource.GetRateEvidence(); return new BlePeerRate(s.Index,
+        .Select(s => { if(s.PhysicalInput is {} physical) {var h=physical.Snapshot();return new BlePeerRate(s.Index,h.Identity,h.Running,h.Running&&h.AgeMs<500,h.Hz);} var r = s.InputSource.GetRateEvidence(); return new BlePeerRate(s.Index,
             s.InputSource.ConnectedAddress, r.Connected, r.RecentWindow && r.LastInputAgeMs < 500, Math.Min(r.Fd2Hz, r.ParsedHz)); }).ToArray();
 
     private async Task OptimizeSlotCompatibilityAsync(Pro2ControllerSlot slot, CancellationToken token)

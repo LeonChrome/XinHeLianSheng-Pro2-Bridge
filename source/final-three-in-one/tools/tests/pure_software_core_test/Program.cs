@@ -67,6 +67,7 @@ internal static class Program
             V29RegressionTests.Run(Check, output);
             PhysicalInputRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
             UnifiedConnectionsRegressionTests.Run(Check);
+            BleCachedStartupRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             if (args.Contains("--physical-only"))
             {
                 Console.WriteLine("PASS: " + checks + " physical-input assertions; offline protocol replay only.");
@@ -221,9 +222,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.1.0.0", "v3.1 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.1.1.0", "v3.1.1 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.1-unified-inputs", "v3.1 release metadata");
+            "3.1.1-auto-high-rate", "v3.1.1 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

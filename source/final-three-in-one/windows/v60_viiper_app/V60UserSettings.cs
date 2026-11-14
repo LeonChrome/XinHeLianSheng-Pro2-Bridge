@@ -31,6 +31,18 @@ public sealed class V60UserSettings
     public bool AutoSleepEnabled { get; set; }
     public int AutoSleepMinutes { get; set; } = 10;
     public bool AutoOptimizeBle { get; set; } = true;
+    public int BleAutomaticPolicyVersion { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool BleAutomaticPolicyMigrated { get; private set; }
+    public void MigrateAutomaticBlePolicy()
+    {
+        if (BleAutomaticPolicyVersion >= 1) return;
+        // One-time migration: old releases could persist an off switch even
+        // though connection-time high-rate negotiation is now the default.
+        AutoOptimizeBle = true;
+        BleAutomaticPolicyVersion = 1;
+        BleAutomaticPolicyMigrated = true;
+    }
     public string UsbipExecutablePath { get; set; } = "";
     public double Ps5GyroScalePitch { get; set; } = 1.0;
     public double Ps5GyroScaleYaw { get; set; } = 1.0;
@@ -57,6 +69,7 @@ public sealed class V60UserSettings
                 {
                     return new V60UserSettings();
                 }
+                loaded.MigrateAutomaticBlePolicy();
                 loaded.RumbleMultiplier =
                     NormalizeRumbleMultiplier(loaded.RumbleMultiplier);
                 loaded.PushRateLabel =
@@ -98,6 +111,9 @@ public sealed class V60UserSettings
     {
         lock (FileGate)
         {
+            // Saving an explicit choice in this release acknowledges the policy.
+            // A later deliberate off setting must survive the next launch.
+            BleAutomaticPolicyVersion = Math.Max(1, BleAutomaticPolicyVersion);
             EnabledPro2Slots = NormalizeEnabledSlots(EnabledPro2Slots);
             string directory = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(directory);

@@ -35,8 +35,8 @@ def stamp_exe(path, icon):
             put(3,i+1,ico[offset:offset+size])
             group+=struct.pack('<BBBBHHIH',width,height,palette,zero,planes,bpp,size,i+1)
         put(14,1,group)
-        fixed=struct.pack('<13I',0xFEEF04BD,0x10000,3<<16|1,0,3<<16|1,0,0x3f,0,0x40004,1,0,0,0)
-        pairs={'FileDescription':'PRO2 手柄助手','ProductName':'PRO2 手柄助手','FileVersion':'3.1.0.0','ProductVersion':'3.1','OriginalFilename':'PRO2ControllerAssistant-v3.1.exe'}
+        fixed=struct.pack('<13I',0xFEEF04BD,0x10000,3<<16|1,1<<16,3<<16|1,1<<16,0x3f,0,0x40004,1,0,0,0)
+        pairs={'FileDescription':'PRO2 手柄助手','ProductName':'PRO2 手柄助手','FileVersion':'3.1.1.0','ProductVersion':'3.1.1','OriginalFilename':'PRO2ControllerAssistant-v3.1.1.exe'}
         strings=b''.join(version_block(k,(v+'\0').encode('utf-16le'),text=True) for k,v in pairs.items())
         table=version_block('040904b0',children=strings)
         string_info=version_block('StringFileInfo',children=table)

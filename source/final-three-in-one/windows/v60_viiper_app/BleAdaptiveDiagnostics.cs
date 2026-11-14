@@ -81,7 +81,7 @@ public static class BleAdaptiveDiagnostics
         }
 
         text.AppendLine("流程说明：" + ExplainCode(snapshot.FinalCode));
-        text.AppendLine("原连接：" + Measurement(snapshot.Native));
+        text.AppendLine((snapshot.FinalCode == "cached_start_target_verified" ? "缓存方案当前首窗（已请求参数）：" : "原连接：") + Measurement(snapshot.Native));
         bool hasFinal = snapshot.Final?.Sample != null;
         text.AppendLine("最终连接：" + Measurement(snapshot.Final));
         text.AppendLine("选用路线：" + (string.IsNullOrWhiteSpace(snapshot.SelectedPreset) ? "原连接／未选中预设" : Clean(snapshot.SelectedPreset)) +

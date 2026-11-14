@@ -77,6 +77,11 @@ public sealed partial class MainViewModel
 
     private void InitializeBleCompatibilitySettings()
     {
+        if(userSettings.BleAutomaticPolicyMigrated)
+        {
+            AppendLog("[BLE_AUTO_OPTIMIZE] legacy_policy_migrated=true auto_enabled=true explicit_future_off_preserved=true");
+            SaveUserSettings("[BLE_AUTO_OPTIMIZE]");
+        }
         foreach (Pro2ControllerSlot slot in pro2Slots)
             slot.InputSource.AutoOptimizeBleEnabled = userSettings.AutoOptimizeBle;
     }

@@ -386,7 +386,7 @@
                                 <WrapPanel>
                                     <CheckBox Content="每10分钟更新电量" IsChecked="{Binding RuntimeBatteryRefreshEnabled}"
                                               Margin="0,0,28,0" ToolTip="输入稳定时读取原生档位；异常时自动暂停更新，保留上次读取值。"/>
-                                    <CheckBox x:Name="AutoOptimizeBleCheckBox" Content="低速时自动优化蓝牙" IsChecked="{Binding AutoOptimizeBle}" IsEnabled="{Binding CanChangeBleOptimizationSettings}"
+                                    <CheckBox x:Name="AutoOptimizeBleCheckBox" Content="连接时优先 133Hz" IsChecked="{Binding AutoOptimizeBle}" IsEnabled="{Binding CanChangeBleOptimizationSettings}"
                                               Margin="0"
                                               ToolTip="Win11 在当前连接内自动尝试有限预设，跨适配器型号和驱动版本开放；Win10 全局参数必须单独确认和管理员授权，不会静默轮换。"/>
                                     <StackPanel Orientation="Horizontal" Margin="28,0,0,0">

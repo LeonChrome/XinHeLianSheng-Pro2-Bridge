@@ -116,7 +116,11 @@ public sealed partial class Pro2BleInputSource
                     if (submitted && ct.CanBeCanceled) await Task.Delay(1500, ct);
                     return submitted;
                 }, () => ReleaseAdaptiveTrialRequest(diagnosticCapture, progress), Report);
-            BleAdaptiveRunResult result = await BleAdaptiveSessionRunner.RunAsync(capabilities, backend, cached?.Preset, deadline.Token);
+            BleAdaptiveRunResult? cachedStart = initializing
+                ? await BleCachedConnectionStartup.TryAsync(capabilities,backend,cached,deadline.Token) : null;
+            progress.Report("[BLE_CONNECT_PRIORITY] initializing="+initializing+" cached_start_verified="+(cachedStart!=null)+
+                " before_rate_scope="+(cachedStart!=null?"after_cached_request_not_untouched_native":"current_connection")+" synthetic_reports=0");
+            BleAdaptiveRunResult result = cachedStart ?? await BleAdaptiveSessionRunner.RunAsync(capabilities, backend, cached?.Preset, deadline.Token);
             CompleteAdaptiveDiagnosticEvidence(diagnosticCapture, result);
             diagnosticsCompleted = true;
             if (!SameConnection())
@@ -158,7 +162,9 @@ public sealed partial class Pro2BleInputSource
                 " trials=" + result.Trials.Count + " synthetic_reports=0 system_writes=false");
             try
             {
-                if (environmentKey != null && result.Selected != null && result.FinalVerified)
+                if(cachedStart!=null)
+                    progress.Report("[BLE_CONNECT_PRIORITY] exact_cache_reverified=true cache_lifetime_extended=false");
+                else if (environmentKey != null && result.Selected != null && result.FinalVerified)
                     BleAdaptivePresetStore.Save(new(environmentKey, result.Selected.Preset, result.Native, result.Final, DateTimeOffset.UtcNow));
                 else BleAdaptivePresetStore.Invalidate(environmentKey);
             }

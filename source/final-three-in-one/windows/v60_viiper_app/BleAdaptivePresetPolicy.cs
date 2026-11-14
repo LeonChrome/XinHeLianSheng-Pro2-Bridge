@@ -65,6 +65,8 @@ public static class BleAdaptivePresetPolicy
         new(BleAdaptivePreset.Win11ThroughputOptimized, "win11_throughput", "系统吞吐量优先", null, null, null, null, false),
         new(BleAdaptivePreset.Win11Fixed15, "win11_fixed_15", "固定 15ms", 12, 12, 0, 600, true)
     };
+    public static BleAdaptivePresetCandidate? GetCachedHighRateCandidate(BleAdaptivePreset? preset) =>
+        preset == BleAdaptivePreset.Win11Fixed7p5 ? Windows11Candidates[0] : null;
 
     public static BleAdaptivePresetPlan CreatePlan(BleAdaptiveCapabilities capabilities,
         BleAdaptiveMeasurement native, BleAdaptivePreset? preferredPreset = null)

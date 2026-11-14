@@ -65,10 +65,10 @@ public sealed partial class MainViewModel
     public bool CanChangeBleOptimizationSettings => !Busy && !IsBleOptimizationRunning;
     public string BleOptimizationSummary => inputSource.CompatibilityOptimizationSummary;
     public bool ShowBleOptimizationSummary => !string.IsNullOrWhiteSpace(BleOptimizationSummary);
-    public string BleConnectionTitle => IsBleOptimizationRunning ? "正在优化蓝牙连接" : CompactConnectionTitle;
+    public string BleConnectionTitle => pro2Slots[0].InputChoicePending ? "等待连接 · "+pro2Slots[0].InputChoiceLabel : IsBleOptimizationRunning ? "正在优化蓝牙连接" : CompactConnectionTitle;
     public string BleConnectionHint => IsBleOptimizationRunning
         ? BleOptimizationSummary + " · 按真实输入保留较好方案。"
-        : CompactConnectionHint;
+        : pro2Slots[0].InputChoicePending ? "点击连接应用所选方式。"+pro2Slots[0].InputChoiceHint : CompactConnectionHint;
 
     public bool ShowWin11CompatibilityAction => OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
         (HasLowRateWarning || IsBleOptimizationRunning);

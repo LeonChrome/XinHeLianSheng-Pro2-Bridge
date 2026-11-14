@@ -20,6 +20,9 @@ public sealed record NintendoHidDevice(string Path, string InstanceId, string Ph
     public string Label => (Kind switch { NintendoInputKind.Pro1Bluetooth => "Pro1 · 蓝牙",
         NintendoInputKind.Pro1Usb => "Pro1 · USB", _ => "Pro2 · USB" }) + " · " + PhysicalId;
     public bool IsPro1 => Kind != NintendoInputKind.Pro2Usb;
+    public string SelectionLabel => (IsPro1 ? "Pro1" : "Pro2") + " · " +
+        (Kind==NintendoInputKind.Pro1Bluetooth ? "蓝牙" : "USB") + " · " +
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(PhysicalId)))[..6];
     public static IReadOnlyList<Guid> ParseInterfaceGuids(params object?[] registryValues) => registryValues
         .SelectMany(value => value is string[] many ? many : value is string one ? [one] : Array.Empty<string>())
         .Select(value => Guid.TryParse(value, out var parsed) ? parsed : Guid.Empty)

@@ -1,7 +1,8 @@
 <Window x:Class="Y700Switch2V60Viiper.MultiControllerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="多手柄" Width="840" Height="740" MinWidth="560" MinHeight="440"
+        xmlns:local="clr-namespace:Y700Switch2V60Viiper"
+        Title="手柄连接与模式" Width="900" Height="820" MinWidth="620" MinHeight="480"
         WindowStartupLocation="CenterOwner" Background="#F5F7F6" Foreground="#192824"
         FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="14" UseLayoutRounding="True">
     <Window.Resources>
@@ -13,9 +14,9 @@
     <Grid Margin="22">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel Margin="0,0,0,14">
-            <TextBlock Text="多手柄" FontSize="23" FontWeight="SemiBold"/>
+            <TextBlock Text="手柄连接与模式" FontSize="23" FontWeight="SemiBold"/>
             <TextBlock Text="{Binding MultiControllerSummary}" Margin="0,6,0,4" Foreground="#52685D"/>
-            <TextBlock Text="先让第一只进入游戏，再逐只配对、连接。每只可单独选模式，改选后点“应用模式”；首页模式仅控制手柄 1。" TextWrapping="Wrap" Foreground="#667870"/>
+            <TextBlock Text="每只分别选择连接方式、实体手柄与游戏输出，再点连接。有线和无线可以混用；首页控制手柄 1。" TextWrapping="Wrap" Foreground="#667870"/>
         </StackPanel>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <ItemsControl ItemsSource="{Binding Pro2Slots}">
@@ -25,25 +26,37 @@
                             <DockPanel><TextBlock Text="{Binding RateSummary}" DockPanel.Dock="Right" FontWeight="SemiBold" Foreground="#315847"/>
                                 <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold" DockPanel.Dock="Left"/>
                                 <TextBlock Text="{Binding ConnectedAddress}" Foreground="#667870" FontSize="11" Margin="12,0,12,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></DockPanel>
+                            <local:ControllerConnectionView Margin="0,10,0,8"/>
                             <WrapPanel Margin="0,6,0,4" IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <TextBlock Text="游戏输出" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                 <ComboBox ItemsSource="{Binding ModeOptions}" DisplayMemberPath="Label" SelectedValuePath="Mode"
                                           SelectedValue="{Binding SelectedMode}" Width="135" Margin="0,0,8,0" VerticalContentAlignment="Center"
                                           AutomationProperties.Name="本槽位输出模式"/>
                                 <Button Content="应用模式" Command="{Binding DataContext.ApplyPro2SlotModeCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
-                                <Button Content="连接" Command="{Binding DataContext.ConnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                <Button Content="连接 / 应用连接" Command="{Binding DataContext.ConnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                                 <Button Content="暂停连接" Command="{Binding DataContext.DisconnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
-                                <Button Content="优化蓝牙" Command="{Binding DataContext.OptimizePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                <Button Content="优化蓝牙" Command="{Binding DataContext.OptimizePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Visibility="{Binding CanOptimizeBleInput, Converter={StaticResource VisibleIf}}"/>
                                 <Button Content="移除" Command="{Binding DataContext.RemovePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Visibility="{Binding CanRemove, Converter={StaticResource VisibleIf}}"/>
                             </WrapPanel>
+                            <TextBlock Text="{Binding InputConnectionSummary}" Foreground="#315847" FontSize="11" TextWrapping="Wrap" Margin="0,3,0,3"/>
                             <TextBlock Text="{Binding DisplayStatus}" Foreground="#667870" FontSize="12" TextTrimming="CharacterEllipsis" MaxHeight="18"/>
                             <TextBlock Text="{Binding ModeSummary}" Foreground="#315847" FontSize="11"/>
                             <TextBlock Text="{Binding SleepStatus}" Foreground="#667870" FontSize="11" TextWrapping="Wrap"/>
-                            <Expander Header="连接诊断" Margin="0,3,0,0"><TextBlock Text="{Binding DiagnosticSummary}" TextWrapping="Wrap" Foreground="#52685D" FontSize="12" Margin="0,6,0,0"/></Expander>
+                            <Expander Header="校准与诊断" Margin="0,3,0,0"><StackPanel>
+                                <WrapPanel Margin="0,8,0,6" IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}">
+                                    <Button Content="零位校准" Command="{Binding DataContext.CalibrateStickCenterSlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                    <Button Content="行程校准" Command="{Binding DataContext.CalibrateStickRangeSlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                    <Button Content="陀螺仪校准" Command="{Binding DataContext.CalibrateGyroSlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                </WrapPanel>
+                                <TextBlock Text="{Binding StickCalibrationStatus}" TextWrapping="Wrap" Foreground="#52685D" FontSize="12"/>
+                                <TextBlock Text="{Binding GyroCalibrationStatus}" TextWrapping="Wrap" Foreground="#52685D" FontSize="12"/>
+                                <TextBlock Text="{Binding DiagnosticSummary}" TextWrapping="Wrap" Foreground="#52685D" FontSize="12" Margin="0,6,0,0"/>
+                            </StackPanel></Expander>
                         </StackPanel>
                     </Border>
                 </DataTemplate></ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
-        <TextBlock Grid.Row="2" Text="模式可离线保存，各槽位可混用。应用模式只重建本槽位的虚拟输出，保留实体蓝牙和其他槽位。实际蓝牙并发数量与速率以实测为准。" TextWrapping="Wrap" Foreground="#667870" FontSize="12" Margin="0,10,0,0"/>
+        <TextBlock Grid.Row="2" Text="更改连接选项后点击连接才生效；应用模式只更换本槽位的游戏输出。自动休眠和 133Hz 蓝牙优化仅用于 Pro2 无线。" TextWrapping="Wrap" Foreground="#667870" FontSize="12" Margin="0,10,0,0"/>
     </Grid>
 </Window>

@@ -12,6 +12,7 @@ internal static class PhysicalInputRegressionTests
 {
     public static async Task RunAsync(Action<bool,string> check,string output)
     {
+        CalibrationReplay(check);
         var nativeGuid=new Guid("6F13725E-EF0E-4FD3-AE5F-B2DE989EC825");
         check(NintendoHidDevice.ParseInterfaceGuids(null,nativeGuid.ToString("B")).SequenceEqual(new[]{nativeGuid}),
             "WinUSB MS OS descriptor singular REG_SZ interface GUID is discovered");
@@ -74,12 +75,146 @@ internal static class PhysicalInputRegressionTests
             check(Pro1NfcProtocol.TryGetMcu(response,out byte type,out var data)&&Pro1NfcProtocol.TryGetTag(type,data,out var uid)&&uid.Length==7,"NFC handles native and padded transport lengths "+length);
         }
         await SourceLifecycleAsync(check);
+        await MixedSlotsAsync(check);
         await NfcAsync(check,false);
         await NfcAsync(check,true);
         await NfcRestoreFailureAsync(check);
         foreach(var kind in Enum.GetValues<NintendoInputKind>())
             foreach(var mode in Pro2SlotModes.Options) await VirtualRoundTripAsync(kind,mode.Mode,check);
         File.WriteAllText(Path.Combine(output,"physical-input-validation.txt"),"Offline protocol replay, real production input/feedback loops, cancellation and ownership checks passed.\nPhysical Pro1/USB/NFC hardware not used. No driver, pairing or radio changes.\n");
+    }
+    public static async Task RunCalibrationUiAsync(MainViewModel vm, Action<bool,string> check)
+    {
+        using var stop=new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        const NintendoInputKind kind=NintendoInputKind.Pro2Usb;
+        var io=new FakeHid(kind);
+        await using var source=new NintendoPhysicalInputSource(Device(kind,"ui-calibration-usb"));
+        await source.ConnectAsync(stop.Token,io,new FakeUsb(io));
+        var slot=vm.Pro2Slots[1]; var original=slot.PhysicalInput;
+        slot.PhysicalInput=source; vm.SelectedCalibrationSlot=slot;
+        var feed=Task.Run(async()=>
+        {
+            while(!stop.IsCancellationRequested)
+            {
+                byte[] p=Input(kind); Pack(p,11,2000,2100);Pack(p,14,2200,1900);
+                io.Feed(p); await Task.Delay(8,stop.Token);
+            }
+        });
+        async Task Invoke(string name, params object[] args) => await (Task)typeof(MainViewModel)
+            .GetMethod(name,BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(vm,args)!;
+        try
+        {
+            await Task.Delay(30,stop.Token);
+            check(vm.CanCalibrateSelectedInput && vm.CalibrationStatusText.Contains("手柄 2 · Pro2Usb"),"UI calibrates selected HID slot rather than always BLE slot 1");
+            await Invoke("CalibrateStickCenterSlotAsync",slot,stop.Token);
+            check(source.StickCalibrationProfile is {CenterCalibrated:true,CenterLx:2000,CenterRx:2200} &&
+                !vm.Pro2Slots[0].InputSource.StickCalibrationProfile.CenterCalibrated,"real calibration command routes only to selected physical parser");
+            var settings=(V60UserSettings)typeof(MainViewModel).GetField("userSettings",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(vm)!;
+            check(settings.PhysicalStickCalibrations[source.Device.PhysicalId].CenterLx==2000 && slot.StickCalibrationStatus.Contains("已保存"),
+                "physical calibration is saved in its own identity map with visible completion");
+            using(var cancelled=new CancellationTokenSource(50))
+            {
+                var before=source.StickCalibrationProfile;
+                try { await Invoke("CalibrateStickCenterSlotAsync",slot,cancelled.Token);check(false,"cancellation expected"); }
+                catch(OperationCanceledException) { check(source.StickCalibrationProfile==before,"cancelled UI capture leaves calibration intact"); }
+            }
+            // Gyro is tested with centered sticks; this fixture's off-center
+            // raw sticks now normalize to the saved center.
+            await Invoke("CalibrateSourceGyroAsync",stop.Token);
+            check(slot.GyroCalibrationStatus.Contains("校准完成") && source.GyroCalibrationSummary.Contains("manual_committed_3s"),
+                "physical gyro command awaits and displays actual calibration result");
+            await Invoke("DisconnectPro2SlotAsync",slot,stop.Token);
+            check(ReferenceEquals(slot.PhysicalInput,source) && !source.IsRunning && !vm.CanCalibrateSelectedInput,
+                "disconnect preserves selected HID identity and disables calibration");
+            var primary=vm.Pro2Slots[0]; var prior=primary.PhysicalInput;
+            var priorConfiguration=primary.InputConfiguration;
+            try
+            {
+                primary.LoadInputConfiguration(new(ControllerInputKind.Pro2Usb,source.Device.PhysicalId));
+                primary.PhysicalInput=source;vm.Running=true;primary.VirtualDeviceRunning=true;
+                check(vm.CompactCanConnect && vm.CompactConnectText=="重新连接手柄","paused HID can reconnect while virtual output remains attached");
+            }
+            finally {primary.PhysicalInput=prior;primary.LoadInputConfiguration(priorConfiguration);primary.VirtualDeviceRunning=false;vm.Running=false;}
+        }
+        finally
+        {
+            stop.Cancel(); try{await feed;}catch(OperationCanceledException){}
+            slot.PhysicalInput=original;vm.SelectedCalibrationSlot=vm.Pro2Slots[0];
+        }
+    }
+    private static void CalibrationReplay(Action<bool,string> check)
+    {
+        foreach (var kind in Enum.GetValues<NintendoInputKind>())
+        {
+            var parser = new NintendoPhysicalParser(kind); parser.SetDeadzones(new(0,0));
+            int left = kind == NintendoInputKind.Pro2Usb ? 11 : 6, right = left + 3;
+            byte[] center = Input(kind); Pack(center,left,2000,2100); Pack(center,right,2200,1900);
+            parser.StartStickCalibration(false);
+            for (int i=0; i<25; i++) parser.TryParse(center,out _);
+            var result = parser.CompleteStickCalibration(false);
+            check(result.Success && result.Profile is {CenterLx:2000,CenterLy:2100,CenterRx:2200,CenterRy:1900},"raw HID center capture " + kind);
+            check(parser.TryParse(center,out var state) && state.Lx==2048 && state.Ly==2048 && state.Rx==2048 && state.Ry==2048,
+                "manual center actually affects parsed physical output " + kind);
+            parser.StartStickCalibration(true);
+            for(int i=0;i<80;i++) { byte[] p=Input(kind); int v=i%2==0?500:3500;Pack(p,left,v,v);Pack(p,right,v,v);parser.TryParse(p,out _); }
+            check(parser.CompleteStickCalibration(true) is {Success:true,Profile.RangeCalibrated:true},"HID manual range accepted " + kind);
+            var saved=parser.StickCalibrationProfile;
+            parser.StartStickCalibration(false); parser.TryParse(center,out _); parser.CancelStickCalibration();
+            check(!parser.CompleteStickCalibration(false).Success && parser.StickCalibrationProfile==saved,"cancel preserves previous profile " + kind);
+            parser.StartStickCalibration(true);
+            for(int i=0;i<80;i++)parser.TryParse(center,out _);
+            check(!parser.CompleteStickCalibration(true).Success && parser.StickCalibrationProfile==saved,"incomplete range cannot replace calibration " + kind);
+            // A second calibration must see raw gyro, not an inner parser's
+            // already corrected samples switching halfway through its window.
+            var gyro=new NintendoPhysicalParser(kind); gyro.StartGyroCalibration();
+            byte[] still=Input(kind); int imu=kind==NintendoInputKind.Pro2Usb?49:37;
+            BinaryPrimitives.WriteInt16LittleEndian(still.AsSpan(imu+6),16);
+            BinaryPrimitives.WriteInt16LittleEndian(still.AsSpan(imu+8),-10);
+            BinaryPrimitives.WriteInt16LittleEndian(still.AsSpan(imu+10),20);
+            long start=Stopwatch.GetTimestamp(); GamepadState corrected=GamepadState.Neutral();
+            for(int i=0;i<=800;i++)gyro.TryParse(still,out corrected,start+i*Stopwatch.Frequency/250);
+            check(gyro.GyroCalibrationSummary.Contains("result=manual_committed_3s") && corrected.GyroX==0 && corrected.GyroY==0 && corrected.GyroZ==0,
+                "one time-based raw gyro correction " + kind);
+            gyro.StartGyroCalibration(); byte[] moving=(byte[])still.Clone();BinaryPrimitives.WriteInt16LittleEndian(moving.AsSpan(imu+6),2000);
+            gyro.TryParse(moving,out _,start+4*Stopwatch.Frequency);
+            gyro.TryParse(still,out corrected,start+5*Stopwatch.Frequency);
+            check(gyro.GyroCalibrationSummary.Contains("manual_rejected_motion") && corrected.GyroX==0,
+                "moving recalibration retains working bias " + kind);
+        }
+        var profiles=V60UserSettings.NormalizePhysicalStickCalibrations(new Dictionary<string,Pro2StickCalibrationProfile>
+        { [@"USB\VID_057E&PID_2069\00"] = new(){CenterCalibrated=true,CenterLx=2000} });
+        check(profiles.Count==1 && profiles[@"usb\vid_057e&pid_2069\00"].CenterLx==2000,"USB calibration identity is not normalized as a BLE address");
+    }
+    private static async Task MixedSlotsAsync(Action<bool,string> check)
+    {
+        var kinds=new[]{NintendoInputKind.Pro2Usb,NintendoInputKind.Pro1Bluetooth,NintendoInputKind.Pro1Usb,NintendoInputKind.Pro2Usb};
+        var sources=new List<NintendoPhysicalInputSource>();var slots=new List<Pro2ControllerSlot>();
+        using var stop=new CancellationTokenSource(10000);
+        try
+        {
+            for(int i=0;i<4;i++)
+            {
+                var io=new FakeHid(kinds[i]);
+                var source=new NintendoPhysicalInputSource(Device(kinds[i],"mixed-slot-"+i));sources.Add(source);
+                await source.ConnectAsync(stop.Token,io,kinds[i]==NintendoInputKind.Pro2Usb?new FakeUsb(io):null);
+                var slot=new Pro2ControllerSlot(i+1,true){PhysicalInput=source};slots.Add(slot);
+                slot.LoadInputConfiguration(new(ControllerInputConfiguration.FromPhysical(kinds[i]),source.Device.PhysicalId));
+                byte[] p=Input(kinds[i]);p[kinds[i]==NintendoInputKind.Pro2Usb?5:3]=(byte)(1<<i);io.Feed(p);
+                await Until(()=>source.Snapshot().Reports>=4,stop.Token);
+            }
+            for(int i=0;i<4;i++)
+            {
+                GamepadButtons expected=i switch{0=>GamepadButtons.West,1=>GamepadButtons.North,2=>GamepadButtons.South,_=>GamepadButtons.East};
+                check(slots[i].ActiveInput.TryGetLatest(out var state,out _)&&state.Buttons==expected,"mixed slot keeps its own physical controls "+i);
+                check(slots[i].ActiveInput.TryWriteOutputPacket(Pro2OutputPacketMapper.BuildOrdinaryPacket((byte)(20+i),(byte)(30+i),"mixed"),out _),"mixed slot accepts independent feedback "+i);
+            }
+            await sources[0].DisposeAsync();
+            check(!slots[0].ActiveInput.IsRunning&&slots.Skip(1).All(s=>s.ActiveInput.IsRunning),"disconnecting one wired slot preserves all other wired and wireless inputs");
+            slots[1].SelectedInputKind=ControllerInputKind.Pro2Ble;
+            check(ReferenceEquals(slots[1].PhysicalInput,sources[1])&&sources[1].IsRunning&&slots[1].InputChoicePending,
+                "changing input choice alone never disconnects the active controller");
+        }
+        finally {foreach(var source in sources)await source.DisposeAsync();}
     }
     private static NintendoHidDevice Device(NintendoInputKind kind,string id)=>new("fixture",id,id,kind,kind==NintendoInputKind.Pro2Usb?64:368,64,"offline replay");
     private static async Task SourceLifecycleAsync(Action<bool,string> check)

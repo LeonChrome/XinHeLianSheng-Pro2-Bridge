@@ -121,8 +121,10 @@ public sealed partial class MainViewModel
     public string VirtualOutputDetail => PrimaryOutputSession?.OutputHealth.Detail ?? "";
     private Pro2ConnectionPresentation ConnectionPresentation =>
         PrimaryPhysical is { } physical
-            ? new(physical.IsRunning ? "已连接" : "输入离线", physical.IsRunning ? "手柄已连接 · " + physical.Device.Kind : "等待实体手柄返回",
-                physical.IsRunning ? "按实体 HID 输入转发；USB 与传统蓝牙不使用 Pro2 BLE 参数。" : physical.Status)
+            ? physical.IsRunning && HasVirtualOutputWarning
+                ? new("虚拟输出待就绪", VirtualOutputSummary, "实体输入保持连接。" + VirtualOutputDetail)
+                : new(physical.IsRunning ? "已连接" : "输入离线", physical.IsRunning ? "手柄已连接 · " + physical.Device.Kind : "实体输入已断开 · " + physical.Device.Kind,
+                    physical.IsRunning ? "按实体 HID 输入转发；USB 与传统蓝牙不使用 Pro2 BLE 参数。" : "点击重新连接，保留之前的实体输入方式。")
             : IsPrimarySleeping && !inputSource.IsTransportConnected
             ? new("已休眠", "手柄已休眠，按任意键唤醒", "闲置达到设定时间后已让手柄关灯省电；按手柄任意键会自动重连，虚拟手柄保持在线。")
             : inputSource.IsTransportConnected && HasVirtualOutputWarning
@@ -131,13 +133,13 @@ public sealed partial class MainViewModel
             inputSource.IsTransportConnected, Running, Busy, AutoReconnectEnabled, inputSource.IsGameplayReady);
     public string CompactConnectionTitle => ConnectionPresentation.Title;
     public string CompactConnectionHint => ConnectionPresentation.Hint;
-    public string CompactConnectText => PrimaryPhysical != null ? Running ? "游戏输出已启动" : "进入游戏" : inputSource.ConnectionPhase == Pro2ConnectionPhase.Scanning ? "正在搜索…" :
+    public string CompactConnectText => pro2Slots[0].InputChoicePending ? "连接所选手柄" : PrimaryPhysical is { } physical ? !physical.IsRunning ? "重新连接手柄" : pro2Slots[0].VirtualDeviceRunning ? "游戏输出已启动" : "进入游戏" : inputSource.ConnectionPhase == Pro2ConnectionPhase.Scanning ? "正在搜索…" :
         inputSource.ConnectionPhase == Pro2ConnectionPhase.Connecting ? "正在连接…" :
         inputSource.ConnectionPhase == Pro2ConnectionPhase.Initializing ? "正在初始化…" :
         inputSource.IsTransportConnected && inputSource.ConnectionPhase == Pro2ConnectionPhase.Measuring ? "正在测速…" :
         inputSource.IsRunning && !inputSource.IsGameplayReady && !Running ? "等待输入恢复" :
-        Running ? "游戏输出已启动" : inputSource.IsRunning ? "进入游戏" : "连接 Pro2";
-    public bool CompactCanConnect => PrimaryPhysical != null ? CanOperate && !Running && PrimaryPhysical.IsRunning : CanOperate && !Running &&
+        pro2Slots[0].VirtualDeviceRunning ? "游戏输出已启动" : inputSource.IsRunning ? "进入游戏" : "连接 Pro2";
+    public bool CompactCanConnect => pro2Slots[0].InputChoicePending ? CanOperate : PrimaryPhysical != null ? CanOperate && (!PrimaryPhysical.IsRunning || !pro2Slots[0].VirtualDeviceRunning) : CanOperate && !pro2Slots[0].VirtualDeviceRunning &&
         inputSource.ConnectionPhase is not (Pro2ConnectionPhase.Scanning or Pro2ConnectionPhase.Connecting or
             Pro2ConnectionPhase.Initializing or Pro2ConnectionPhase.Measuring) &&
         (!inputSource.IsRunning || inputSource.IsGameplayReady);
@@ -212,6 +214,8 @@ public sealed partial class MainViewModel
                      nameof(HasVirtualOutputWarning), nameof(VirtualOutputSummary), nameof(VirtualOutputDetail),
                      nameof(BleStabilitySummary), nameof(ShowWin11CompatibilityAction), nameof(CanTryWin11Compatibility),
                      nameof(PrimaryInputLabel), nameof(CompactConnectionTitle), nameof(CompactConnectionHint),
+                     nameof(CalibrationStatusText), nameof(CanCalibrateSelectedInput),
+                     nameof(PrimaryBleControlsVisible),
                      nameof(CompactConnectText), nameof(CompactCanConnect), nameof(CompactStateText), nameof(CompactFirmware), nameof(CompactFirmwareHint), nameof(CompactHeadset), nameof(EnvironmentReportText) })
             OnPropertyChanged(property);
         OnPropertyChanged(nameof(CompactCanStop));

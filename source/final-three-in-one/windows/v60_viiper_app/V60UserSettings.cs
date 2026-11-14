@@ -22,7 +22,10 @@ public sealed class V60UserSettings
     public string[] LastConnectedPro2Addresses { get; set; } = new string[4];
     public bool[] EnabledPro2Slots { get; set; } = [true, false, false, false];
     public string[] SlotModeKeys { get; set; } = [];
+    public ControllerInputConfiguration[] SlotInputs { get; set; } = ControllerInputConfiguration.Normalize(null);
     public Dictionary<string, Pro2StickCalibrationProfile> Pro2StickCalibrations { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, Pro2StickCalibrationProfile> PhysicalStickCalibrations { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
     public bool RuntimeBatteryRefreshEnabled { get; set; } = true;
     public bool AutoSleepEnabled { get; set; }
@@ -72,8 +75,10 @@ public sealed class V60UserSettings
                     NormalizeAddressSlots(loaded.LastConnectedPro2Addresses);
                 loaded.EnabledPro2Slots = NormalizeEnabledSlots(loaded.EnabledPro2Slots);
                 loaded.SlotModeKeys = Pro2SlotModes.Normalize(loaded.SlotModeKeys, loaded.SelectedModeKey);
+                loaded.SlotInputs = ControllerInputConfiguration.Normalize(loaded.SlotInputs);
                 loaded.Pro2StickCalibrations =
                     NormalizeStickCalibrations(loaded.Pro2StickCalibrations);
+                loaded.PhysicalStickCalibrations = NormalizePhysicalStickCalibrations(loaded.PhysicalStickCalibrations);
                 loaded.Ps5GyroScalePitch =
                     NormalizePs5GyroScale(loaded.Ps5GyroScalePitch);
                 loaded.Ps5GyroScaleYaw =
@@ -102,12 +107,14 @@ public sealed class V60UserSettings
             StickProcessingLabel = StickProcessingOption.FromLabel(StickProcessingLabel).Label;
             SelectedModeKey = NormalizeModeKey(SelectedModeKey);
             SlotModeKeys = Pro2SlotModes.Normalize(SlotModeKeys, SelectedModeKey);
+            SlotInputs = ControllerInputConfiguration.Normalize(SlotInputs);
             RearButtons = (RearButtons ?? new()).Normalize();
             FaceButtons = (FaceButtons ?? new()).Normalize();
             StickDeadzones = (StickDeadzones ?? new()).Normalize();
             UsbipExecutablePath = UsbipRuntimeLocator.NormalizeExecutablePath(UsbipExecutablePath);
             LastConnectedPro2Addresses = NormalizeAddressSlots(LastConnectedPro2Addresses);
             Pro2StickCalibrations = NormalizeStickCalibrations(Pro2StickCalibrations);
+            PhysicalStickCalibrations = NormalizePhysicalStickCalibrations(PhysicalStickCalibrations);
             Ps5GyroScalePitch = NormalizePs5GyroScale(Ps5GyroScalePitch);
             Ps5GyroScaleYaw = NormalizePs5GyroScale(Ps5GyroScaleYaw);
             Ps5GyroScaleRoll = NormalizePs5GyroScale(Ps5GyroScaleRoll);
@@ -237,6 +244,20 @@ public sealed class V60UserSettings
             }
         }
         return normalized;
+    }
+
+    public static Dictionary<string, Pro2StickCalibrationProfile> NormalizePhysicalStickCalibrations(
+        IDictionary<string, Pro2StickCalibrationProfile>? profiles)
+    {
+        var result = new Dictionary<string, Pro2StickCalibrationProfile>(StringComparer.OrdinalIgnoreCase);
+        if (profiles == null) return result;
+        foreach (var (identity, profile) in profiles)
+        {
+            var normalized = Pro2StickCalibrationProfile.Normalize(profile);
+            if (!string.IsNullOrWhiteSpace(identity) && identity.Length <= 1024 && normalized.CenterCalibrated)
+                result[identity.Trim()] = normalized;
+        }
+        return result;
     }
 
     private static string SettingsPath => Path.Combine(

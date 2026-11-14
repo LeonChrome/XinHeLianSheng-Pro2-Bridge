@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Y700Switch2V60Viiper;
 
-public sealed class Pro2ControllerSlot : INotifyPropertyChanged
+public sealed partial class Pro2ControllerSlot : INotifyPropertyChanged
 {
     private bool enabled;
     private bool autoReconnectEnabled;
@@ -17,6 +17,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
     private string status;
     private string connectedAddress = "";
     private string stickCalibrationStatus = "摇杆校准：连接手柄后可执行零位或完整行程校准。";
+    private string gyroCalibrationStatus = "陀螺仪：静置手柄三秒后应用零偏校准。";
 
     public Pro2ControllerSlot(int index, bool enabled)
     {
@@ -175,6 +176,12 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
         }
     }
 
+    public string GyroCalibrationStatus
+    {
+        get => gyroCalibrationStatus;
+        set { if (gyroCalibrationStatus == value) return; gyroCalibrationStatus = value; OnPropertyChanged(); }
+    }
+
     public string Headline =>
         Name +
         (Enabled ? " · ON" : " · OFF") +
@@ -226,6 +233,7 @@ public sealed class Pro2ControllerSlot : INotifyPropertyChanged
         OnPropertyChanged(nameof(OptimizationSummary));
         OnPropertyChanged(nameof(DisplayStatus));
         OnPropertyChanged(nameof(DiagnosticSummary));
+        RefreshConnectionChoice();
     }
 
     public async Task StopAutoReconnectAsync()

@@ -16,12 +16,14 @@ public sealed class Pro2HidReportParser
     private readonly AxisCalibration legacyAxis = new();
     private readonly MotionCalibration motion = new();
     private readonly Pro2GyroBiasCalibration? qualityMotion;
+    private readonly bool applyMotionCalibration;
 
     public Pro2HidReportParser() : this(Pro2QualityMode.GyroEnabled) { }
 
-    public Pro2HidReportParser(bool gyroQualityMode)
+    public Pro2HidReportParser(bool gyroQualityMode, bool applyMotionCalibration = true)
     {
         qualityMotion = gyroQualityMode ? new() : null;
+        this.applyMotionCalibration = applyMotionCalibration;
     }
 
     public void SetStickDeadzones(StickDeadzoneSettings settings)
@@ -68,6 +70,11 @@ public sealed class Pro2HidReportParser
         {
             return standardAxis.StartCenterCapture();
         }
+    }
+
+    public void CancelManualStickCalibration()
+    {
+        lock (gate) standardAxis.CancelCapture();
     }
 
     public Pro2StickCalibrationResult CompleteManualStickCenterCalibration()
@@ -482,8 +489,11 @@ public sealed class Pro2HidReportParser
         state.GyroX = BinaryPrimitives.ReadInt16LittleEndian(sample.Slice(6, 2));
         state.GyroY = BinaryPrimitives.ReadInt16LittleEndian(sample.Slice(8, 2));
         state.GyroZ = BinaryPrimitives.ReadInt16LittleEndian(sample.Slice(10, 2));
-        if (qualityMotion != null) qualityMotion.Apply(state, Stopwatch.GetTimestamp());
-        else motion.Apply(state);
+        if (applyMotionCalibration)
+        {
+            if (qualityMotion != null) qualityMotion.Apply(state, Stopwatch.GetTimestamp());
+            else motion.Apply(state);
+        }
     }
 
     private static void AttachRawImuSamples(
@@ -523,6 +533,7 @@ public sealed class Pro2HidReportParser
             new(Center12, Center12, Center12, Center12);
         public Pro2StickCalibrationProfile Profile => profile;
         public bool CaptureActive => capture != null;
+        public void CancelCapture() => capture = null;
         public StickDeadzoneSettings Deadzones { get; private set; } = new();
         public void ApplyDeadzones(StickDeadzoneSettings next)
         {

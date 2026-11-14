@@ -36,6 +36,14 @@ public sealed class Pro2GyroBiasCalibration
         return "陀螺仪三秒校准已开始；请将手柄静置在稳定平面。移动会拒绝本次采样，保留旧校准。";
     }
 
+    public void CancelManualCalibration()
+    {
+        if (!manual) return;
+        manual = false;
+        ResetWindow();
+        LastResult = "manual_cancelled_previous_bias_preserved";
+    }
+
     public void Apply(GamepadState state, long nowTicks)
     {
         if (!state.GyroValid || !state.AccelValid) return;

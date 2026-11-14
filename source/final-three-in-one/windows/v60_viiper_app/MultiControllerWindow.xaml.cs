@@ -7,6 +7,6 @@ public partial class MultiControllerWindow : Window
     {
         InitializeComponent(); DataContext = model;
         Height = Math.Max(MinHeight, Math.Min(880, SystemParameters.WorkArea.Height - 40));
-        Width = Math.Max(MinWidth, Math.Min(840, SystemParameters.WorkArea.Width - 40));
+        Width = Math.Max(MinWidth, Math.Min(980, SystemParameters.WorkArea.Width - 40));
     }
 }

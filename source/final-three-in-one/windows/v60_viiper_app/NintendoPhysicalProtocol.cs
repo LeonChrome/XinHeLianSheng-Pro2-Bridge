@@ -9,7 +9,9 @@ namespace Y700Switch2V60Viiper;
 // Protocol references and replay coverage are recorded in docs/physical-inputs.md.
 public sealed class NintendoPhysicalParser
 {
-    private readonly Pro2HidReportParser parser = new(false);
+    // Factory correction (Pro1) precedes exactly one time-based bias learner.
+    // The framing parser must not apply its own, second gyro calibration.
+    private readonly Pro2HidReportParser parser = new(false, applyMotionCalibration: false);
     private readonly Pro2GyroBiasCalibration bias = new();
     private readonly int[] centers = [2048,2048,2048,2048], minus = [1600,1600,1600,1600], plus = [1600,1600,1600,1600];
     private readonly short[] accelBias = new short[3], gyroBias = new short[3];
@@ -19,10 +21,30 @@ public sealed class NintendoPhysicalParser
     private byte lastTimer;
     private bool hasTimer;
     private uint clock;
+    private bool manualStickProfile;
     public string Calibration { get; private set; } = "factory_not_read";
     public NintendoPhysicalParser(NintendoInputKind kind) { this.kind = kind; }
     public void SetDeadzones(StickDeadzoneSettings settings) { deadzones = settings.Normalize(); parser.SetStickDeadzones(settings); }
     public string StartGyroCalibration() => bias.StartManualCalibration();
+    public string GyroCalibrationSummary => bias.Summary;
+    public string GyroCalibrationResult => bias.LastResult;
+    public void CancelGyroCalibration() => bias.CancelManualCalibration();
+    public Pro2StickCalibrationProfile StickCalibrationProfile => parser.StickCalibrationProfile;
+    public string StickCalibrationSummary => parser.StickCalibrationSummary;
+    public Pro2PhysicalStickAxes LastPhysicalStickAxes => parser.LastPhysicalStickAxes;
+    public string SetStickCalibration(Pro2StickCalibrationProfile? profile)
+    {
+        manualStickProfile = profile?.CenterCalibrated == true;
+        return parser.SetStickCalibration(profile);
+    }
+    public string StartStickCalibration(bool range) => range ? parser.StartManualStickRangeCalibration() : parser.StartManualStickCenterCalibration();
+    public void CancelStickCalibration() => parser.CancelManualStickCalibration();
+    public Pro2StickCalibrationResult CompleteStickCalibration(bool range)
+    {
+        var result = range ? parser.CompleteManualStickRangeCalibration() : parser.CompleteManualStickCenterCalibration();
+        if (result.Success) manualStickProfile = true;
+        return result;
+    }
     public void SetPro1FactoryCalibration(ReadOnlySpan<byte> sticks, ReadOnlySpan<byte> imu)
     {
         bool stickOk = sticks.Length >= 18 && !sticks.ToArray().All(b => b == 0xff || b == 0);
@@ -51,20 +73,24 @@ public sealed class NintendoPhysicalParser
         }
         Calibration = $"stick_factory={stickOk} imu_factory={imuOk}; incomplete_fields=explicit_fallback";
     }
-    public bool TryParse(ReadOnlySpan<byte> report, out GamepadState state)
+    public bool TryParse(ReadOnlySpan<byte> report, out GamepadState state, long? timestampTicks = null)
     {
+        long now = timestampTicks ?? Stopwatch.GetTimestamp();
         state = GamepadState.Neutral();
         if (kind == NintendoInputKind.Pro2Usb)
         {
             // USB report 05 carries the FD2 layout after its report ID. ACKs and
             // vendor responses never increment physical-input counters.
             bool parsed = report.Length >= 61 && report[0] == 5 && parser.TryParseFd2Payload(report[1..], out state, out _);
-            if (parsed) bias.Apply(state, Stopwatch.GetTimestamp());
+            if (parsed) bias.Apply(state, now);
             return parsed;
         }
         if (report.Length < 49 || report[0] is not (0x30 or 0x31) || !parser.TryParseHidInputReport(report, out state, out _)) return false;
-        state.Lx = Axis(Unpack(report,6,0),0); state.Ly = Axis(Unpack(report,6,1),1);
-        state.Rx = Axis(Unpack(report,9,0),2); state.Ry = Axis(Unpack(report,9,1),3);
+        if (!manualStickProfile)
+        {
+            state.Lx = Axis(Unpack(report,6,0),0); state.Ly = Axis(Unpack(report,6,1),1);
+            state.Rx = Axis(Unpack(report,9,0),2); state.Ry = Axis(Unpack(report,9,1),3);
+        }
         int power = (report[2] >> 5) & 7;
         state.BatteryLevel = (byte)Math.Min(power,4); state.BatteryPercent = (byte)(Math.Min(power,4) * 25);
         state.BatteryPercentApproximate = true; state.BatteryCharging = (report[2] & 0x10) != 0;
@@ -82,7 +108,7 @@ public sealed class NintendoPhysicalParser
         if (hasTimer) clock += (uint)(unchecked((byte)(report[1] - lastTimer)) * 5000);
         lastTimer = report[1]; hasTimer = true;
         state.MotionTimestampUs = clock;
-        bias.Apply(state, Stopwatch.GetTimestamp());
+        bias.Apply(state, now);
         return true;
     }
     private ushort Axis(int raw, int axis)

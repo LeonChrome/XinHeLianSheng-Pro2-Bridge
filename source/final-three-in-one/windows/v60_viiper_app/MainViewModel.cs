@@ -121,7 +121,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         ConnectPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("进入游戏", token =>
         {
             manualReconnectTarget = null;
-            return EnterGameAsync(token);
+            return ConnectConfiguredSlotAsync(pro2Slots[0],token);
         }));
         DisconnectPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("断开 Pro2 BLE", DisconnectPro2InputAsync));
         CalibrateSourceGyroCommand = new RelayCommand(_ => RunExclusiveAsync("校准真实 Pro2 陀螺仪", CalibrateSourceGyroAsync));
@@ -145,7 +145,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             token => ScanPro2SlotAsync(SlotFromParameter(parameter), token)));
         ConnectPro2SlotCommand = new RelayCommand(parameter => RunExclusiveAsync(
             "连接 Pro2 Slot",
-            token => StartPro2SlotAutoReconnectAsync(SlotFromParameter(parameter), token)));
+            token => SlotFromParameter(parameter) is { } slot ? ConnectConfiguredSlotAsync(slot, token) : Task.CompletedTask));
         DisconnectPro2SlotCommand = new RelayCommand(parameter => RunExclusiveAsync(
             "断开 Pro2 Slot",
             token => DisconnectPro2SlotAsync(SlotFromParameter(parameter), token)));
@@ -323,6 +323,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanTryWin11Compatibility));
             (ApplyRearButtonsCommand as RelayCommand)?.RefreshCanExecute();
             OnPropertyChanged(nameof(CompactCanConnect));
+            OnPropertyChanged(nameof(CanCalibrateSelectedInput));
         }
     }
 
@@ -1508,10 +1509,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                   " label=\"" + SelectedModeLabel + "\" deadline_seconds=300");
         RequestUserNotification(
             "PRO2 手柄助手自动启动",
-            "已自动切换至 " + SelectedModeLabel +
-            "，并开始检索上次的 Pro2 手柄。若 5 分钟内没有连上，会暂停并等待人工操作。");
+            "正在按各槽位保存的连接方式和游戏输出恢复手柄。未连接的槽位可在“管理手柄”查看提示。");
 
-        await RunExclusiveAsync("启动自动进入游戏", EnterGameAsync, isStartupAutomationOperation: true);
+        await RunExclusiveAsync("启动自动进入游戏", ConnectEnabledControllerSlotsAsync, isStartupAutomationOperation: true);
     }
 
     private async Task TryConnectPro2InputOnceAsync(CancellationToken cancellationToken)
@@ -1567,67 +1567,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task DisconnectPro2InputAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        await StopAutoReconnectAsync();
-        if (PrimaryPhysical is { } physical) { await physical.DisposeAsync(); pro2Slots[0].PhysicalInput = null; }
-        await bleOperationGate.WaitAsync(cancellationToken);
-        try
-        {
-            await inputSource.StopAsync();
-        }
-        finally
-        {
-            bleOperationGate.Release();
-        }
-        InputStatus = inputSource.Status;
-        RaiseConnectionStateChanged();
-        if (Running)
-        {
-            Status = "已停止自动重连并断开真实 Pro2；虚拟设备继续运行 neutral 输入。再次点击“进入游戏”即可恢复持续连接。";
-        }
+        await DisconnectPro2SlotAsync(pro2Slots[0], cancellationToken);
     }
 
     private async Task CalibrateSourceGyroAsync(CancellationToken cancellationToken)
     {
-        foreach (var slot in pro2Slots.Where(s => s.PhysicalInput?.IsRunning == true))
-            AppendLog("[PHYSICAL_GYRO_CAL] " + slot.PhysicalInput!.StartGyroCalibration());
-        Pro2BleInputSource[] liveSources = pro2Slots
-            .Where(slot => slot.InputSource.IsRunning)
-            .Select(slot => slot.InputSource)
-            .Distinct()
-            .ToArray();
-        if (liveSources.Length == 0)
-        {
-            Status = pro2Slots.Any(s => s.PhysicalInput?.IsRunning == true) ? "陀螺仪三秒校准已开始，请静置手柄。" : "没有已连接的实体手柄，无法校准陀螺仪。";
-            AppendLog("[PRO2_GYRO_CAL] rejected=no_live_source");
-            return;
-        }
-
-        foreach (Pro2BleInputSource source in liveSources)
-        {
-            AppendLog("[PRO2_GYRO_CAL] " + source.StartManualGyroCalibration());
-        }
-        Status = "正在校准真实 Pro2 陀螺仪，请将手柄静置三秒。按键和摇杆仍保持连接。";
-        InputStatus = "陀螺仪零偏校准中，请勿移动手柄...";
-        await Task.Delay(TimeSpan.FromSeconds(3.5), cancellationToken);
-
-        string[] summaries = liveSources
-            .Select((source, index) => "slot=" + (index + 1) + " " + source.GyroCalibrationSummary)
-            .ToArray();
-        foreach (string summary in summaries)
-        {
-            AppendLog("[PRO2_GYRO_CAL] " + summary);
-        }
-        bool complete = summaries.All(summary => summary.Contains("status=calibrated", StringComparison.Ordinal) &&
-            (!Pro2QualityMode.GyroEnabled || summary.Contains("result=manual_committed_3s", StringComparison.Ordinal)));
-        Status = complete
-            ? "真实 Pro2 陀螺仪零偏校准完成。未使用死区或滤波。"
-            : "陀螺仪校准尚未提交，检测到移动；请保持静置后重试。";
-        InputStatus = inputSource.Status + " · " + inputSource.GyroCalibrationSummary;
+        await CalibrateSelectedGyroAsync(SelectedCalibrationSlot, cancellationToken);
     }
 
     public Task ConnectForLaunchAsync() =>
-        RunExclusiveAsync("启动连接 Pro2", EnterGameAsync);
+        RunExclusiveAsync("启动连接手柄", ConnectEnabledControllerSlotsAsync);
 
     public async Task DiagnoseForLaunchAsync()
     {
@@ -1647,6 +1596,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task EnterGameAsync(CancellationToken cancellationToken, bool allowAutomaticConnect)
     {
+        if(PrimaryPhysical==null && pro2Slots[0].IsPhysicalInputSelected) { await ConnectConfiguredSlotAsync(pro2Slots[0],cancellationToken); return; }
         if (PrimaryPhysical != null) { await EnterPhysicalGameAsync(cancellationToken); return; }
         long enterStarted = Stopwatch.GetTimestamp();
         if (!allowAutomaticConnect && !inputSource.IsRunning)
@@ -1682,7 +1632,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (!Running || activeMode != selectedMode)
+        if (!Running || activeMode != selectedMode || !pro2Slots[0].VirtualDeviceRunning)
         {
             await SwitchModeAsync(SelectedProfile, cancellationToken);
         }
@@ -2014,7 +1964,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         foreach (Pro2ControllerSlot slot in enabledSlots)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await StartPro2SlotAutoReconnectAsync(slot, cancellationToken);
+            try { await StartPro2SlotAutoReconnectAsync(slot, cancellationToken); }
+            catch(OperationCanceledException) when(cancellationToken.IsCancellationRequested) { throw; }
+            catch(Exception error)
+            {
+                slot.Status=slot.LastConnectionError="连接未完成："+FirstLine(error.Message);
+                AppendLog("[SLOT_START] slot="+slot.Index+" "+error);
+            }
         }
 
         UpdateMultiSlotInputStatus();
@@ -2030,9 +1986,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
 
         slot.Enabled = true;
+        if(slot.PhysicalInput==null && slot.IsPhysicalInputSelected) { await ConnectConfiguredSlotAsync(slot,cancellationToken); return; }
         if (slot.PhysicalInput != null)
         {
-            if (slot.PhysicalInput.IsRunning) { await EnsureViiperReadyAsync(cancellationToken); await StartSingleSlotSessionAsync(slot, RuntimeProfileForSlot(slot), cancellationToken); StartPhysicalReconnect(slot); }
+            await StartPhysicalSlotAsync(slot, cancellationToken);
+            return;
+        }
+        if(!Running && slot.Index>1 && !previewOnly)
+        {
+            if(!slot.InputSource.IsRunning) await TryConnectPro2SlotOnceAsync(slot,cancellationToken);
+            StartBleSlotGuard(slot);
+            QueueSlotOutputResume(slot);
             return;
         }
         if (!Running || !activeMode.HasValue || !IsMultiSlotMode(activeMode.Value))
@@ -2066,6 +2030,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             return;
         }
 
+        StartBleSlotGuard(slot);
+    }
+
+    private void StartBleSlotGuard(Pro2ControllerSlot slot)
+    {
+        if(slot.AutoReconnectTask is {IsCompleted:false}) return;
         slot.AutoReconnectCts?.Dispose();
         slot.AutoReconnectCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
         slot.AutoReconnectEnabled = true;
@@ -2120,6 +2090,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                 if (live)
                 {
                     slot.InputSource.RecheckLiveRate();
+                    if(!slot.VirtualDeviceRunning) QueueSlotOutputResume(slot);
                     RecordWakeRateOutcome(slot);
                     failedAttemptStreak = 0;
                     slot.RefreshFromSource();
@@ -2339,6 +2310,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         string address,
         bool logChange)
     {
+        if (slot.PhysicalInput != null) return;
         string normalizedAddress = V60UserSettings.NormalizeBleAddress(address);
         Pro2StickCalibrationProfile? profile = ResolveStickCalibration(normalizedAddress);
         string calibrationKey = StickCalibrationKey(normalizedAddress, profile);
@@ -2583,7 +2555,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
     private HashSet<string> ConnectedPro2AddressesExcept(Pro2ControllerSlot slot)
     {
         return Pro2MultiControllerPolicy.Exclusions(slot.Index, pro2Slots.Select(other => new Pro2SlotAddress(
-            other.Index, other.Enabled, LastKnownPro2AddressForSlot(other), other.InputSource.ConnectedAddress,
+            other.Index, other.Enabled && other.IsBleInputSelected && other.PhysicalInput==null, LastKnownPro2AddressForSlot(other), other.InputSource.ConnectedAddress,
             other.InputSource.IsTransportConnected || other.InputSource.IsRunning)));
     }
 
@@ -2615,10 +2587,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             return;
         }
+        if(!slot.CanChangeConnection) throw new InvalidOperationException("此手柄正在读卡，请先取消或等待读取结束。");
 
-        await slot.StopAutoReconnectAsync();
+        if (slot.Index == 1) await StopPrimaryBleReconnectOnlyAsync();
+        else await slot.StopAutoReconnectAsync();
         await StopPhysicalReconnectAsync(slot);
-        if (slot.PhysicalInput is { } physical) { await physical.DisposeAsync(); slot.PhysicalInput = null; }
+        if (slot.PhysicalInput is { } physical)
+        {
+            await physical.DisposeAsync();
+            // Keep the selected transport and identity for the next Connect.
+            slot.Status = "实体输入已断开；再次连接会使用原来的 " + physical.Device.Kind + "。";
+        }
         await bleOperationGate.WaitAsync(cancellationToken);
         try
         {
@@ -2629,15 +2608,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             bleOperationGate.Release();
         }
 
-        slot.Status = "已断开真实 Pro2；虚拟设备仍保持在线。";
+        if (slot.PhysicalInput == null) slot.Status = "已断开真实 Pro2；虚拟设备仍保持在线。";
         slot.RefreshFromSource();
         UpdateMultiSlotInputStatus();
+        Status = slot.Status;
     }
 
     private async Task CalibrateStickCenterSlotAsync(
         Pro2ControllerSlot? slot,
         CancellationToken cancellationToken)
     {
+        if (slot?.PhysicalInput != null) { await CalibratePhysicalStickAsync(slot, false, cancellationToken); return; }
         if (!TryGetLiveCalibrationTarget(
                 slot,
                 out Pro2ControllerSlot liveSlot,
@@ -2671,6 +2652,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         Pro2ControllerSlot? slot,
         CancellationToken cancellationToken)
     {
+        if (slot?.PhysicalInput != null) { await CalibratePhysicalStickAsync(slot, true, cancellationToken); return; }
         if (!TryGetLiveCalibrationTarget(
                 slot,
                 out Pro2ControllerSlot liveSlot,

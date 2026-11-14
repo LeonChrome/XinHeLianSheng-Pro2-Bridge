@@ -66,6 +66,7 @@ internal static class Program
             V28RegressionTests.Run(Check);
             V29RegressionTests.Run(Check, output);
             PhysicalInputRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
+            UnifiedConnectionsRegressionTests.Run(Check);
             if (args.Contains("--physical-only"))
             {
                 Console.WriteLine("PASS: " + checks + " physical-input assertions; offline protocol replay only.");
@@ -220,9 +221,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.0.1.0", "v3.0.1 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.1.0.0", "v3.1 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.0.1-physical-inputs", "v3.0.1 release metadata");
+            "3.1-unified-inputs", "v3.1 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1002,6 +1003,7 @@ internal static class Program
         window.Show();
         Pump(window);
         var vm = (MainViewModel)window.DataContext;
+        UnifiedConnectionsRegressionTests.RunUi(window,vm,Check,()=>Pump(window),(dialog,name)=>Save(dialog,name));
         BleOptimizationUiRegressionTests.RunBindings(window, vm, Check);
         BleGeneralizedUiRegressionTests.RunBindings(window, vm, Check);
         Win10HomeUiRegressionTests.RunBindings(window, vm, Check, () => Pump(window));
@@ -1336,15 +1338,25 @@ internal static class Program
         physicalWindow.Show(); Pump(physicalWindow); Save(physicalWindow, "ui-physical-inputs-nfc.png");
         Check(physicalWindow.FindName("SlotChoice") is ComboBox { Items.Count: 4 }, "physical input window exposes four independent slots");
         Check(physicalWindow.FindName("NfcButton") is Button { IsEnabled: false }, "NFC cannot start without a supported physical source");
-        Check(physicalWindow.FindName("Devices") is ListBox { Items.Count: 0 }, "preview does not enumerate or open real controllers");
+        Check(physicalWindow.FindName("Devices") == null, "NFC window has no separate connection controls");
         physicalWindow.Close();
+        var calibrationPanel=(Expander)window.FindName("CalibrationExpander");
+        calibrationPanel.IsExpanded=true; Pump(window);
+        var calibrationChoice=(ComboBox)window.FindName("CalibrationSlotChoice");
+        calibrationChoice.SelectedIndex=1; Pump(window);
+        Check(ReferenceEquals(vm.SelectedCalibrationSlot,vm.Pro2Slots[1]) &&
+            Descendants<Button>(calibrationPanel).Where(b=>b.Content?.ToString() is "摇杆零位校准" or "摇杆行程校准")
+                .All(b=>ReferenceEquals(b.CommandParameter,vm.Pro2Slots[1])),"calibration UI passes selected slot to both stick commands");
+        AwaitUi(PhysicalInputRegressionTests.RunCalibrationUiAsync(vm, Check), window, 15);
+        Pump(window); Save(window,"ui-calibration-results.png");
+        calibrationPanel.IsExpanded=false; Pump(window);
         vm.RearEditingMode = "PS5"; vm.ResetRearButtonsCommand.Execute(null); vm.SelectedRearIndex = 2;
         Check(window.FindName("MultiControllerButton") is Button, "multi-controller entry is on home");
         var multiWindow = new MultiControllerWindow(vm) { Owner = window };
         multiWindow.Show(); Pump(multiWindow); Save(multiWindow, "ui-multi-controller.png");
-        Check(Descendants<Button>(multiWindow).Count(b => b.Content?.ToString() == "连接") == 4,
+        Check(Descendants<Button>(multiWindow).Count(b => b.Command == vm.ConnectPro2SlotCommand) == 4,
             "four independent connect controls are visible");
-        Check(Descendants<Button>(multiWindow).Where(b => b.Content?.ToString() == "连接")
+        Check(Descendants<Button>(multiWindow).Where(b => b.Command == vm.ConnectPro2SlotCommand)
             .Select(b => b.CommandParameter).OfType<Pro2ControllerSlot>().Select(s => s.Index).SequenceEqual(new[] {1,2,3,4}),
             "each visible connect button targets its own real slot");
         Check(Descendants<Button>(multiWindow).Count(b => b.Content?.ToString() == "移除" && b.IsVisible) == 3,
@@ -1576,10 +1588,10 @@ internal static class Program
             foreach (var item in Descendants<T>(child)) yield return item;
         }
     }
-    private static void AwaitUi(Task task, Window window)
+    private static void AwaitUi(Task task, Window window, double seconds = 5)
     {
         var timeout = Stopwatch.StartNew();
-        while (!task.IsCompleted && timeout.Elapsed.TotalSeconds < 5) { Pump(window); Thread.Sleep(5); }
+        while (!task.IsCompleted && timeout.Elapsed.TotalSeconds < seconds) { Pump(window); Thread.Sleep(5); }
         Check(task.IsCompleted, "UI operation finishes within deadline");
         task.GetAwaiter().GetResult(); Pump(window);
     }

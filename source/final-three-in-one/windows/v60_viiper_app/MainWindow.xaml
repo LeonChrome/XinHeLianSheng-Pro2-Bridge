@@ -59,6 +59,10 @@
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Padding" Value="18,20"/>
             <Setter Property="VerticalContentAlignment" Value="Top"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Padding" Value="18,10"/></DataTrigger>
+                <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Padding" Value="18,10"/></DataTrigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="TabItem">
             <Setter Property="Padding" Value="20,10"/>
@@ -134,14 +138,9 @@
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
-                                    <TextBlock Text="PURE SOFTWARE / 纯软件连接" FontSize="10" Foreground="#789180" Margin="0,0,0,10">
-                                        <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
-                                            <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
-                                            <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
-                                        </Style.Triggers></Style></TextBlock.Style>
-                                    </TextBlock>
+                                    <local:ControllerConnectionView x:Name="PrimaryConnectionView" DataContext="{Binding Pro2Slots[0]}" ShowHint="False" Margin="0,0,0,6"/>
                                     <TextBlock x:Name="BleConnectionTitleText" Text="{Binding BleConnectionTitle}" FontSize="25" FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="BleConnectionHintText" Text="{Binding BleConnectionHint}" Foreground="{StaticResource Muted}" Margin="0,12,0,0" LineHeight="21"/>
+                                    <TextBlock x:Name="BleConnectionHintText" Text="{Binding BleConnectionHint}" Foreground="{StaticResource Muted}" Margin="0,7,0,0" LineHeight="21"/>
                                 </StackPanel>
                                 <local:Pro2Illustration Grid.Column="1" Width="160" VerticalAlignment="Center">
                                     <local:Pro2Illustration.Style><Style TargetType="local:Pro2Illustration"><Setter Property="Height" Value="112"/>
@@ -153,7 +152,7 @@
                                 </local:Pro2Illustration>
                             </Grid>
                         </Border>
-                        <Grid Margin="0,0,0,18">
+                        <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                             <StackPanel><TextBlock Text="{Binding PrimaryInputLabel}" Style="{StaticResource MutedText}"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,5,0,0"><TextBlock Text="{Binding CompactInputRate}" FontSize="26" FontWeight="SemiBold"/><TextBlock Text=" Hz" Foreground="{StaticResource Muted}" VerticalAlignment="Bottom" Margin="0,0,0,4"/></StackPanel>
@@ -227,7 +226,7 @@
                                 </Expander>
                             </StackPanel>
                         </Border>
-                        <TextBlock Text="以哪种手柄身份游玩？" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                        <TextBlock Text="以哪种手柄身份游玩？" FontWeight="SemiBold" Margin="0,0,0,8"/>
                         <Grid IsEnabled="{Binding CanOperate}">
                             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                             <Button Command="{Binding SelectCompactModeCommand}" CommandParameter="Pro2" AutomationProperties.Name="Steam / Pro2 模式">
@@ -252,10 +251,10 @@
                         <StackPanel Grid.Row="1" Margin="0,14,0,0">
                         <WrapPanel>
                             <Button Content="{Binding CompactConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding CompactCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
-                            <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}"/>
+                            <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}" Visibility="{Binding PrimaryBleControlsVisible, Converter={StaticResource BoolVisibility}}"/>
                             <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding CompactCanStop}"/>
-                            <Button Content="输入 / NFC…" Click="PhysicalInputs_Click" ToolTip="接入 Pro1 蓝牙／USB、Pro2 USB，按槽位读取 NFC"/>
-                            <Button x:Name="MultiControllerButton" Content="多手柄…" Click="MultiController_Click" ToolTip="添加第二至第四只 Pro2，逐只查看速率与重连状态"/>
+                            <Button Content="NFC 读卡…" Click="PhysicalInputs_Click" ToolTip="读取已连接的 Pro1 蓝牙手柄上的 NFC 标签"/>
+                            <Button x:Name="MultiControllerButton" Content="管理手柄…" Click="MultiController_Click" ToolTip="四个槽位统一选择有线／无线、实体手柄和游戏输出模式"/>
                             <Button x:Name="Win10OneClickButton" Content="一键优化到 133Hz · Win10" Click="OneClickWin10Optimize_Click" Style="{StaticResource Primary}"
                                     IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10OneClick, Converter={StaticResource BoolVisibility}}"
                                     ToolTip="{Binding Win10OneClickHint}"/>
@@ -391,7 +390,7 @@
                                               Margin="0"
                                               ToolTip="Win11 在当前连接内自动尝试有限预设，跨适配器型号和驱动版本开放；Win10 全局参数必须单独确认和管理员授权，不会静默轮换。"/>
                                     <StackPanel Orientation="Horizontal" Margin="28,0,0,0">
-                                        <CheckBox Content="闲置自动休眠" IsChecked="{Binding AutoSleepEnabled}" VerticalAlignment="Center" Margin="0,0,8,0"
+                                        <CheckBox Content="Pro2 无线闲置休眠" IsChecked="{Binding AutoSleepEnabled}" VerticalAlignment="Center" Margin="0,0,8,0"
                                                   ToolTip="无操作达到设定时间后让手柄关灯休眠，虚拟手柄保持在线；按手柄任意键自动重连。首次启用会把本机写入手柄的配对记录；若该手柄也在 Switch 2 主机上使用，回到主机时可能需要重新配对。"/>
                                         <ComboBox ItemsSource="{Binding AutoSleepMinuteOptions}" SelectedItem="{Binding AutoSleepMinutes}" IsEnabled="{Binding AutoSleepEnabled}"
                                                   Width="58" VerticalAlignment="Center" Margin="0"/>
@@ -401,35 +400,30 @@
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource SettingsCard}">
-                            <StackPanel IsEnabled="{Binding CanOperate}">
-                                <TextBlock Text="校准与连接" FontWeight="SemiBold" FontSize="17" Margin="0,0,0,8"/>
+                            <StackPanel>
+                            <DockPanel Margin="0,0,0,8">
+                                <Button x:Name="RestartBluetoothAdapterButton" Content="重启蓝牙适配器…" Click="RestartBluetooth_Click" DockPanel.Dock="Right"
+                                        IsEnabled="{Binding CanOperate}" ToolTip="需要管理员授权；所选适配器的蓝牙连接会暂时断开，不改驱动或配对。"/>
+                                <TextBlock Text="校准与连接" FontWeight="SemiBold" FontSize="17" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <Expander x:Name="CalibrationExpander" Header="手柄校准" IsEnabled="{Binding CanOperate}" IsExpanded="False">
+                            <StackPanel Margin="0,10,0,0">
+                                <ComboBox x:Name="CalibrationSlotChoice" ItemsSource="{Binding Pro2Slots}" DisplayMemberPath="Name"
+                                          SelectedItem="{Binding SelectedCalibrationSlot}" Width="130" HorizontalAlignment="Left" Margin="0,0,0,10"
+                                          AutomationProperties.Name="需要校准的手柄"/>
                                 <WrapPanel>
-                                    <Button Content="摇杆零位校准" Command="{Binding CalibrateStickCenterSlotCommand}" CommandParameter="1"/>
-                                    <Button Content="摇杆行程校准" Command="{Binding CalibrateStickRangeSlotCommand}" CommandParameter="1"/>
-                                    <Button Content="陀螺仪校准" Command="{Binding CalibrateSourceGyroCommand}"/>
-                                    <Button Content="断开真实手柄" Command="{Binding DisconnectPro2InputCommand}"/>
-                                    <Button x:Name="RestartBluetoothAdapterButton" Content="重启蓝牙适配器…" Click="RestartBluetooth_Click"
-                                            ToolTip="需要管理员授权；所选适配器的蓝牙连接会暂时断开，不改驱动或配对。"/>
+                                    <Button Content="摇杆零位校准" Command="{Binding CalibrateStickCenterSlotCommand}" CommandParameter="{Binding SelectedCalibrationSlot}" IsEnabled="{Binding CanCalibrateSelectedInput}"/>
+                                    <Button Content="摇杆行程校准" Command="{Binding CalibrateStickRangeSlotCommand}" CommandParameter="{Binding SelectedCalibrationSlot}" IsEnabled="{Binding CanCalibrateSelectedInput}"/>
+                                    <Button Content="陀螺仪校准" Command="{Binding CalibrateSourceGyroCommand}" IsEnabled="{Binding CanCalibrateSelectedInput}"/>
+                                    <Button Content="断开所选手柄" Command="{Binding DisconnectPro2SlotCommand}" CommandParameter="{Binding SelectedCalibrationSlot}"/>
                                 </WrapPanel>
                                 <TextBlock Text="零位：松开摇杆2秒 · 行程：沿外圈转动8秒 · 陀螺仪：静置3秒" Style="{StaticResource MutedText}"/>
+                                <TextBlock x:Name="CalibrationResultText" Text="{Binding CalibrationStatusText}" TextWrapping="Wrap" Style="{StaticResource MutedText}" Margin="0,8,0,0"/>
                                 <TextBlock Text="{Binding BluetoothRestartStatus}" TextWrapping="Wrap" Style="{StaticResource MutedText}" Margin="0,8,0,0"
                                            Visibility="{Binding HasBluetoothRestartStatus, Converter={StaticResource BoolVisibility}}"/>
-                                <Expander Header="更多手柄 · Steam / Xbox" Margin="0,16,0,0">
-                                    <ItemsControl ItemsSource="{Binding Pro2Slots}">
-                                        <ItemsControl.ItemTemplate><DataTemplate>
-                                            <StackPanel Margin="0,12,0,8">
-                                                <DockPanel>
-                                                    <CheckBox Content="{Binding Name}" IsChecked="{Binding Enabled}" DockPanel.Dock="Left" Margin="0,0,16,0"/>
-                                                    <TextBlock Text="{Binding Status}" Style="{StaticResource MutedText}"/>
-                                                </DockPanel>
-                                                <WrapPanel Margin="0,6,0,0">
-                                                    <Button Content="连接" Command="{Binding DataContext.ConnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Index}"/>
-                                                    <Button Content="断开" Command="{Binding DataContext.DisconnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Index}"/>
-                                                </WrapPanel>
-                                            </StackPanel>
-                                        </DataTemplate></ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </Expander>
+                                <Button Content="管理手柄连接与模式…" Click="MultiController_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+                            </StackPanel>
+                            </Expander>
                             </StackPanel>
                         </Border>
                         <Expander Header="高级设置与诊断" IsExpanded="{Binding ShowDiagnostics}" Padding="0,4">

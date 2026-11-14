@@ -94,7 +94,7 @@ public sealed partial class MainViewModel
         Pro2BleInputSource source,
         CancellationToken cancellationToken)
     {
-        if (!AutoSleepEnabled || !source.IsRunning ||
+        if (slot.PhysicalInput!=null || !ReferenceEquals(slot.InputSource,source) || !AutoSleepEnabled || !source.IsRunning ||
             source.UserIdleFor < TimeSpan.FromMinutes(AutoSleepMinutes)) return false;
         string address = source.ConnectedAddress;
         if (string.IsNullOrWhiteSpace(address)) return false;

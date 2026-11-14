@@ -23,6 +23,7 @@ public sealed partial class MainViewModel
 
     private async Task ApplySlotModeAsync(Pro2ControllerSlot slot, CancellationToken token)
     {
+        if(!slot.CanChangeConnection) { Status=slot.Status="此手柄正在读卡，请先取消或等待读取结束，再切换游戏输出。"; return; }
         if (slot.Index == 1) SelectMode(slot.SelectedMode);
         if (!Running || !slot.Enabled || previewOnly)
         { slot.Status = "模式已保存；下次连接使用 " + Pro2SlotModes.FromMode(slot.SelectedMode).Label + "。"; return; }
@@ -60,6 +61,7 @@ public sealed partial class MainViewModel
             var slot = SlotFromParameter(parameter);
             if (slot == null || slot.Index == 1) return;
             await DisconnectPro2SlotAsync(slot, token);
+            slot.PhysicalInput=null;
             lock (autoSleepStates) autoSleepStates.Remove(slot.Index);
             slot.IsSleeping = false;
             slot.SleepStatus = "";
@@ -85,11 +87,20 @@ public sealed partial class MainViewModel
         string[] modes = Pro2SlotModes.Normalize(userSettings.SlotModeKeys, userSettings.SelectedModeKey);
         foreach (var slot in pro2Slots)
         {
+            slot.LoadInputConfiguration(ControllerInputConfiguration.Normalize(userSettings.SlotInputs)[slot.Index-1]);
             slot.Enabled = enabled[slot.Index - 1];
             slot.SelectedMode = Pro2SlotModes.FromKey(modes[slot.Index - 1]).Mode;
             slot.InputSource.PeerRatesProvider = () => CapturePeerRates(slot.Index);
             slot.PropertyChanged += (_, e) =>
             {
+                if(e.PropertyName==nameof(Pro2ControllerSlot.InputConfiguration)) OnInputConfigurationChanged(slot);
+                if(e.PropertyName==nameof(Pro2ControllerSlot.SelectedInputKind))
+                {
+                    ApplyDiscoveredControllers(discoveredControllers);
+                    if(slot.IsPhysicalInputSelected && !previewOnly) _=RefreshControllerDevicesAsync();
+                }
+                if (e.PropertyName is nameof(Pro2ControllerSlot.StickCalibrationStatus) or nameof(Pro2ControllerSlot.GyroCalibrationStatus))
+                    OnPropertyChanged(nameof(CalibrationStatusText));
                 if (e.PropertyName == nameof(Pro2ControllerSlot.SelectedMode))
                 {
                     userSettings.SlotModeKeys = pro2Slots.Select(s => Pro2SlotModes.FromMode(s.SelectedMode).Key).ToArray();
@@ -121,6 +132,11 @@ public sealed partial class MainViewModel
 
     private async Task OptimizeSlotCompatibilityAsync(Pro2ControllerSlot slot, CancellationToken token)
     {
+        if (slot.PhysicalInput != null)
+        {
+            Status = slot.Status = "当前使用原生 HID 输入，不应用 Pro2 BLE 连接参数。";
+            return;
+        }
         await bleOperationGate.WaitAsync(token);
         try
         {

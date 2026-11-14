@@ -186,7 +186,7 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
                             " source_paced=" + profile.SourcePaced +
                             " usb_motion_policy=" + (profile.Mode == ViiperVirtualMode.Pro2 && profile.SourcePaced
                                 ? "4ms_zero_order_hold_source_repeats_counted" : "source_paced_or_explicit_legacy") +
-                            " physical_input_rate_scope=fd2_notify_only");
+                            " physical_input_rate_scope=source_reports_only");
         }
         bool identityOk = profile.MatchesIdentity(device);
         progress.Report(
@@ -242,8 +242,8 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
                 " policy=no_cross_session_replay");
         }
         progress.Report(inputSource is { IsRunning: true }
-            ? "[VIIPER] stream connected; feeding Pro2 BLE input."
-            : "[VIIPER] stream connected; feeding neutral input until Pro2 BLE source is connected.");
+            ? "[VIIPER] stream connected; feeding active physical controller input."
+            : "[VIIPER] stream connected; feeding neutral input until the physical controller is connected.");
         progress.Report(outputSink is { IsOutputReady: true }
             ? "[VIIPER] Pro2 output writeback is enabled for rumble."
             : "[VIIPER] Pro2 output writeback is not ready; host rumble will be logged only.");

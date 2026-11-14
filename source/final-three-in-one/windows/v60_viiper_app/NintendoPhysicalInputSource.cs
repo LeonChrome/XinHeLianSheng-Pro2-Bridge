@@ -51,6 +51,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     private byte[]? previousRaw;
     private uint previousDeviceClock;
     private long repeatedRaw, repeatedClock, clockChanges;
+    private string lastGyroResult = "";
     private int sequence;
     private double rumbleGain = 1;
     private long cachedRateTicks;
@@ -69,6 +70,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
             (device.Kind==NintendoInputKind.Pro1Bluetooth ? device.InputLength>=362 ? "只读实验，需实卡验证。" : "此 HID 接口未暴露完整 NFC 报告。" : "USB 路线尚未接入，请改用 Pro1 蓝牙读取。")
         : "Pro2 USB：按键、摇杆、背键、C 键、陀螺仪、震动。NFC：协议不同，尚未接入。";
     public string NfcStatus => nfcStatus;
+    public bool IsReadingNfc => nfcBusy;
     public double CurrentParsedRateHz
     {
         get
@@ -89,6 +91,15 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     public string MetricsSummary => Format(Snapshot());
     public void SetDeadzones(StickDeadzoneSettings settings) { lock(gate) parser.SetDeadzones(settings); }
     public string StartGyroCalibration() { lock(gate) return parser.StartGyroCalibration(); }
+    public string GyroCalibrationSummary { get { lock(gate) return parser.GyroCalibrationSummary; } }
+    public void CancelGyroCalibration() { lock(gate) parser.CancelGyroCalibration(); }
+    public Pro2StickCalibrationProfile StickCalibrationProfile { get { lock(gate) return parser.StickCalibrationProfile; } }
+    public string StickCalibrationSummary { get { lock(gate) return parser.StickCalibrationSummary; } }
+    public Pro2PhysicalStickAxes LastPhysicalStickAxes { get { lock(gate) return parser.LastPhysicalStickAxes; } }
+    public string SetStickCalibration(Pro2StickCalibrationProfile? profile) { lock(gate) return parser.SetStickCalibration(profile); }
+    public string StartStickCalibration(bool range) { lock(gate) return parser.StartStickCalibration(range); }
+    public void CancelStickCalibration() { lock(gate) parser.CancelStickCalibration(); }
+    public Pro2StickCalibrationResult CompleteStickCalibration(bool range) { lock(gate) return parser.CompleteStickCalibration(range); }
     public void SetRumbleGain(double gain) => Volatile.Write(ref rumbleGain, double.IsFinite(gain) ? Math.Clamp(gain,0,3) : 1);
     public async Task ConnectAsync(CancellationToken token, INintendoHidTransport? suppliedTransport = null,
         INintendoUsbCommandChannel? suppliedCommands = null)
@@ -186,6 +197,12 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
                 lock(gate)
                 {
                     if(!parser.TryParse(report,out var state)) { rejected++; continue; }
+                    string gyroResult = parser.GyroCalibrationResult;
+                    if (gyroResult != lastGyroResult)
+                    {
+                        lastGyroResult = gyroResult;
+                        log("[PHYSICAL_GYRO_CAL] " + parser.GyroCalibrationSummary);
+                    }
                     uint deviceClock=device.Kind==NintendoInputKind.Pro2Usb && report.Length>=47
                         ? System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(report.AsSpan(43,4)) : report[1];
                     if(previousRaw!=null)
@@ -292,7 +309,9 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
                 await transport.WriteAsync(report,stop.Token);
             }
             catch(Exception e) { log("[PHYSICAL_STOP] "+e.Message); }
-        running=false; initialized=false; lifetime.Cancel(); outputs.Writer.TryComplete();
+        running=false; initialized=false; status="已断开 · "+device.Kind;
+        lock(gate) { parser.CancelStickCalibration(); parser.CancelGyroCalibration(); }
+        lifetime.Cancel(); outputs.Writer.TryComplete();
         if(nfcBusy)
         {
             if(await nfcGate.WaitAsync(TimeSpan.FromSeconds(3))) nfcGate.Release();

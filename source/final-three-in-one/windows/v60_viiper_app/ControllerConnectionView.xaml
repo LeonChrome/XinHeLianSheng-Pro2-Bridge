@@ -1,0 +1,36 @@
+<UserControl x:Class="Y700Switch2V60Viiper.ControllerConnectionView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="VisibleIf"/>
+        <Style x:Key="OptionalText" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Style.Triggers><DataTrigger Binding="{Binding Text, RelativeSource={RelativeSource Self}}" Value=""><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+    <StackPanel IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}">
+        <WrapPanel IsEnabled="{Binding CanChangeConnection}">
+            <TextBlock Text="连接方式" VerticalAlignment="Center" Margin="0,0,10,6"/>
+            <ComboBox ItemsSource="{Binding InputOptions}" DisplayMemberPath="Label" SelectedValuePath="Kind"
+                      SelectedValue="{Binding SelectedInputKind}" Width="165" MinHeight="30" Margin="0,0,10,6"
+                      AutomationProperties.Name="实体手柄连接方式"/>
+            <Button Content="Windows 配对…" Click="Pairing_Click" Padding="8,4" Margin="0,0,0,6">
+                <Button.Style><Style TargetType="Button"><Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers><DataTrigger Binding="{Binding SelectedInputKind}" Value="Pro1Bluetooth"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+                </Style></Button.Style>
+            </Button>
+        </WrapPanel>
+        <WrapPanel Visibility="{Binding IsPhysicalInputSelected, Converter={StaticResource VisibleIf}}" IsEnabled="{Binding CanChangeConnection}">
+            <TextBlock Text="实体手柄" VerticalAlignment="Center" Margin="0,0,10,6"/>
+            <ComboBox ItemsSource="{Binding PhysicalDeviceChoices}" SelectedItem="{Binding SelectedPhysicalDevice}"
+                      Width="235" MinHeight="30" Margin="0,0,8,6" AutomationProperties.Name="本槽位实体手柄">
+                <ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding SelectionLabel}" ToolTip="{Binding PhysicalId}" TextTrimming="CharacterEllipsis"/></DataTemplate></ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Content="刷新" Command="{Binding DataContext.RefreshControllerDevicesCommand, RelativeSource={RelativeSource AncestorType=Window}}" Padding="9,4" Margin="0,0,0,6"/>
+        </WrapPanel>
+        <TextBlock Text="{Binding InputChoiceHint}" TextWrapping="Wrap" FontSize="11" Foreground="#667870"
+                   Visibility="{Binding ShowHint, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource VisibleIf}}"/>
+        <TextBlock Text="{Binding DeviceChoiceHint}" Style="{StaticResource OptionalText}" FontSize="11" Foreground="#80612D" Margin="0,2,0,0"/>
+        <TextBlock Text="{Binding LastConnectionError}" Style="{StaticResource OptionalText}" FontSize="12" Foreground="#956329"/>
+    </StackPanel>
+</UserControl>

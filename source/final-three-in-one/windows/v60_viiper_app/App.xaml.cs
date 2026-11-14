@@ -6,6 +6,8 @@ namespace Y700Switch2V60Viiper;
 
 public partial class App : System.Windows.Application
 {
+    internal static BluetoothRecoveryLaunch? RecoveryLaunch;
+    internal static BluetoothRestartResult? RecoveryResult;
     private Mutex? singleInstanceMutex;
     private bool ownsSingleInstanceMutex;
 
@@ -52,6 +54,13 @@ public partial class App : System.Windows.Application
             int exitCode = result.Success ? 0 : 1;
             Shutdown(exitCode);
             return;
+        }
+
+        if(Environment.GetEnvironmentVariable("V60_UI_SMOKE")!="1"&&BluetoothRecoveryLaunch.Parse(e.Args) is { } recovery)
+        {
+            base.OnStartup(e);ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            _=CompleteBluetoothRecoveryLaunchAsync(recovery);
+            return; // Do not construct a VM or enumerate Bluetooth while the adapter is being cycled.
         }
 
         bool bleDiagnosticCli = Array.Exists(
@@ -179,6 +188,46 @@ public partial class App : System.Windows.Application
         try{exit=await VirtualDeviceConfigurationRepair.ExecuteAsync(args);}
         catch{exit=5;}
         Shutdown(exit);Environment.Exit(exit);
+    }
+
+    private async System.Threading.Tasks.Task CompleteBluetoothRecoveryLaunchAsync(BluetoothRecoveryLaunch request)
+    {
+        var text=new System.Windows.Controls.TextBlock{Text="正在释放旧连接并重新初始化蓝牙…",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(24),FontSize=15};
+        var waiting=new Window{Title="PRO2 · 恢复蓝牙连接",Width=460,Height=160,Content=text,WindowStartupLocation=WindowStartupLocation.CenterScreen,ResizeMode=ResizeMode.NoResize};
+        using var cancelled=new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        waiting.Closed+=(_,_)=>cancelled.Cancel();waiting.Show();
+        bool completed=false;
+        try
+        {
+            DateTimeOffset requestedAt=DateTimeOffset.UtcNow.AddSeconds(-30);
+            BluetoothRestartResult? result=null;
+            while(result==null)
+            {
+                cancelled.Token.ThrowIfCancellationRequested();
+                try{result=BluetoothAdapterRestart.ReadResult(request.Operation,request.Target,requestedAt);}catch(System.IO.IOException){}catch(System.Text.Json.JsonException){}
+                if(result==null)await System.Threading.Tasks.Task.Delay(400,cancelled.Token);
+            }
+            if(result.Mode!="reinitialize")throw new InvalidOperationException("恢复操作类型不匹配。");
+            singleInstanceMutex=new Mutex(true,@"Global\Y700Switch2V60ViiperManager",out bool created);
+            ownsSingleInstanceMutex=created;
+            if(!created)
+            {
+                try{ownsSingleInstanceMutex=singleInstanceMutex.WaitOne(TimeSpan.FromSeconds(5));}
+                catch(AbandonedMutexException){ownsSingleInstanceMutex=true;}
+            }
+            if(!ownsSingleInstanceMutex)throw new InvalidOperationException("另一助手仍在运行，未叠加蓝牙连接。");
+            RecoveryLaunch=request;RecoveryResult=result;
+            var window=new MainWindow();MainWindow=window;window.Show();
+            completed=true;waiting.Close();
+        }
+        catch(Exception error)
+        {
+            Bootstrap.Write("ble_recovery_wait_failed operation="+request.Operation+" "+error);
+            if(error is not OperationCanceledException||waiting.IsVisible)
+                System.Windows.MessageBox.Show("恢复结果未完成核实："+(error is OperationCanceledException?"超过 120 秒未收到可核实的结果。":error.Message)+
+                    "\n请检查所选蓝牙是否已启用，再重新打开助手；不要连续重复操作。\n记录："+BluetoothAdapterRestart.ResultPath(request.Operation),"PRO2 蓝牙恢复");
+        }
+        finally{if(!completed){waiting.Close();Shutdown(1);}}
     }
 
     protected override void OnExit(ExitEventArgs e)

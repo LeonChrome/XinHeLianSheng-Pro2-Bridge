@@ -21,6 +21,7 @@ public sealed partial class Pro2BleInputSource
                     (d.Visible ? d.Title + "\n" + d.Advice + "\n" + d.Evidence : "当前阶段：" +
                         (connectionEvidence?.Stage ?? "尚未尝试") + " / " + (connectionEvidence?.Outcome ?? "none") +
                         "\n" + connectionEvidence?.ScanTrace + connectionEvidence?.CandidateTrace) +
+                    "\nWindows 待处理请求："+connectionRecovery.PendingDiagnostic+
                     "\n最近尝试：\n" + string.Join("\n", connectionAttemptHistory) +
                     "\n驱动版本和日期仅作环境信息；未从版本号推断蓝牙协议或宣称驱动过旧。\n";
             }
@@ -40,7 +41,7 @@ public sealed partial class Pro2BleInputSource
             e = e with { Outcome = cancelled ? "cancelled" : IsRunning ? "connected" : e.Outcome == "running" ? "operation_failed" : e.Outcome };
             connectionEvidence = e;
             if (e.Outcome == "connected" || cancelled) lastConnectionFailure = null;
-            else if (e.Outcome != "gatt_draining") lastConnectionFailure = e;
+            else if (e.Outcome is not ("gatt_draining" or "gatt_stalled")) lastConnectionFailure = e;
             string line = $"{e.StartedAt:HH:mm:ss} address={e.Address} stage={e.Stage} result={e.Outcome} detail={e.Error}";
             connectionAttemptHistory.Enqueue(line);
             while (connectionAttemptHistory.Count > 8) connectionAttemptHistory.Dequeue();

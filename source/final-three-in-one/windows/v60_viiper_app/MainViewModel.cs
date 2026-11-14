@@ -1496,6 +1496,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
 
         startupAutomationRan = true;
+        if(!previewOnly&&App.RecoveryLaunch is { } recovery&&App.RecoveryResult is { } recoveryResult)
+        {await CompleteBluetoothRecoveryAsync(recovery,recoveryResult);return;}
         if (!AutoReconnectOnStartupEnabled)
         {
             return;
@@ -1517,6 +1519,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task TryConnectPro2InputOnceAsync(CancellationToken cancellationToken)
     {
+        await hostResumeGate.WaitAsync(cancellationToken);
         long attemptStarted = Stopwatch.GetTimestamp();
         Status = "正在扫描并连接 Pro2 BLE；将依次验证 GATT、初始化命令和 live 输入。";
         InputStatus = "正在连接 Pro2 BLE...";
@@ -1525,6 +1528,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         try
         {
             Pro2ControllerSlot primarySlot = pro2Slots[0];
+            await hostResumeGate.WaitAsync(cancellationToken);
             IReadOnlySet<string> preferred = PrimaryPreferredAddresses(primarySlot);
             bool onlyPreferred = !string.IsNullOrWhiteSpace(manualReconnectAddress) || startupAutomationActive && preferred.Count > 0;
             if (manualReconnectTarget != null)
@@ -1793,6 +1797,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             while (!cancellationToken.IsCancellationRequested)
             {
                 await WaitWhileAutoSleepingAsync(pro2Slots[0], cancellationToken);
+                await hostResumeGate.WaitAsync(cancellationToken);
                 if (inputSource.TryConsumeDisconnectSignal(
                         out Pro2BleDisconnectSignal lowLevelDisconnect))
                 {
@@ -2063,6 +2068,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             while (!cancellationToken.IsCancellationRequested)
             {
                 await WaitWhileAutoSleepingAsync(slot, cancellationToken);
+                await hostResumeGate.WaitAsync(cancellationToken);
                 if (slot.InputSource.TryConsumeDisconnectSignal(
                         out Pro2BleDisconnectSignal lowLevelDisconnect))
                 {
@@ -2221,11 +2227,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         Pro2ControllerSlot slot,
         CancellationToken cancellationToken)
     {
+        await hostResumeGate.WaitAsync(cancellationToken);
         var progress = new Progress<string>(
             line => AppendLog("[PRO2_SLOT " + slot.Index + "] " + line));
         await bleOperationGate.WaitAsync(cancellationToken);
         try
         {
+            await hostResumeGate.WaitAsync(cancellationToken);
             var excluded = ConnectedPro2AddressesExcept(slot);
             AppendLog("[SLOT_ADDRESS_GUARD] slot=" + slot.Index + " excluded=" + string.Join(",", excluded) + " snapshot=inside_connection_gate");
             IReadOnlySet<string> preferred = slot.Index == 1 ? PrimaryPreferredAddresses(slot) : PreferredAddressSetForSlot(slot);

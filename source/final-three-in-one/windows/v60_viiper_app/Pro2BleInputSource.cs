@@ -786,6 +786,12 @@ public sealed partial class Pro2BleInputSource :
     }
 
     private readonly Pro2BleConnectionRecovery connectionRecovery = new();
+    private readonly object connectionAttemptCancellationGate=new();
+    private CancellationTokenSource? activeConnectionAttempt;
+    public void CancelConnectionAttemptForHostSuspend()
+    {
+        lock(connectionAttemptCancellationGate)activeConnectionAttempt?.Cancel();
+    }
 
     public async Task StartAsync(
         IProgress<string> progress,
@@ -803,6 +809,10 @@ public sealed partial class Pro2BleInputSource :
             return;
         }
 
+        CancellationToken callerToken=cancellationToken;
+        using var connectionAttempt=CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+        lock(connectionAttemptCancellationGate)activeConnectionAttempt=connectionAttempt;
+        cancellationToken=connectionAttempt.Token;
         long connectionAttemptStarted = Stopwatch.GetTimestamp();
         BleConnectionAttemptEvidence? previousFailure;
         lock (connectionEvidenceGate)
@@ -817,9 +827,9 @@ public sealed partial class Pro2BleInputSource :
         if (connectionRecovery.IsDraining)
         {
             ConnectionStage("GATT 等待释放", previousFailure?.Address);
-            RecordConnectionFailure("gatt_draining", "上一轮 Windows 蓝牙请求尚未返回");
-            Status = "正在等待上一轮 Windows 蓝牙连接请求结束，随后自动重试。";
-            progress.Report("[PRO2_BLE_RECOVERY] action=wait_for_previous_windows_request new_gatt_request=false");
+            RecordConnectionFailure(connectionRecovery.IsStalled?"gatt_stalled":"gatt_draining", connectionRecovery.PendingDiagnostic);
+            Status = connectionRecovery.IsStalled?"旧蓝牙请求长时间未释放，可在首页恢复蓝牙连接。":"正在等待上一轮 Windows 蓝牙连接请求结束，随后自动重试。";
+            progress.Report("[PRO2_BLE_RECOVERY] action=wait_for_previous_windows_request "+connectionRecovery.PendingDiagnostic);
             return;
         }
         win11BeforeParameters = null;
@@ -1051,6 +1061,12 @@ public sealed partial class Pro2BleInputSource :
         progress.Report("[PRO2_CONNECT_TIMING] stage=complete result=no_live_candidate total_ms=" +
             Stopwatch.GetElapsedTime(connectionAttemptStarted).TotalMilliseconds.ToString("F0"));
         }
+        catch (OperationCanceledException) when (connectionAttempt.IsCancellationRequested&&!callerToken.IsCancellationRequested)
+        {
+            await CloseCurrentAsync("系统待机：释放本轮连接对象，保留未完成的 Windows 请求追踪。");
+            Status="Windows 正在待机，恢复后继续连接。";
+            progress.Report("[PRO2_BLE_RECOVERY] action=host_suspend attempt_cancelled=true native_request_cancelled=false "+connectionRecovery.PendingDiagnostic);
+        }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
@@ -1060,6 +1076,7 @@ public sealed partial class Pro2BleInputSource :
         }
         finally
         {
+            lock(connectionAttemptCancellationGate)if(ReferenceEquals(activeConnectionAttempt,connectionAttempt))activeConnectionAttempt=null;
             FinishConnectionEvidence(cancellationToken.IsCancellationRequested, progress);
             progress.Report("[PRO2_CONNECT_TIMING] stage=finished result=" + (IsRunning ? "live" : "not_live") +
                 " cancelled=" + cancellationToken.IsCancellationRequested +
@@ -1291,7 +1308,7 @@ public sealed partial class Pro2BleInputSource :
         SetConnectionPhase(Pro2ConnectionPhase.Connecting);
         BluetoothLEDevice? opened = await connectionRecovery.AwaitAsync(
             BluetoothLEDevice.FromBluetoothAddressAsync(candidate.Address, candidate.AddressType).AsTask(),
-            TimeSpan.FromSeconds(10), result => result?.Dispose(), cancellationToken);
+            TimeSpan.FromSeconds(10), result => result?.Dispose(), cancellationToken,"open_device");
         if (opened == null)
         {
             RecordConnectionFailure("device_null", "FromBluetoothAddressAsync=null");
@@ -1325,7 +1342,7 @@ public sealed partial class Pro2BleInputSource :
         GattDeviceServicesResult services = await connectionRecovery.AwaitAsync(
             opened.GetGattServicesAsync(BluetoothCacheMode.Uncached).AsTask(),
             TimeSpan.FromSeconds(candidate.IsKnownAddressProbe || serviceFirst ? 10 : 20),
-            DisposeLateServices, cancellationToken);
+            DisposeLateServices, cancellationToken,"service_discovery");
         if (services.Status != GattCommunicationStatus.Success)
         {
             RecordConnectionFailure(services.Status.ToString(), "ATT=" + (services.ProtocolError?.ToString("X2") ?? "none"));
@@ -1676,7 +1693,7 @@ public sealed partial class Pro2BleInputSource :
         {
             GattCharacteristicsResult chars = await connectionRecovery.AwaitAsync(
                 service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached).AsTask(),
-                TimeSpan.FromSeconds(10), null, cancellationToken);
+                TimeSpan.FromSeconds(10), null, cancellationToken,"characteristic_discovery");
             if (chars.Status != GattCommunicationStatus.Success)
             {
                 serviceSummaries.Add(service.Uuid + ":status=" + chars.Status);
@@ -2427,7 +2444,7 @@ public sealed partial class Pro2BleInputSource :
             status = await connectionRecovery.AwaitAsync(
                 characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
                     GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask(),
-                TimeSpan.FromSeconds(10), null, cancellationToken);
+                TimeSpan.FromSeconds(10), null, cancellationToken,"subscribe_"+label);
             progress.Report("[PRO2_BLE] subscribe " + label +
                             " attempt=" + attempt +
                             " status=" + status +
@@ -2979,7 +2996,7 @@ public sealed partial class Pro2BleInputSource :
         {
             GattSession? session = await connectionRecovery.AwaitAsync(
                 GattSession.FromDeviceIdAsync(opened.BluetoothDeviceId).AsTask(),
-                TimeSpan.FromSeconds(6), result => result?.Dispose(), cancellationToken);
+                TimeSpan.FromSeconds(6), result => result?.Dispose(), cancellationToken,"open_session");
             if (session == null)
             {
                 progress.Report("[PRO2_BLE_LINK] GATT session observation unavailable: null session.");

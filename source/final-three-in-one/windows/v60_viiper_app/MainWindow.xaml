@@ -204,6 +204,8 @@
                             <StackPanel>
                                 <TextBlock Text="{Binding ConnectionWarningTitle}" Foreground="#765C24" FontSize="13" FontWeight="SemiBold"/>
                                 <TextBlock Text="{Binding ConnectionWarningAdvice}" Foreground="#806C43" FontSize="12" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                                <Button x:Name="RecoverBluetoothConnectionButton" Content="恢复蓝牙连接…" Click="RecoverBluetooth_Click" HorizontalAlignment="Left" Padding="10,5" Margin="0,7,0,0"
+                                        IsEnabled="{Binding CanOperate}" Visibility="{Binding CanOfferBluetoothRecovery,Converter={StaticResource BoolVisibility}}"/>
                                 <Expander Header="连接依据与系统信息" FontSize="12" Foreground="#806C43" Margin="0,6,0,0">
                                     <StackPanel>
                                         <TextBox Text="{Binding ConnectionWarningEvidence, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"

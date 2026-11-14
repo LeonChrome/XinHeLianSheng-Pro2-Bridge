@@ -16,10 +16,17 @@ public sealed record Pro2WakeAdvertisement(Pro2ManualCandidate Candidate, long O
 public sealed class Pro2BleConnectionRecovery
 {
     private Task? pendingCleanup;
+    private long pendingSince;
+    private string pendingOperation="";
+    private readonly Func<long> now;
+    public Pro2BleConnectionRecovery(Func<long>? timestamp=null)=>now=timestamp??Stopwatch.GetTimestamp;
     public bool IsDraining => pendingCleanup is { IsCompleted: false };
+    public TimeSpan PendingAge=>IsDraining?TimeSpan.FromSeconds(Math.Max(0,now()-Interlocked.Read(ref pendingSince))/(double)Stopwatch.Frequency):TimeSpan.Zero;
+    public bool IsStalled=>IsDraining&&PendingAge>=TimeSpan.FromSeconds(30);
+    public string PendingDiagnostic=>IsDraining?"operation="+pendingOperation+" pending_seconds="+PendingAge.TotalSeconds.ToString("F1",System.Globalization.CultureInfo.InvariantCulture)+" native_request_cancelled=false new_gatt_request=false":"pending=false";
 
     public async Task<T> AwaitAsync<T>(Task<T> operation, TimeSpan deadline,
-        Action<T>? releaseLateResult, CancellationToken token)
+        Action<T>? releaseLateResult, CancellationToken token,string operationName="gatt")
     {
         try
         {
@@ -27,11 +34,13 @@ public sealed class Pro2BleConnectionRecovery
         }
         catch (TimeoutException)
         {
+            pendingOperation=operationName;Interlocked.Exchange(ref pendingSince,now());
             pendingCleanup = DrainAsync(operation, releaseLateResult);
             throw;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
+            pendingOperation=operationName;Interlocked.Exchange(ref pendingSince,now());
             pendingCleanup = DrainAsync(operation, releaseLateResult);
             throw;
         }

@@ -12,6 +12,33 @@ namespace Y700Switch2V60Viiper;
 
 public partial class MainWindow : Window
 {
+    private bool powerEventsSubscribed;
+    private void HostPowerModeChanged(object sender,Microsoft.Win32.PowerModeChangedEventArgs e)
+    {
+        if(e.Mode is not (Microsoft.Win32.PowerModes.Suspend or Microsoft.Win32.PowerModes.Resume)||Dispatcher.HasShutdownStarted)return;
+        _=Dispatcher.BeginInvoke(new Action(()=>
+        {
+            if(!shutdownInProgress&&DataContext is MainViewModel vm)vm.NotifyHostPowerMode(e.Mode==Microsoft.Win32.PowerModes.Suspend);
+        }));
+    }
+    private async void RecoverBluetooth_Click(object sender,RoutedEventArgs e)
+    {
+        if(DataContext is not MainViewModel vm||!vm.CanOperate)return;
+        var launch=await vm.PrepareBluetoothRecoveryAsync(targets=>
+        {
+            var dialog=new BluetoothRestartWindow(targets,reinitialize:true){Owner=this};
+            return dialog.ShowDialog()==true?dialog.SelectedTarget:null;
+        });
+        if(launch==null)return;
+        try
+        {
+            var start=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=true};
+            foreach(var arg in launch.Arguments)start.ArgumentList.Add(arg);
+            using var child=Process.Start(start)??throw new InvalidOperationException("恢复窗口没有启动。");
+            Close();
+        }
+        catch(Exception error){System.Windows.MessageBox.Show(this,"恢复窗口启动失败："+error.Message+"\n管理员进程等待旧助手退出，超时后不会操作蓝牙。","PRO2 蓝牙恢复");}
+    }
     private async void RepairVirtualOutput_Click(object sender,RoutedEventArgs e)
     {
         if(DataContext is not MainViewModel vm||!vm.CanRepairVirtualOutput)return;
@@ -121,6 +148,11 @@ public partial class MainWindow : Window
         StateChanged += MainWindow_StateChanged;
         Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
+        if(!IsUiSmokeRun())
+        {
+            try{Microsoft.Win32.SystemEvents.PowerModeChanged+=HostPowerModeChanged;powerEventsSubscribed=true;}
+            catch(Exception error){Bootstrap.Write("optional_power_events_failed "+error.Message);}
+        }
         if (!IsUiSmokeRun() && !Bootstrap.SafeStartup)
         {
             try { CreateTrayIcon(); }
@@ -577,6 +609,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
+        if(powerEventsSubscribed){Microsoft.Win32.SystemEvents.PowerModeChanged-=HostPowerModeChanged;powerEventsSubscribed=false;}
         presentationTimer.Stop();
         if (DataContext is MainViewModel viewModel)
         {

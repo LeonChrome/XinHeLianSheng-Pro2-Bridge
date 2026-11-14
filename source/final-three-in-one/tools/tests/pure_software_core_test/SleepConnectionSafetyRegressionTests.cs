@@ -200,7 +200,7 @@ internal static class SleepConnectionSafetyRegressionTests
         Diagnosis(baseline with { Outcome = "Unreachable", Stage = "GATT 服务发现" }, "unreachable");
         Diagnosis(baseline with { Outcome = "channels_missing" }, "channels_missing");
         Diagnosis(baseline with { Outcome = "notify_timeout" }, "notify_timeout");
-        Diagnosis(baseline with { Outcome = "timeout" }, "operation_failed");
+        Diagnosis(baseline with { Outcome = "timeout" }, "timeout");
         foreach (string outcome in new[] { "running", "connected", "cancelled" })
             check(!BleConnectionDiagnosis.Evaluate(baseline with { Outcome = outcome }).Visible, "healthy or cancelled hidden " + outcome);
         string diagnosisText = BleConnectionDiagnosis.Evaluate(baseline with { Outcome = "Unreachable" }).Advice;

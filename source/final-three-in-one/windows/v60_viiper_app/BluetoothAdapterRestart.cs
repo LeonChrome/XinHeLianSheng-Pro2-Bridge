@@ -15,15 +15,18 @@ namespace Y700Switch2V60Viiper;
 
 public sealed record BluetoothRestartResult(string OperationId, string PnpId, string InterfaceId,
     DateTimeOffset StartedUtc, DateTimeOffset CompletedUtc, bool RestartAttempted, int? NativeExitCode,
-    bool PresentStarted, bool ParametersUnchanged, bool DriverUnchanged, string Message, string NativeOutput)
+    bool PresentStarted, bool ParametersUnchanged, bool DriverUnchanged, string Message, string NativeOutput,
+    string Mode="restart",int? DisableExitCode=null,bool DisabledConfirmed=false,bool EnableAttempted=false,string RecoveryError="")
 {
     public bool Verified => RestartAttempted && NativeExitCode.HasValue &&
-        BluetoothRestartPolicy.IsVerifiedSuccess(NativeExitCode.Value, PresentStarted, ParametersUnchanged, DriverUnchanged);
-    public bool RebootRequired => RestartAttempted && NativeExitCode == 3010;
+        BluetoothRestartPolicy.IsVerifiedSuccess(NativeExitCode.Value, PresentStarted, ParametersUnchanged, DriverUnchanged)&&
+        (Mode=="restart"||Mode=="reinitialize"&&DisableExitCode==0&&DisabledConfirmed&&EnableAttempted&&RecoveryError.Length==0);
+    public bool RebootRequired => RestartAttempted && (NativeExitCode == 3010||DisableExitCode==3010);
     public string Telemetry => "[BLUETOOTH_RESTART_RESULT] operation=" + OperationId + " pnp_id=\"" + PnpId +
         "\" attempted=" + RestartAttempted + " exit=" + NativeExitCode + " verified=" + Verified +
         " present_started=" + PresentStarted + " parameters_unchanged=" + ParametersUnchanged +
         " driver_unchanged=" + DriverUnchanged + " reboot_required=" + RebootRequired +
+        " mode="+Mode+" disable_exit="+DisableExitCode+" disable_confirmed="+DisabledConfirmed+" enable_attempted="+EnableAttempted+" recovery_error="+RecoveryError+
         " driver_replacement=false registry_writes=false pairing_delete=false automatic_reboot=false";
 }
 
@@ -42,6 +45,11 @@ public static class BluetoothAdapterRestart
         _ = BluetoothRestartPolicy.RestartArguments(target); _ = ResultPath(operation);
         return new[] { Command, "--operation-id", operation, "--adapter-pnp", target.PnpId, "--adapter-interface", target.InterfaceId };
     }
+    public static string[] ReinitializeArguments(BluetoothRestartTarget target,string operation,string parent)
+    {
+        if(!BluetoothRecoveryLaunch.IsParentToken(parent))throw new ArgumentException("无效的父进程标识。");
+        return HelperArguments(target,operation).Concat(new[]{"--mode","reinitialize","--wait-parent",parent}).ToArray();
+    }
     public static BluetoothRestartResult? ReadResult(string operation, BluetoothRestartTarget target, DateTimeOffset requestedAt)
     {
         string path = ResultPath(operation);
@@ -58,7 +66,8 @@ public static class BluetoothAdapterRestart
     public static async Task<int> ExecuteAsync(string[] args)
     {
         string operation = "", pnp = "", id = "";
-        if (args.Length != 7 || !IsCommand(args) || args[0] != Command || args[1] != "--operation-id" ||
+        bool reinitialize=args.Length==11&&args[7]=="--mode"&&args[8]=="reinitialize"&&args[9]=="--wait-parent"&&BluetoothRecoveryLaunch.IsParentToken(args[10]);
+        if ((args.Length != 7&&!reinitialize) || !IsCommand(args) || args[0] != Command || args[1] != "--operation-id" ||
             args[3] != "--adapter-pnp" || args[5] != "--adapter-interface") return 7;
         operation = args[2]; pnp = args[4]; id = args[6];
         string resultPath;
@@ -68,6 +77,7 @@ public static class BluetoothAdapterRestart
         bool attempted = false, present = false, parameterSame = false, driverSame = false;
         int? exit = null;
         string message = "", output = "";
+        BluetoothReinitializationResult? sequence=null;
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
@@ -81,10 +91,15 @@ public static class BluetoothAdapterRestart
             if (!owned) throw new InvalidOperationException("其他蓝牙重启操作正在进行。");
             try
             {
+                if(reinitialize)await WaitForParentExitAsync(args[10]);
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(80));
-                SystemBluetoothSnapshot snapshot = await SystemBluetoothDiagnostics.CaptureAsync(timeout.Token);
-                BluetoothRestartTarget? target = BluetoothRestartPolicy.Targets(snapshot).SingleOrDefault(t =>
-                    t.PnpId.Equals(pnp, StringComparison.OrdinalIgnoreCase) && t.InterfaceId.Equals(id, StringComparison.OrdinalIgnoreCase));
+                BluetoothRestartTarget? target;
+                if(reinitialize) target=new("蓝牙适配器",pnp,id,"","",false);
+                else
+                {
+                    SystemBluetoothSnapshot snapshot = await SystemBluetoothDiagnostics.CaptureAsync(timeout.Token);
+                    target=BluetoothRestartPolicy.Targets(snapshot).SingleOrDefault(t=>t.PnpId.Equals(pnp,StringComparison.OrdinalIgnoreCase)&&t.InterfaceId.Equals(id,StringComparison.OrdinalIgnoreCase));
+                }
                 if (target == null || !target.CanRestart || !PresentStarted(pnp))
                     throw new InvalidOperationException("所选适配器已拔出、不可用或身份不匹配；未重启其他设备。");
                 string parameters = ParameterSnapshot(), driver = DriverSnapshot(pnp);
@@ -95,6 +110,19 @@ public static class BluetoothAdapterRestart
                         throw new InvalidOperationException("目标不是蓝牙适配器设备；未执行重启。");
                 string backup = Path.ChangeExtension(resultPath, ".before.json");
                 WriteNew(backup, JsonSerializer.Serialize(new { target, parameters, driver, started }));
+                if(reinitialize)
+                {
+                    WriteNew(Path.ChangeExtension(resultPath,".restore.cmd"),RestoreCommand(target));
+                    attempted=true;
+                    sequence=await BluetoothReinitialization.RunAsync(
+                        async()=>{using var down=CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);down.CancelAfter(TimeSpan.FromSeconds(20));return await RunAdapterToolAsync(["/disable-device",pnp],line=>output+=line,down.Token);},
+                        async()=>{for(int i=0;i<20;i++){if(PresentDisabled(pnp))return true;await Task.Delay(100,timeout.Token);}return false;},
+                        async()=>{using var restore=new CancellationTokenSource(TimeSpan.FromSeconds(30));return await RunAdapterToolAsync(["/enable-device",pnp],line=>output+=line,restore.Token);},
+                        ()=>Task.Delay(1500,timeout.Token),timeout.Token);
+                    exit=sequence.EnableExit;
+                }
+                else
+                {
                 var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "pnputil.exe"))
                 { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
                     RedirectStandardOutput = true, RedirectStandardError = true };
@@ -110,7 +138,10 @@ public static class BluetoothAdapterRestart
                 }
                 exit = process.ExitCode;
                 output = (await stdout) + "\n" + (await stderr);
-                if (output.Length > 16000) output = output[..16000];
+                }
+                // Localized text may expand sixfold in JSON; keep the result
+                // readable under ReadResult's 64 KB limit as well.
+                if (output.Length > 6000) output = output[..6000];
                 for (int i = 0; i < 20; i++)
                 {
                     await Task.Delay(500, timeout.Token);
@@ -119,14 +150,19 @@ public static class BluetoothAdapterRestart
                 }
                 parameterSame = ParameterSnapshot() == parameters;
                 driverSame = DriverSnapshot(pnp) == driver;
-                message = BluetoothRestartPolicy.CompletionMessage(exit,
-                    BluetoothRestartPolicy.IsVerifiedSuccess(exit.Value, present, parameterSame, driverSame));
+                message = reinitialize
+                    ? sequence!.SequenceSucceeded&&present&&parameterSame&&driverSame ? "适配器已重新启用；手柄连接和真实频率仍需重新验收。"
+                        : sequence.NeedsReboot ? "Windows 仍要求重启；重新初始化未获完整确认，不会自动重启系统。"
+                        : "未确认适配器重新初始化成功；已尝试重新启用。"+sequence.Error
+                    : BluetoothRestartPolicy.CompletionMessage(exit,exit.HasValue&&BluetoothRestartPolicy.IsVerifiedSuccess(exit.Value,present,parameterSame,driverSame));
             }
             finally { gate.Release(); }
         }
         catch (Exception ex) { message = ex.Message; }
+        if(reinitialize&&File.Exists(Path.ChangeExtension(resultPath,".restore.cmd")))
+            message+="\n恢复启用脚本（管理员运行）："+Path.ChangeExtension(resultPath,".restore.cmd");
         var result = new BluetoothRestartResult(operation, pnp, id, started, DateTimeOffset.UtcNow,
-            attempted, exit, present, parameterSame, driverSame, message, output);
+            attempted, exit, present, parameterSame, driverSame, message, output,reinitialize?"reinitialize":"restart",sequence?.DisableExit,sequence?.DisabledConfirmed??false,sequence?.EnableAttempted??false,sequence?.Error??"");
         try { EnsureSafeResultLocation(resultPath); WriteNew(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true })); }
         catch { return 5; }
         return result.Verified ? 0 : result.RebootRequired ? 2 : 1;
@@ -149,6 +185,40 @@ public static class BluetoothAdapterRestart
     }
     public static bool PresentStarted(string pnp) => CM_Locate_DevNodeW(out uint node, pnp, 0) == 0 &&
         CM_Get_DevNode_Status(out uint status, out uint problem, node, 0) == 0 && problem == 0 && (status & 8) != 0;
+    private static bool PresentDisabled(string pnp)=>CM_Locate_DevNodeW(out uint node,pnp,0)==0&&
+        CM_Get_DevNode_Status(out uint status,out uint problem,node,0)==0&&problem==22&&(status&8)==0;
+    public static string RestoreCommand(BluetoothRestartTarget target)
+    {
+        _=BluetoothRestartPolicy.RestartArguments(target);
+        return "@echo off\r\nsetlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\n\"%SystemRoot%\\System32\\pnputil.exe\" /enable-device \""+
+            target.PnpId.Replace("%","%%")+"\"\r\npause\r\n";
+    }
+    private static async Task WaitForParentExitAsync(string identity)
+    {
+        var parts=identity.Split(':');int pid=int.Parse(parts[0]);long ticks=long.Parse(parts[1]);
+        Process parent;
+        try{parent=Process.GetProcessById(pid);}catch(ArgumentException){return;}
+        using(parent)
+        {
+            if(parent.Id==Environment.ProcessId||parent.StartTime.ToUniversalTime().Ticks!=ticks||
+                !string.Equals(parent.MainModule?.FileName,Environment.ProcessPath,StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("父进程身份不匹配，未操作蓝牙。");
+            using var wait=new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            await parent.WaitForExitAsync(wait.Token);
+        }
+    }
+    private static async Task<int> RunAdapterToolAsync(string[] args,Action<string> log,CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var info=new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,"pnputil.exe"))
+        {UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden,RedirectStandardOutput=true,RedirectStandardError=true};
+        foreach(var arg in args)info.ArgumentList.Add(arg);
+        using var child=Process.Start(info)??throw new IOException("设备工具未启动。");
+        var stdout=CaptureOutputAsync(child.StandardOutput.BaseStream);var stderr=CaptureOutputAsync(child.StandardError.BaseStream);
+        try{await child.WaitForExitAsync(token);}catch{try{child.Kill();}catch{}throw;}
+        log(string.Join(" ",args)+" exit="+child.ExitCode+"\n"+await stdout+"\n"+await stderr+"\n");
+        return child.ExitCode;
+    }
     private static void EnsureSafeResultLocation(string path)
     {
         string? parent = Path.GetDirectoryName(path);

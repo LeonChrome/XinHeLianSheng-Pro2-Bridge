@@ -13,6 +13,6 @@ public sealed partial class MainViewModel
     private void RefreshConnectionDiagnosis()
     {
         foreach (string name in new[] { nameof(HasConnectionWarning), nameof(ConnectionWarningTitle),
-            nameof(ConnectionWarningAdvice), nameof(ConnectionWarningEvidence) }) OnPropertyChanged(name);
+            nameof(ConnectionWarningAdvice), nameof(ConnectionWarningEvidence),nameof(CanOfferBluetoothRecovery) }) OnPropertyChanged(name);
     }
 }

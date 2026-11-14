@@ -14,8 +14,8 @@
     <Grid Margin="28">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel>
-            <TextBlock Text="重启蓝牙适配器" FontSize="25" FontWeight="SemiBold" Foreground="#214638"/>
-            <TextBlock Text="仅重启所选设备，不改蓝牙参数、驱动或配对。" Foreground="#667870" TextWrapping="Wrap" Margin="0,8,0,20"/>
+            <TextBlock x:Name="Heading" Text="重启蓝牙适配器" FontSize="25" FontWeight="SemiBold" Foreground="#214638"/>
+            <TextBlock x:Name="Description" Text="仅重启所选设备，不改蓝牙参数、驱动或配对。" Foreground="#667870" TextWrapping="Wrap" Margin="0,8,0,20"/>
         </StackPanel>
         <StackPanel Grid.Row="1">
             <TextBlock Text="选择适配器" Foreground="#214638" FontWeight="SemiBold" Margin="0,0,0,8"/>
@@ -31,8 +31,8 @@
         <Border Grid.Row="2" Background="#FFF6E8" BorderBrush="#E6D6B6" BorderThickness="1" CornerRadius="12" Padding="16" Margin="0,18,0,18" VerticalAlignment="Top">
             <StackPanel>
                 <TextBlock Text="蓝牙连接会暂时断开" FontWeight="SemiBold" Foreground="#79591F"/>
-                <TextBlock Text="将停止助手的手柄连接和游戏输出。所选适配器上的蓝牙耳机、鼠标、键盘等也会断开；请先保存游戏。" TextWrapping="Wrap" Foreground="#79591F" Margin="0,8,0,0"/>
-                <TextBlock Text="需要管理员授权。重启后请唤醒 Pro2 并重新连接；此操作不保证提高回报率。" TextWrapping="Wrap" Foreground="#79591F" Margin="0,8,0,0"/>
+                <TextBlock x:Name="Consequence" Text="将停止助手的手柄连接和游戏输出。所选适配器上的蓝牙耳机、鼠标、键盘等也会断开；请先保存游戏。" TextWrapping="Wrap" Foreground="#79591F" Margin="0,8,0,0"/>
+                <TextBlock x:Name="RecoveryHint" Text="需要管理员授权。重启后请唤醒 Pro2 并重新连接；此操作不保证提高回报率。" TextWrapping="Wrap" Foreground="#79591F" Margin="0,8,0,0"/>
             </StackPanel>
         </Border>
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">

@@ -149,6 +149,7 @@ internal static class Program
             SleepWakeRegressionTests.Run(Check);
             SleepConnectionSafetyRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             BluetoothRestartRegressionTests.Run(Check);
+            BluetoothStandbyRecoveryRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             CompatibleRateRegressionTests.Run(Check);
             BleRateStabilityRegressionTests.Run(Check);
             BleMeasuredTrialRegressionTests.Run(Check);
@@ -223,9 +224,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.2.1.0", "v3.2.1 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.2.2.0", "v3.2.2 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.2.1-virtual-configuration-repair", "v3.2.1 release metadata");
+            "3.2.2-standby-ble-recovery", "v3.2.2 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1007,6 +1008,7 @@ internal static class Program
         var vm = (MainViewModel)window.DataContext;
         UnifiedConnectionsRegressionTests.RunUi(window,vm,Check,()=>Pump(window),(dialog,name)=>Save(dialog,name));
         VirtualConfigurationRegressionTests.RunUi(window,vm,Check,()=>Pump(window),task=>AwaitUi(task,window),(dialog,name)=>Save(dialog,name));
+        BluetoothStandbyRecoveryRegressionTests.RunUi(window,vm,Check,()=>Pump(window),(dialog,name)=>Save(dialog,name));
         BleOptimizationUiRegressionTests.RunBindings(window, vm, Check);
         BleGeneralizedUiRegressionTests.RunBindings(window, vm, Check);
         Win10HomeUiRegressionTests.RunBindings(window, vm, Check, () => Pump(window));

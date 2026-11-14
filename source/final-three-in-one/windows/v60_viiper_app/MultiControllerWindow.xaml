@@ -26,7 +26,7 @@
                             <DockPanel><TextBlock Text="{Binding RateSummary}" DockPanel.Dock="Right" FontWeight="SemiBold" Foreground="#315847"/>
                                 <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold" DockPanel.Dock="Left"/>
                                 <TextBlock Text="{Binding ConnectedAddress}" Foreground="#667870" FontSize="11" Margin="12,0,12,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></DockPanel>
-                            <local:ControllerConnectionView Margin="0,10,0,8"/>
+                            <local:ControllerConnectionView Compact="True" Margin="0,10,0,8"/>
                             <WrapPanel Margin="0,6,0,4" IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <TextBlock Text="游戏输出" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                 <ComboBox ItemsSource="{Binding ModeOptions}" DisplayMemberPath="Label" SelectedValuePath="Mode"

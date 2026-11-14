@@ -7,28 +7,88 @@
             <Setter Property="TextWrapping" Value="Wrap"/>
             <Style.Triggers><DataTrigger Binding="{Binding Text, RelativeSource={RelativeSource Self}}" Value=""><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
         </Style>
+        <Style x:Key="SmallAction" TargetType="Button">
+            <Setter Property="Background" Value="#F6F8F7"/><Setter Property="BorderBrush" Value="#DDE7E1"/>
+            <Setter Property="Foreground" Value="#315B4B"/><Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+                <Border x:Name="ActionBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ActionBorder" Property="Background" Value="#EAF2ED"/></Trigger>
+                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ActionBorder" Property="BorderBrush" Value="#34745D"/></Trigger>
+                    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ActionBorder" Property="Opacity" Value=".4"/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+        <Style x:Key="ConnectionTile" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="AutomationProperties.Name" Value="{Binding Label}"/>
+            <Setter Property="ToolTip" Value="{Binding Label}"/>
+            <EventSetter Event="MouseEnter" Handler="CardInteractionChanged"/><EventSetter Event="MouseLeave" Handler="CardInteractionChanged"/>
+            <EventSetter Event="GotKeyboardFocus" Handler="CardFocusChanged"/><EventSetter Event="LostKeyboardFocus" Handler="CardFocusChanged"/>
+            <EventSetter Event="Unloaded" Handler="CardUnloaded"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+                <Border x:Name="Card" Background="White" BorderBrush="#E1E8E4" BorderThickness="1.5" CornerRadius="11" Padding="10,7,10,8">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <Rectangle x:Name="Artwork" HorizontalAlignment="Stretch" MaxWidth="132" IsHitTestVisible="False" RenderOptions.BitmapScalingMode="HighQuality">
+                            <Rectangle.Style><Style TargetType="Rectangle"><Setter Property="Height" Value="66"/>
+                                <Style.Triggers><DataTrigger Binding="{Binding Compact, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True"><Setter Property="Height" Value="44"/></DataTrigger></Style.Triggers>
+                            </Style></Rectangle.Style>
+                            <Rectangle.RenderTransform><TranslateTransform/></Rectangle.RenderTransform>
+                            <Rectangle.Fill><ImageBrush ImageSource="{Binding Artwork}" Viewbox="{Binding ArtworkViewbox}" Stretch="Uniform"/></Rectangle.Fill>
+                        </Rectangle>
+                        <Border x:Name="Transport" HorizontalAlignment="Left" VerticalAlignment="Top" Background="#F3F6F4" CornerRadius="6" Width="24" Height="24">
+                            <Path Data="{Binding TransportIcon}" Stroke="#61776D" StrokeThickness="1.4" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Stretch="Uniform" Width="11" Height="14"/>
+                        </Border>
+                        <Border x:Name="Chosen" HorizontalAlignment="Right" VerticalAlignment="Top" Background="#245840" CornerRadius="9" Width="18" Height="18" Opacity="0">
+                            <Path Data="M 1,5 L 4,8 L 10,1" Stroke="White" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="10" Height="8" Stretch="Uniform"/>
+                        </Border>
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
+                            <TextBlock Text="{Binding ModelName}" FontSize="13" FontWeight="SemiBold" Foreground="#213D31"/>
+                            <TextBlock Text="{Binding TransportName}" FontSize="11" Foreground="#6A7C73" Margin="7,2,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Card" Property="BorderBrush" Value="#9DBAA9"/></Trigger>
+                    <Trigger Property="IsSelected" Value="True">
+                        <Setter TargetName="Card" Property="BorderBrush" Value="#44816A"/>
+                        <Setter TargetName="Chosen" Property="Opacity" Value="1"/>
+                        <Setter TargetName="Transport" Property="Background" Value="#E4F0E9"/>
+                    </Trigger>
+                    <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Card" Property="BorderBrush" Value="#183D31"/></Trigger>
+                    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Card" Property="Opacity" Value=".46"/></Trigger>
+                    <DataTrigger Binding="{Binding Kind}" Value="Pro1Usb"><Setter Property="Margin" Value="0"/></DataTrigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
     </UserControl.Resources>
     <StackPanel IsEnabled="{Binding DataContext.CanOperate, RelativeSource={RelativeSource AncestorType=Window}}">
-        <WrapPanel IsEnabled="{Binding CanChangeConnection}">
-            <TextBlock Text="连接方式" VerticalAlignment="Center" Margin="0,0,10,6"/>
-            <ComboBox ItemsSource="{Binding InputOptions}" DisplayMemberPath="Label" SelectedValuePath="Kind"
-                      SelectedValue="{Binding SelectedInputKind}" Width="165" MinHeight="30" Margin="0,0,10,6"
-                      AutomationProperties.Name="实体手柄连接方式"/>
-            <Button Content="Windows 配对…" Click="Pairing_Click" Padding="8,4" Margin="0,0,0,6">
-                <Button.Style><Style TargetType="Button"><Setter Property="Visibility" Value="Collapsed"/>
-                    <Style.Triggers><DataTrigger Binding="{Binding SelectedInputKind}" Value="Pro1Bluetooth"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
-                </Style></Button.Style>
-            </Button>
-        </WrapPanel>
-        <WrapPanel Visibility="{Binding IsPhysicalInputSelected, Converter={StaticResource VisibleIf}}" IsEnabled="{Binding CanChangeConnection}">
-            <TextBlock Text="实体手柄" VerticalAlignment="Center" Margin="0,0,10,6"/>
+        <TextBlock Text="连接方式" FontSize="11" Foreground="#6A7C73" Margin="0,0,0,7"
+                   Visibility="{Binding ShowHeading, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource VisibleIf}}"/>
+        <ListBox x:Name="ConnectionChoices" ItemsSource="{Binding InputOptions}" SelectedValuePath="Kind"
+                 SelectedValue="{Binding SelectedInputKind, Mode=TwoWay}" IsEnabled="{Binding CanChangeConnection}"
+                 ItemContainerStyle="{StaticResource ConnectionTile}" SelectionChanged="ConnectionChoices_SelectionChanged"
+                 BorderThickness="0" Background="Transparent" Padding="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False"
+                 AutomationProperties.Name="实体手柄连接方式" KeyboardNavigation.TabNavigation="Once">
+            <ListBox.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="4"/></ItemsPanelTemplate></ListBox.ItemsPanel>
+        </ListBox>
+        <WrapPanel Visibility="{Binding IsPhysicalInputSelected, Converter={StaticResource VisibleIf}}" IsEnabled="{Binding CanChangeConnection}" Margin="0,9,0,0">
+            <TextBlock Text="实体手柄" FontSize="12" Foreground="#667870" VerticalAlignment="Center" Margin="0,0,10,5"/>
             <ComboBox ItemsSource="{Binding PhysicalDeviceChoices}" SelectedItem="{Binding SelectedPhysicalDevice}"
-                      Width="235" MinHeight="30" Margin="0,0,8,6" AutomationProperties.Name="本槽位实体手柄">
+                      Width="235" MinHeight="29" Padding="7,4" Margin="0,0,8,5" AutomationProperties.Name="本槽位实体手柄">
                 <ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding SelectionLabel}" ToolTip="{Binding PhysicalId}" TextTrimming="CharacterEllipsis"/></DataTemplate></ComboBox.ItemTemplate>
             </ComboBox>
-            <Button Content="刷新" Command="{Binding DataContext.RefreshControllerDevicesCommand, RelativeSource={RelativeSource AncestorType=Window}}" Padding="9,4" Margin="0,0,0,6"/>
+            <Button Content="刷新" Command="{Binding DataContext.RefreshControllerDevicesCommand, RelativeSource={RelativeSource AncestorType=Window}}" Style="{StaticResource SmallAction}" Margin="0,0,0,5"/>
+            <Button Content="Windows 配对…" Click="Pairing_Click" Style="{StaticResource SmallAction}" Margin="8,0,0,5"
+                    Visibility="{Binding IsPro1WirelessSelected, Converter={StaticResource VisibleIf}}"/>
         </WrapPanel>
-        <TextBlock Text="{Binding InputChoiceHint}" TextWrapping="Wrap" FontSize="11" Foreground="#667870"
+        <TextBlock Text="{Binding InputChoiceHint}" TextWrapping="Wrap" FontSize="11" Foreground="#667870" Margin="0,7,0,0"
                    Visibility="{Binding ShowHint, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource VisibleIf}}"/>
         <TextBlock Text="{Binding DeviceChoiceHint}" Style="{StaticResource OptionalText}" FontSize="11" Foreground="#80612D" Margin="0,2,0,0"/>
         <TextBlock Text="{Binding LastConnectionError}" Style="{StaticResource OptionalText}" FontSize="12" Foreground="#956329"/>

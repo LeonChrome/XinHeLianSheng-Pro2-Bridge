@@ -60,8 +60,8 @@
             <Setter Property="Padding" Value="18,20"/>
             <Setter Property="VerticalContentAlignment" Value="Top"/>
             <Style.Triggers>
-                <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Padding" Value="18,10"/></DataTrigger>
-                <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Padding" Value="18,10"/></DataTrigger>
+                <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Padding" Value="18,8"/></DataTrigger>
+                <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Padding" Value="18,8"/></DataTrigger>
             </Style.Triggers>
         </Style>
         <Style TargetType="TabItem">
@@ -128,29 +128,33 @@
             <TabItem Header="手柄" AutomationProperties.Name="手柄">
                 <Grid>
                     <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <ScrollViewer x:Name="HomeScrollViewer" Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer x:Name="HomeScrollViewer" Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" ScrollChanged="HomeScrollViewer_ScrollChanged">
                     <StackPanel Margin="0,0,4,0">
                         <Border>
-                            <Border.Style><Style TargetType="Border" BasedOn="{StaticResource Card}"><Style.Triggers>
-                                <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Padding" Value="16"/><Setter Property="Margin" Value="0,0,0,12"/></DataTrigger>
-                                <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Padding" Value="16"/><Setter Property="Margin" Value="0,0,0,12"/></DataTrigger>
-                            </Style.Triggers></Style></Border.Style>
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
-                                    <local:ControllerConnectionView x:Name="PrimaryConnectionView" DataContext="{Binding Pro2Slots[0]}" ShowHint="False" Margin="0,0,0,6"/>
-                                    <TextBlock x:Name="BleConnectionTitleText" Text="{Binding BleConnectionTitle}" FontSize="25" FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="BleConnectionHintText" Text="{Binding BleConnectionHint}" Foreground="{StaticResource Muted}" Margin="0,7,0,0" LineHeight="21"/>
-                                </StackPanel>
-                                <local:Pro2Illustration Grid.Column="1" Width="160" VerticalAlignment="Center">
-                                    <local:Pro2Illustration.Style><Style TargetType="local:Pro2Illustration"><Setter Property="Height" Value="112"/>
+                            <Border.Style><Style TargetType="Border" BasedOn="{StaticResource Card}">
+                                <Setter Property="Padding" Value="18"/><Setter Property="Margin" Value="0,0,0,14"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Padding" Value="10"/><Setter Property="Margin" Value="0,0,0,8"/></DataTrigger>
+                                    <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Padding" Value="10"/><Setter Property="Margin" Value="0,0,0,8"/></DataTrigger>
+                                </Style.Triggers>
+                            </Style></Border.Style>
+                            <StackPanel>
+                                <TextBlock x:Name="BleConnectionTitleText" Text="{Binding BleConnectionTitle}" FontSize="23" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="BleConnectionHintText" Text="{Binding BleConnectionHint}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" LineHeight="18">
+                                    <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                        <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                    </Style.Triggers></Style></TextBlock.Style>
+                                </TextBlock>
+                                <local:ControllerConnectionView x:Name="PrimaryConnectionView" DataContext="{Binding Pro2Slots[0]}" ShowHint="False" ShowHeading="False" Margin="0,8,0,0">
+                                    <local:ControllerConnectionView.Style><Style TargetType="local:ControllerConnectionView">
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Height" Value="64"/></DataTrigger>
-                                            <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Height" Value="64"/></DataTrigger>
+                                            <DataTrigger Binding="{Binding DataContext.HasLowRateWarning, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
+                                            <DataTrigger Binding="{Binding DataContext.ShowWin10BleHomePanel, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
                                         </Style.Triggers>
-                                    </Style></local:Pro2Illustration.Style>
-                                </local:Pro2Illustration>
-                            </Grid>
+                                    </Style></local:ControllerConnectionView.Style>
+                                </local:ControllerConnectionView>
+                            </StackPanel>
                         </Border>
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
@@ -248,7 +252,7 @@
                         </Grid>
                     </StackPanel>
                 </ScrollViewer>
-                        <StackPanel Grid.Row="1" Margin="0,14,0,0">
+                        <StackPanel Grid.Row="1" Margin="0,12,0,0">
                         <WrapPanel>
                             <Button Content="{Binding CompactConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding CompactCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
                             <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}" Visibility="{Binding PrimaryBleControlsVisible, Converter={StaticResource BoolVisibility}}"/>

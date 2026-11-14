@@ -39,9 +39,17 @@ internal static class UnifiedConnectionsRegressionTests
             var before=vm.Pro2Slots.Select(s=>s.InputConfiguration).ToArray();
             try
             {
-                var combo=Children<ComboBox>(controls[1]).Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="实体手柄连接方式");
+                var combo=Children<ListBox>(controls[1]).Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="实体手柄连接方式");
+                check(combo.Items.Count==4&&Children<ListBoxItem>(combo).Count()==4,"four keyboard-accessible connection image cards are generated");
+                check(ControllerInputConfiguration.Options.All(o=>o.Artwork.IsFrozen&&o.Artwork.Width>0),"embedded product images decode and share frozen bitmaps");
                 combo.SelectedValue=ControllerInputKind.Pro1Bluetooth;pump();
                 check(Children<Button>(controls[1]).Any(b=>b.Content?.ToString()=="Windows 配对…"&&b.IsVisible),"Pro1 wireless shows the Windows pairing action");
+                var tile=(ListBoxItem)combo.ItemContainerGenerator.ContainerFromItem(combo.SelectedItem);
+                var artwork=(System.Windows.Shapes.Rectangle)tile.Template.FindName("Artwork",tile);
+                controls[1].Visibility=Visibility.Hidden;pump();
+                check(!artwork.HasAnimatedProperties&&artwork.RenderTransform is System.Windows.Media.TranslateTransform {HasAnimatedProperties:false},
+                    "hiding a connection selector releases all motion clocks, including frozen template transforms");
+                controls[1].Visibility=Visibility.Visible;pump();
                 combo.SelectedValue=ControllerInputKind.Pro1Usb;pump();
                 check(vm.Pro2Slots[1].SelectedInputKind==ControllerInputKind.Pro1Usb&&vm.Pro2Slots[0].SelectedInputKind==before[0].Kind,
                     "connection selector changes only its own slot");
@@ -60,6 +68,10 @@ internal static class UnifiedConnectionsRegressionTests
                 }
                 finally{settings.LastConnectedPro2Addresses=priorAddresses;vm.Pro2Slots[1].Enabled=priorEnabled;}
                 save(panel,"ui-unified-mixed-inputs.png");
+                combo.SelectedValue=ControllerInputKind.Pro2Ble;pump();
+                panel.Width=640;pump();
+                check(controls.All(c=>c.ActualWidth<=panel.ActualWidth),"four connection cards stay within the narrow multi-controller window");
+                save(panel,"ui-connections-narrow.png");
             }
             finally{for(int i=0;i<4;i++)vm.Pro2Slots[i].LoadInputConfiguration(before[i]);}
         }

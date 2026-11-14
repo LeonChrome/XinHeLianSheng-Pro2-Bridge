@@ -6,7 +6,17 @@ using System.Linq;
 namespace Y700Switch2V60Viiper;
 
 public enum ControllerInputKind { Pro2Ble, Pro2Usb, Pro1Bluetooth, Pro1Usb }
-public sealed record ControllerInputOption(ControllerInputKind Kind, string Label);
+public sealed record ControllerInputOption(ControllerInputKind Kind, string Label)
+{
+    public bool IsWireless => Kind is ControllerInputKind.Pro2Ble or ControllerInputKind.Pro1Bluetooth;
+    public string ModelName => Kind is ControllerInputKind.Pro2Ble or ControllerInputKind.Pro2Usb ? "Pro2" : "Pro1";
+    public string TransportName => IsWireless ? "无线" : "USB 有线";
+    public System.Windows.Media.ImageSource Artwork => ControllerConnectionArtwork.For(Kind);
+    public System.Windows.Rect ArtworkViewbox => ModelName == "Pro2" ? new(0, .14, 1, .72) : new(.20, 0, .60, 1);
+    public string TransportIcon => IsWireless
+        ? "M 8,1 L 14,6 L 3,14 L 8,18 L 8,1 M 3,5 L 14,13 L 8,18"
+        : "M 6,1 L 6,5 M 12,1 L 12,5 M 4,5 L 14,5 L 14,9 C 14,12 12,14 9,14 C 6,14 4,12 4,9 Z M 9,14 L 9,18";
+}
 public sealed record ControllerInputConfiguration(ControllerInputKind Kind = ControllerInputKind.Pro2Ble, string PhysicalId = "")
 {
     public static readonly IReadOnlyList<ControllerInputOption> Options = new[]
@@ -68,6 +78,7 @@ public sealed partial class Pro2ControllerSlot
     public string SelectedPhysicalId => selectedPhysicalId;
     public ControllerInputConfiguration InputConfiguration => new(selectedInputKind,selectedPhysicalId);
     public bool IsPhysicalInputSelected => selectedInputKind!=ControllerInputKind.Pro2Ble;
+    public bool IsPro1WirelessSelected => selectedInputKind==ControllerInputKind.Pro1Bluetooth;
     public bool IsBleInputSelected => !IsPhysicalInputSelected;
     public bool CanOptimizeBleInput => IsBleInputSelected && PhysicalInput==null;
     public bool CanChangeConnection => PhysicalInput?.IsReadingNfc != true;
@@ -107,7 +118,7 @@ public sealed partial class Pro2ControllerSlot
     }
     public void RefreshConnectionChoice()
     {
-        foreach(string name in new[]{nameof(IsPhysicalInputSelected),nameof(IsBleInputSelected),nameof(CanOptimizeBleInput),nameof(CanChangeConnection),
+        foreach(string name in new[]{nameof(IsPhysicalInputSelected),nameof(IsPro1WirelessSelected),nameof(IsBleInputSelected),nameof(CanOptimizeBleInput),nameof(CanChangeConnection),
             nameof(InputChoiceLabel),nameof(InputChoiceHint),nameof(DeviceChoiceHint),nameof(InputChoicePending),nameof(InputConnectionSummary)}) OnPropertyChanged(name);
     }
 }

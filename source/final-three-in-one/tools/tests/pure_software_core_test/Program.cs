@@ -222,9 +222,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.1.1.0", "v3.1.1 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.2.0.0", "v3.2 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.1.1-auto-high-rate", "v3.1.1 release metadata");
+            "3.2-connection-cards", "v3.2 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1545,7 +1545,9 @@ internal static class Program
             s.ComputedHorizontalScrollBarVisibility != Visibility.Visible), "66Hz warning never introduces horizontal scroll");
         Save(window, "ui-home-66hz-entry.png");
         Check(Descendants<ScrollViewer>(tabs).Where(s => s.IsVisible).All(s =>
-            s.ComputedVerticalScrollBarVisibility != Visibility.Visible), "default home fits 66Hz notice and modes without scrolling");
+            s.ComputedVerticalScrollBarVisibility != Visibility.Visible), "default home fits 66Hz notice and modes without scrolling: " +
+            string.Join("; ", Descendants<ScrollViewer>(tabs).Where(s => s.IsVisible).Select(s =>
+                $"{s.Name}: extent={s.ExtentHeight:F1}, viewport={s.ViewportHeight:F1}, mode={s.VerticalScrollBarVisibility}, scroll={s.ComputedVerticalScrollBarVisibility}")));
         var sessionBefore = vm.Pro2Slots[0].Session;
         vm.Running = true; Rate(66.4, false);
         Check(vm.CompactConnectionTitle.Contains("可以游玩") && vm.CompactConnectionHint.Contains("不补帧"),

@@ -12,6 +12,23 @@ namespace Y700Switch2V60Viiper;
 
 public partial class MainWindow : Window
 {
+    private bool homeLayoutRefreshPending;
+    private void HomeScrollViewer_ScrollChanged(object sender,System.Windows.Controls.ScrollChangedEventArgs e)
+    {
+        // Compact card triggers can shrink content on the last of WPF's auto-bar
+        // measure passes. Re-measure once after that change to remove a stale bar.
+        if(homeLayoutRefreshPending||HomeScrollViewer==null||
+            HomeScrollViewer.VerticalScrollBarVisibility!=System.Windows.Controls.ScrollBarVisibility.Auto||
+            HomeScrollViewer.ComputedVerticalScrollBarVisibility!=Visibility.Visible||
+            e.ExtentHeight>e.ViewportHeight||
+            (e.ExtentHeightChange==0&&e.ViewportHeightChange==0)) return;
+        homeLayoutRefreshPending=true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded,new Action(()=>
+        {
+            homeLayoutRefreshPending=false;
+            if(HomeScrollViewer.IsVisible) HomeScrollViewer.InvalidateMeasure();
+        }));
+    }
     private PhysicalInputsWindow? physicalInputsWindow;
     private void PhysicalInputs_Click(object sender, RoutedEventArgs e)
     {

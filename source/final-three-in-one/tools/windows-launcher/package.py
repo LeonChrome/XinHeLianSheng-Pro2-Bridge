@@ -35,8 +35,8 @@ def stamp_exe(path, icon):
             put(3,i+1,ico[offset:offset+size])
             group+=struct.pack('<BBBBHHIH',width,height,palette,zero,planes,bpp,size,i+1)
         put(14,1,group)
-        fixed=struct.pack('<13I',0xFEEF04BD,0x10000,3<<16|1,1<<16,3<<16|1,1<<16,0x3f,0,0x40004,1,0,0,0)
-        pairs={'FileDescription':'PRO2 手柄助手','ProductName':'PRO2 手柄助手','FileVersion':'3.1.1.0','ProductVersion':'3.1.1','OriginalFilename':'PRO2ControllerAssistant-v3.1.1.exe'}
+        fixed=struct.pack('<13I',0xFEEF04BD,0x10000,3<<16|2,0,3<<16|2,0,0x3f,0,0x40004,1,0,0,0)
+        pairs={'FileDescription':'PRO2 手柄助手','ProductName':'PRO2 手柄助手','FileVersion':'3.2.0.0','ProductVersion':'3.2','OriginalFilename':'PRO2ControllerAssistant-v3.2.exe'}
         strings=b''.join(version_block(k,(v+'\0').encode('utf-16le'),text=True) for k,v in pairs.items())
         table=version_block('040904b0',children=strings)
         string_info=version_block('StringFileInfo',children=table)
@@ -59,6 +59,7 @@ def main():
         'Go-LICENSE.txt':args.go.parent.parent/'LICENSE',
         'VIIPER-LICENSE.txt':root.parent/'viiper'/'haptic-v0.8.0'/'LICENSE.txt',
         'USBIP-LICENSE.txt':root.parent/'usbip-win2'/'v0.9.7.7'/'LICENSE.txt',
+        'Controller-product-images-SOURCES.txt':root.parent.parent/'windows'/'v60_viiper_app'/'Assets'/'Controller-product-images.SOURCES.md',
     }
     nuget=Path(os.environ.get('NUGET_PACKAGES',str(Path.home()/'.nuget'/'packages')))
     runtime_config=json.loads((publish/'PRO2ControllerAssistant.runtimeconfig.json').read_text('utf-8'))

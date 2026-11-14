@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace Y700Switch2V60Viiper;
 
-public sealed record VirtualPnpDevice(int Port, string InstanceId, uint Problem, bool Started, bool InputReady, string Service);
+public sealed record VirtualPnpDevice(int Port, string InstanceId, uint Problem, bool Started, bool InputReady, string Service, string ConfigurationDiagnostic = "");
 public sealed record VirtualPnpSnapshot(bool Readable, IReadOnlyList<VirtualPnpDevice> Devices, string Error);
 
 // Read-only Config Manager metadata. No device opens, driver changes or GATT I/O.
@@ -31,7 +31,8 @@ public static class WindowsVirtualDeviceProbe
                 bool running = statusRead && (status & Started) != 0 && (status & HasProblem) == 0 && problem == 0;
                 string service = Property(node, 5);
                 bool input = running && InputReady(node, 0);
-                result.Add(new(port, id, statusRead ? problem : uint.MaxValue, running, input, service));
+                result.Add(new(port, id, statusRead ? problem : uint.MaxValue, running, input, service,
+                    statusRead && problem==19 ? VirtualDeviceConfigurationDiagnosis.Capture(id) : ""));
             }
             return new(true, result, "");
         }

@@ -36,6 +36,8 @@ public sealed partial class Pro2ControllerSlot : INotifyPropertyChanged
     public int Index { get; }
     public string Name { get; }
     public bool CanRemove => Index != 1;
+    public bool NeedsConfigurationRepair=>Session?.OutputHealth is {Problem:19,InstanceId.Length:>0};
+    public bool CanRepairConfiguration=>NeedsConfigurationRepair&&Session?.ConfigurationRepairNeedsReboot!=true;
     public IReadOnlyList<Pro2SlotModeOption> ModeOptions => Pro2SlotModes.Options;
     public ViiperVirtualMode SelectedMode
     {
@@ -233,6 +235,8 @@ public sealed partial class Pro2ControllerSlot : INotifyPropertyChanged
         OnPropertyChanged(nameof(OptimizationSummary));
         OnPropertyChanged(nameof(DisplayStatus));
         OnPropertyChanged(nameof(DiagnosticSummary));
+        OnPropertyChanged(nameof(NeedsConfigurationRepair));
+        OnPropertyChanged(nameof(CanRepairConfiguration));
         RefreshConnectionChoice();
     }
 

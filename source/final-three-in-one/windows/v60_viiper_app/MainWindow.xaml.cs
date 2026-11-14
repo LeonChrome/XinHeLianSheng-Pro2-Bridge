@@ -12,6 +12,13 @@ namespace Y700Switch2V60Viiper;
 
 public partial class MainWindow : Window
 {
+    private async void RepairVirtualOutput_Click(object sender,RoutedEventArgs e)
+    {
+        if(DataContext is not MainViewModel vm||!vm.CanRepairVirtualOutput)return;
+        if(System.Windows.MessageBox.Show(this,"备份配置后，只重建当前报错的虚拟 USB 手柄，再检查输入接口。\n保留实体连接、其他手柄、驱动包和类筛选器。需要管理员授权。\n若故障来自共享筛选驱动，重建可能仍失败，诊断会列出配置线索。",
+            "修复当前虚拟手柄",MessageBoxButton.OKCancel,MessageBoxImage.Information,MessageBoxResult.Cancel)==MessageBoxResult.OK)
+            await vm.RepairVirtualOutputAsync();
+    }
     private bool homeLayoutRefreshPending;
     private void HomeScrollViewer_ScrollChanged(object sender,System.Windows.Controls.ScrollChangedEventArgs e)
     {

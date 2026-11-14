@@ -62,6 +62,7 @@
             <Style.Triggers>
                 <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Padding" Value="18,8"/></DataTrigger>
                 <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Padding" Value="18,8"/></DataTrigger>
+                <DataTrigger Binding="{Binding HasVirtualOutputWarning}" Value="True"><Setter Property="Padding" Value="18,8"/></DataTrigger>
             </Style.Triggers>
         </Style>
         <Style TargetType="TabItem">
@@ -136,6 +137,7 @@
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Padding" Value="10"/><Setter Property="Margin" Value="0,0,0,8"/></DataTrigger>
                                     <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Padding" Value="10"/><Setter Property="Margin" Value="0,0,0,8"/></DataTrigger>
+                                    <DataTrigger Binding="{Binding HasVirtualOutputWarning}" Value="True"><Setter Property="Padding" Value="10"/><Setter Property="Margin" Value="0,0,0,8"/></DataTrigger>
                                 </Style.Triggers>
                             </Style></Border.Style>
                             <StackPanel>
@@ -144,6 +146,7 @@
                                     <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
                                         <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
                                         <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                        <DataTrigger Binding="{Binding HasVirtualOutputWarning}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
                                     </Style.Triggers></Style></TextBlock.Style>
                                 </TextBlock>
                                 <local:ControllerConnectionView x:Name="PrimaryConnectionView" DataContext="{Binding Pro2Slots[0]}" ShowHint="False" ShowHeading="False" Margin="0,8,0,0">
@@ -151,6 +154,7 @@
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding DataContext.HasLowRateWarning, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
                                             <DataTrigger Binding="{Binding DataContext.ShowWin10BleHomePanel, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
+                                            <DataTrigger Binding="{Binding DataContext.HasVirtualOutputWarning, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
                                         </Style.Triggers>
                                     </Style></local:ControllerConnectionView.Style>
                                 </local:ControllerConnectionView>
@@ -188,6 +192,11 @@
                             <StackPanel>
                                 <TextBlock Text="{Binding VirtualOutputSummary}" Foreground="#765C24" FontWeight="SemiBold"/>
                                 <TextBlock Text="{Binding VirtualOutputDetail}" Foreground="#806C43" TextWrapping="Wrap" FontSize="12" Margin="0,5,0,0"/>
+                                <Button Content="修复虚拟手柄…" Click="RepairVirtualOutput_Click" HorizontalAlignment="Left" Padding="12,6" Margin="0,8,0,0"
+                                        IsEnabled="{Binding CanRepairVirtualOutput}" Visibility="{Binding ShowVirtualOutputRepair,Converter={StaticResource BoolVisibility}}"/>
+                                <Expander Header="配置诊断与修复记录" Margin="0,6,0,0" FontSize="12" Visibility="{Binding ShowVirtualOutputRepair,Converter={StaticResource BoolVisibility}}">
+                                    <TextBox Text="{Binding VirtualOutputConfigurationEvidence,Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="170" VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="Transparent"/>
+                                </Expander>
                             </StackPanel>
                         </Border>
                         <Border x:Name="ConnectionFailureNotice" Visibility="{Binding HasConnectionWarning, Converter={StaticResource BoolVisibility}}"

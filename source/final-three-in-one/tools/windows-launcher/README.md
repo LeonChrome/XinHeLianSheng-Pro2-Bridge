@@ -6,7 +6,7 @@
 
 ```powershell
 dotnet publish ../../windows/v60_viiper_app/Y700Switch2V60Viiper.csproj -c Release -r win-x64 --self-contained true -p:PureSoftwareRelease=true -p:PublishSingleFile=false -p:CompatibilityRendering=true -p:DebugType=None -o artifacts/runtime
-python package.py artifacts/runtime artifacts/PRO2ControllerAssistant-v3.2-win-x64.exe --go (Get-Command go).Source
+python package.py artifacts/runtime artifacts/PRO2ControllerAssistant-v3.2.1-win-x64.exe --go (Get-Command go).Source
 ```
 
 构建时从 Go 安装目录、NuGet 运行库缓存和项目中收集对应许可证，生成 ZIP 和逐文件哈希清单，运行启动器回归后编译 Windows GUI EXE，写入应用图标与版本资源。生成的载荷与 EXE 不提交 Git。

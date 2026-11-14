@@ -60,7 +60,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-	log.Printf("native_entry launcher_version=3.2 system_writes=false")
+	log.Printf("native_entry launcher_version=3.2.1 system_writes=false")
 	var files []payloadFile
 	if err = json.Unmarshal(fileManifest, &files); err != nil {
 		showError("内置运行文件清单无效。")
@@ -68,7 +68,7 @@ func main() {
 	}
 	digest := sha256.Sum256(payload)
 	stamp := hex.EncodeToString(digest[:8])
-	cacheBase := filepath.Join(root, "PRO2WirelessReceiverControlBoard", "app", "3.2-"+stamp)
+	cacheBase := filepath.Join(root, "PRO2WirelessReceiverControlBoard", "app", "3.2.1-"+stamp)
 	runtime, err := prepareRuntime(cacheBase, files)
 	if err != nil {
 		log.Printf("prepare_error=%v", err)

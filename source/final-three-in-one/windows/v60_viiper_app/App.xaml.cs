@@ -19,6 +19,13 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        if(VirtualDeviceConfigurationRepair.IsCommand(e.Args))
+        {
+            base.OnStartup(e);
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            _=RunVirtualRepairHelperAsync(e.Args);
+            return; // No manager mutex, BLE discovery or stale-process cleanup.
+        }
         if (GameGlyphPatchCommand.IsCommand(e.Args))
         {
             base.OnStartup(e);
@@ -164,6 +171,14 @@ public partial class App : System.Windows.Application
         catch { exitCode = 5; }
         Shutdown(exitCode);
         Environment.Exit(exitCode);
+    }
+
+    private async System.Threading.Tasks.Task RunVirtualRepairHelperAsync(string[] args)
+    {
+        int exit;
+        try{exit=await VirtualDeviceConfigurationRepair.ExecuteAsync(args);}
+        catch{exit=5;}
+        Shutdown(exit);Environment.Exit(exit);
     }
 
     protected override void OnExit(ExitEventArgs e)

@@ -8,7 +8,7 @@ public sealed partial class MainViewModel
     private Pro2RateEvidence? lowRateEvidenceSnapshot;
     private string lastLowRateLogKey = "none";
     public bool HasLowRateWarning => PrimaryPhysical == null && lowRateDiagnosis.Visible;
-    public string LowRateTitle => lowRateDiagnosis.Title;
+    public string LowRateTitle => HasVirtualOutputWarning ? "蓝牙输入速率提示 · 虚拟输出尚未就绪" : lowRateDiagnosis.Title;
     public string LowRateSummary => lowRateDiagnosis.Summary;
     public string LowRateAdvice => lowRateDiagnosis.Advice;
     public string LowRateEvidence => lowRateDiagnosis.Evidence;

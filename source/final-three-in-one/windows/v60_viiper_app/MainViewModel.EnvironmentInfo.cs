@@ -18,7 +18,7 @@ public sealed partial class MainViewModel
     private string win10ConfigurationAttemptText = "";
     private string deviceEventEvidence = "相关系统设备事件：尚未读取。";
     private string VirtualOutputDiagnosticText => "虚拟手柄状态（缓存，只读）\n" +
-        string.Join("\n", pro2Slots.Where(s => s.Session != null).Select(s => s.Name + " · " + s.Session!.OutputHealth.Summary + " · " + s.Session.OutputHealth.Detail + " · 恢复次数 " + s.Session.OutputHealth.Repairs)) +
+        string.Join("\n", pro2Slots.Where(s => s.Session != null).Select(s => s.Name + " · " + s.Session!.OutputHealth.Summary + " · " + s.Session.OutputHealth.Detail + " · 恢复次数 " + s.Session.OutputHealth.Repairs+"\n"+s.Session.ConfigurationRepairDiagnostic)) +
         (session == null ? "" : "\n主会话 · " + session.OutputHealth.Summary + " · " + session.OutputHealth.Detail) + "\n";
 
     public bool EnvironmentInfoBusy => environmentInfoBusy;

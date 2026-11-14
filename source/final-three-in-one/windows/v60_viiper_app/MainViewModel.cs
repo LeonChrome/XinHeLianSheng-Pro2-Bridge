@@ -318,6 +318,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanStart));
             OnPropertyChanged(nameof(CanStop));
             OnPropertyChanged(nameof(CanOperate));
+            OnPropertyChanged(nameof(CanRepairVirtualOutput));
             OnPropertyChanged(nameof(CanManageRuntime));
             OnPropertyChanged(nameof(CanManualBleControl));
             OnPropertyChanged(nameof(CanTryWin11Compatibility));

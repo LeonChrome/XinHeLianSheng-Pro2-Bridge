@@ -118,22 +118,34 @@ public sealed partial class MainViewModel
     private ViiperBridgeSession? PrimaryOutputSession => session ?? pro2Slots[0].Session;
     public bool HasVirtualOutputWarning => PrimaryOutputSession?.OutputHealth is { State: not VirtualOutputState.Ready and not VirtualOutputState.Stopped };
     public string VirtualOutputSummary => PrimaryOutputSession?.OutputHealth.Summary ?? "";
-    public string VirtualOutputDetail => PrimaryOutputSession?.OutputHealth.Detail ?? "";
+    public string VirtualOutputDetail => ShowVirtualOutputRepair ? FirstLine(PrimaryOutputSession?.OutputHealth.Detail??"") : PrimaryOutputSession?.OutputHealth.Detail ?? "";
+    public string VirtualOutputConfigurationEvidence => (PrimaryOutputSession?.OutputHealth.Detail??"")+"\n"+(PrimaryOutputSession?.ConfigurationRepairDiagnostic??"");
+    public bool CanRepairVirtualOutput => CanOperate&&PrimaryOutputSession?.ConfigurationRepairNeedsReboot!=true&&PrimaryOutputSession?.OutputHealth is {Problem:19,InstanceId.Length:>0};
+    public bool ShowVirtualOutputRepair => PrimaryOutputSession?.OutputHealth is {Problem:19,InstanceId.Length:>0};
+    private string VirtualOutputStateText=>ShowVirtualOutputRepair?"虚拟配置异常":"虚拟输出待就绪";
+    public Task RepairVirtualOutputAsync(Pro2ControllerSlot? slot=null)=>RunExclusiveAsync("修复当前虚拟手柄",async token=>
+    {
+        if(previewOnly){Status="界面预览：未修复系统设备。";return;}
+        var target=(slot==null?PrimaryOutputSession:slot.Session)??throw new InvalidOperationException("没有正在运行的虚拟输出。");
+        await target.RepairConfigurationAsync(token);
+        Status=target.OutputHealth.Summary;
+        RefreshCompactTelemetry();
+    });
     private Pro2ConnectionPresentation ConnectionPresentation =>
         PrimaryPhysical is { } physical
             ? physical.IsRunning && HasVirtualOutputWarning
-                ? new("虚拟输出待就绪", VirtualOutputSummary, "实体输入保持连接。" + VirtualOutputDetail)
+                ? new(VirtualOutputStateText, VirtualOutputSummary, "实体输入保持连接。" + VirtualOutputDetail)
                 : new(physical.IsRunning ? "已连接" : "输入离线", physical.IsRunning ? "手柄已连接 · " + physical.Device.Kind : "实体输入已断开 · " + physical.Device.Kind,
                     physical.IsRunning ? "按实体 HID 输入转发；USB 与传统蓝牙不使用 Pro2 BLE 参数。" : "点击重新连接，保留之前的实体输入方式。")
             : IsPrimarySleeping && !inputSource.IsTransportConnected
             ? new("已休眠", "手柄已休眠，按任意键唤醒", "闲置达到设定时间后已让手柄关灯省电；按手柄任意键会自动重连，虚拟手柄保持在线。")
             : inputSource.IsTransportConnected && HasVirtualOutputWarning
-            ? new("虚拟输出待就绪", VirtualOutputSummary, "实体蓝牙保持连接。" + VirtualOutputDetail)
+            ? new(VirtualOutputStateText, VirtualOutputSummary, "实体蓝牙保持连接。" + VirtualOutputDetail)
             : Pro2ConnectionPresentation.Create(inputSource.ConnectionPhase,
             inputSource.IsTransportConnected, Running, Busy, AutoReconnectEnabled, inputSource.IsGameplayReady);
     public string CompactConnectionTitle => ConnectionPresentation.Title;
     public string CompactConnectionHint => ConnectionPresentation.Hint;
-    public string CompactConnectText => pro2Slots[0].InputChoicePending ? "连接所选手柄" : PrimaryPhysical is { } physical ? !physical.IsRunning ? "重新连接手柄" : pro2Slots[0].VirtualDeviceRunning ? "游戏输出已启动" : "进入游戏" : inputSource.ConnectionPhase == Pro2ConnectionPhase.Scanning ? "正在搜索…" :
+    public string CompactConnectText => pro2Slots[0].InputChoicePending ? "连接所选手柄" : ShowVirtualOutputRepair ? "虚拟输出待修复" : PrimaryPhysical is { } physical ? !physical.IsRunning ? "重新连接手柄" : pro2Slots[0].VirtualDeviceRunning ? "游戏输出已启动" : "进入游戏" : inputSource.ConnectionPhase == Pro2ConnectionPhase.Scanning ? "正在搜索…" :
         inputSource.ConnectionPhase == Pro2ConnectionPhase.Connecting ? "正在连接…" :
         inputSource.ConnectionPhase == Pro2ConnectionPhase.Initializing ? "正在初始化…" :
         inputSource.IsTransportConnected && inputSource.ConnectionPhase == Pro2ConnectionPhase.Measuring ? "正在测速…" :
@@ -211,7 +223,7 @@ public sealed partial class MainViewModel
         RefreshConnectionDiagnosis();
         QueueLowRateAutomaticOptimization();
         foreach (string property in new[] { nameof(CompactPs5Selected),
-                     nameof(HasVirtualOutputWarning), nameof(VirtualOutputSummary), nameof(VirtualOutputDetail),
+                     nameof(HasVirtualOutputWarning), nameof(VirtualOutputSummary), nameof(VirtualOutputDetail), nameof(CanRepairVirtualOutput),nameof(ShowVirtualOutputRepair),nameof(VirtualOutputConfigurationEvidence),
                      nameof(BleStabilitySummary), nameof(ShowWin11CompatibilityAction), nameof(CanTryWin11Compatibility),
                      nameof(PrimaryInputLabel), nameof(CompactConnectionTitle), nameof(CompactConnectionHint),
                      nameof(CalibrationStatusText), nameof(CanCalibrateSelectedInput),

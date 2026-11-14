@@ -64,6 +64,7 @@ internal static class Program
             }
             StartupRenderingRegressionTests.Run(Check);
             V28RegressionTests.Run(Check);
+            VirtualConfigurationRegressionTests.Run(Check);
             V29RegressionTests.Run(Check, output);
             PhysicalInputRegressionTests.RunAsync(Check, output).GetAwaiter().GetResult();
             UnifiedConnectionsRegressionTests.Run(Check);
@@ -222,9 +223,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.2.0.0", "v3.2 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.2.1.0", "v3.2.1 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.2-connection-cards", "v3.2 release metadata");
+            "3.2.1-virtual-configuration-repair", "v3.2.1 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1005,6 +1006,7 @@ internal static class Program
         Pump(window);
         var vm = (MainViewModel)window.DataContext;
         UnifiedConnectionsRegressionTests.RunUi(window,vm,Check,()=>Pump(window),(dialog,name)=>Save(dialog,name));
+        VirtualConfigurationRegressionTests.RunUi(window,vm,Check,()=>Pump(window),task=>AwaitUi(task,window),(dialog,name)=>Save(dialog,name));
         BleOptimizationUiRegressionTests.RunBindings(window, vm, Check);
         BleGeneralizedUiRegressionTests.RunBindings(window, vm, Check);
         Win10HomeUiRegressionTests.RunBindings(window, vm, Check, () => Pump(window));

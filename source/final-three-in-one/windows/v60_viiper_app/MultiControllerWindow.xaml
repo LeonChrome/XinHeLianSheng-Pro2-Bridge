@@ -35,6 +35,7 @@
                                 <Button Content="应用模式" Command="{Binding DataContext.ApplyPro2SlotModeCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                                 <Button Content="连接 / 应用连接" Command="{Binding DataContext.ConnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                                 <Button Content="暂停连接" Command="{Binding DataContext.DisconnectPro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                <Button Content="修复输出…" Click="RepairSlotOutput_Click" IsEnabled="{Binding CanRepairConfiguration}" Visibility="{Binding NeedsConfigurationRepair,Converter={StaticResource VisibleIf}}"/>
                                 <Button Content="优化蓝牙" Command="{Binding DataContext.OptimizePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Visibility="{Binding CanOptimizeBleInput, Converter={StaticResource VisibleIf}}"/>
                                 <Button Content="移除" Command="{Binding DataContext.RemovePro2SlotCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Visibility="{Binding CanRemove, Converter={StaticResource VisibleIf}}"/>
                             </WrapPanel>

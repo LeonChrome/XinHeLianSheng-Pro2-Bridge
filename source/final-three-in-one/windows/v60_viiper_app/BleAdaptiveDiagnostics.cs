@@ -111,6 +111,15 @@ public static class BleAdaptiveDiagnostics
                         text.AppendLine("  间隙分布：" + string.Join("；", gaps.Distribution.Select(p => Clean(p.Key) + "=" + p.Value)));
                 }
                 else text.AppendLine("  Notify 间隙：无有效间隙样本，不能把默认零值当作零延迟。");
+                if(window.DeviceTiming is { } timing)
+                {
+                    text.AppendLine("  设备时钟间隔 P50 / P95="+(timing.DeviceDtP50Ms?.ToString("F3",CultureInfo.InvariantCulture)??"未获取")+
+                        " / "+(timing.DeviceDtP95Ms?.ToString("F3",CultureInfo.InvariantCulture)??"未获取")+
+                        "ms；主机与设备间隔最大差="+(timing.HostMinusDeviceJitterMaxMs?.ToString("F3",CultureInfo.InvariantCulture)??"未获取")+
+                        "ms；有效相邻样本="+timing.ValidPairs+"；截断="+timing.SamplesTruncated);
+                    text.AppendLine("  counter 原始步进="+string.Join(",",timing.CounterSteps.Select(p=>p.Key+":"+p.Value))+
+                        "；设备时间按 1000 原始单位/ms 换算，仅代表收到的报告，不能独立证明固件漏发、无线重传或 Windows 积压。");
+                }
             }
         }
         else text.AppendLine("逐阶段完整间隙：未记录；P50 / P90 / P99 不由平均 Hz 反推。已有 P95 / 最大间隙见窗口摘要。");

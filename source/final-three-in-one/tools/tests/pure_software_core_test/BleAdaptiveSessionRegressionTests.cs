@@ -100,18 +100,18 @@ internal static class BleAdaptiveSessionRegressionTests
 
         var rejected = new MockBackend(native66, native66) { AcceptRequest = _ => false };
         var rejectedResult = await Run(rejected);
-        check(rejected.Requests.Count == 4 && rejectedResult.Trials.Count == 4 &&
+        check(rejected.Requests.Count(r=>r!=null) == 4 && rejected.Requests.Last()==null && rejected.Requests.Count==5 && rejectedResult.Trials.Count == 4 &&
             rejectedResult.Trials.All(t => !t.RequestAccepted),
-            "all four rejected adaptive requests are bounded and each failure is recorded");
+            "all four rejected requests are recorded and unknown request state is restored once before FINAL");
         check(rejectedResult.Selected == null && rejectedResult.FinalVerified &&
             rejectedResult.Final.EffectiveHz == 66 && rejected.MeasurePhases.SequenceEqual(new[] { "NATIVE", "FINAL" }),
             "rejected API requests preserve real native 66Hz and finish with actual measurement");
 
         var same = new MockBackend(native66, native66, native66, native66, native66, native66);
         var sameResult = await Run(same);
-        check(same.Requests.Count(r => r != null) == 4 && same.Requests.Count(r => r == null) == 4 &&
+        check(same.Requests.Count(r => r != null) == 4 && same.Requests.Count(r => r == null) == 1 &&
             sameResult.Selected == null && sameResult.FinalVerified,
-            "all four unchanged 66Hz presets are released instead of pretending parameter success is improvement");
+            "all four unchanged 66Hz presets restore native once before FINAL without pretending parameter success is improvement");
         check(sameResult.Code == "final_playable_verified" && sameResult.Trials.All(t => t.Decision == "incumbent_is_better"),
             "unchanged actual 66Hz remains playable without a false 133Hz result");
 
@@ -140,19 +140,19 @@ internal static class BleAdaptiveSessionRegressionTests
         check(transient.Requests.Count(r => r != null) == 4 && transientResult.Selected == null &&
             transientResult.FinalVerified && transientResult.Code == "final_playable_verified",
             "transient 133Hz followed by 66Hz verification continues all remaining presets");
-        check(transient.Requests[1] == null && transient.ActivePreset == null &&
+        check(transient.Requests.Take(4).All(r=>r!=null) && transient.Requests.Last() == null && transient.ActivePreset == null &&
             transientResult.Trials.Any(t => t.Decision == "final_verification_regressed"),
-            "failed target verification restores native before remaining candidates");
+            "failed target verification tests remaining candidates then restores native once before FINAL");
 
         var partial = new MockBackend(native20, native66, native20, native20, native20, native66);
         var partialResult = await Run(partial);
         check(partialResult.Selected?.Preset == BleAdaptivePreset.Win11Fixed7p5 &&
             partialResult.FinalVerified && partialResult.Final.EffectiveHz == 66,
             "actual 20 to 66 improvement survives worse later presets and passes final playable verification");
-        check(partial.Requests.Count(r => r == BleAdaptivePreset.Win11Fixed7p5) == 4 &&
+        check(partial.Requests.Count(r => r == BleAdaptivePreset.Win11Fixed7p5) == 2 &&
             partial.ActivePreset == BleAdaptivePreset.Win11Fixed7p5 &&
             partialResult.Trials.Skip(1).All(t => t.Decision == "measured_rate_regressed"),
-            "each later 20Hz regression restores retained best 66Hz rather than baseline or last request");
+            "later regressions cause only one restoration of retained best before the final 66Hz measurement");
 
         BleAdaptiveMeasurement Captured(double duration, int count, double age, double p95, double maximum, ushort interval) =>
             new(new(duration, count, count, age, true, true, p95, interval), 0, maximum);
@@ -178,6 +178,9 @@ internal static class BleAdaptiveSessionRegressionTests
             capturedResult.Trials.Last().Decision == "final_playable_preserved" &&
             capturedReplay.Reports.Any(r => r.Contains("未通过 133Hz", StringComparison.Ordinal)),
             "compatibility retention records its reason and never reports an earlier or configured rate as achieved 133Hz");
+        check(capturedReplay.Requests.SequenceEqual(new BleAdaptivePreset?[]{BleAdaptivePreset.Win11Fixed7p5,
+            BleAdaptivePreset.Win11Flexible7p5To15,BleAdaptivePreset.Win11ThroughputOptimized,BleAdaptivePreset.Win11Fixed15,
+            BleAdaptivePreset.Win11Fixed7p5}),"captured four-preset path sends five requests, no unmeasured intermediate best reapplications");
         var lowCache = new BleAdaptiveCachedPreset(new(26300, new string('A', 64), "USB\\fixture", "fixture", "fixture", "fixture", "fixture"),
             BleAdaptivePreset.Win11Fixed7p5, capturedNative, capturedFinal, DateTimeOffset.UtcNow);
         var cachedBackend = new MockBackend();
@@ -262,13 +265,13 @@ internal static class BleAdaptiveSessionRegressionTests
             disconnectDuringVerify.Requests.Count == 1 && disconnectDuringVerify.MeasurePhases.Count == 3,
             "disconnect during apparent 133Hz verification cannot stop as target success");
 
-        var failedNativeRestore = new MockBackend(native66, native20, native66) { AllowNativeRestoration = false };
+        var failedNativeRestore = new MockBackend(native66, native20, native20, native20, native20, native66) { AllowNativeRestoration = false };
         var failedNativeResult = await Run(failedNativeRestore);
         check(failedNativeResult.Code == "request_restore_failed" && !failedNativeResult.FinalVerified &&
             failedNativeResult.Selected == null && failedNativeRestore.Releases == 1 && failedNativeRestore.ActivePreset == null,
             "rejected original restoration releases the bad experimental request and never claims rollback");
 
-        var failedBestRestore = new MockBackend(native20, native66, native20, native66);
+        var failedBestRestore = new MockBackend(native20, native66, native20, native20, native20, native66);
         failedBestRestore.AcceptRequest = candidate => candidate == null || candidate.Preset != BleAdaptivePreset.Win11Fixed7p5 ||
             failedBestRestore.Requests.Count(p => p == BleAdaptivePreset.Win11Fixed7p5) == 1;
         var failedBestResult = await Run(failedBestRestore);
@@ -282,6 +285,36 @@ internal static class BleAdaptiveSessionRegressionTests
         check(failedFinalResult.Code == "request_restore_failed" && !failedFinalResult.FinalVerified &&
             failedFinalResult.Selected == null && failedFinalRestore.Releases == 1,
             "final verification rollback rejection is checked and followed by release plus real measurement");
+
+        var purePlayable=native66 with{Sample=native66.Sample with{RequestedSuccessfully=false}};
+        var earlyFallback=new MockBackend(native20,target,purePlayable,native20,native20,native20,purePlayable);
+        var earlyResult=await Run(earlyFallback);
+        check(earlyResult.FinalVerified&&earlyResult.Selected?.Preset==BleAdaptivePreset.Win11Fixed7p5&&
+            earlyResult.Final.EffectiveHz==66&&!BleAdaptivePresetPolicy.MeetsTarget(earlyResult.Final)&&
+            earlyFallback.ActivePreset==BleAdaptivePreset.Win11Fixed7p5,
+            "a 133Hz first window followed by a request-free 66Hz window remains an eligible compatible winner");
+        check(earlyResult.Trials.Any(t=>t.Preset.EndsWith("_COMPATIBILITY")&&t.Measurement?.Sample.RequestedSuccessfully==false)&&
+            earlyFallback.Requests.Count==5,"high-window compatibility continuation preserves factual request flags and avoids intermediate restores");
+
+        var lastWinner=new MockBackend(native20,native20,native20,native20,native66,native66);
+        var lastResult=await Run(lastWinner);
+        check(lastResult.FinalVerified&&lastResult.Selected?.Preset==BleAdaptivePreset.Win11Fixed15&&lastWinner.Requests.Count==4,
+            "last measured candidate that is the winner enters FINAL without a redundant request");
+
+        var rejectedClears=new MockBackend(native20,native66,native66){RejectedRequestClearsActive=true};
+        rejectedClears.AcceptRequest=candidate=>candidate==null||candidate.Preset==BleAdaptivePreset.Win11Fixed7p5;
+        var rejectedClearsResult=await Run(rejectedClears);
+        check(rejectedClearsResult.FinalVerified&&rejectedClearsResult.Selected?.Preset==BleAdaptivePreset.Win11Fixed7p5&&
+            rejectedClears.Requests.Last()==BleAdaptivePreset.Win11Fixed7p5&&rejectedClears.ActivePreset==BleAdaptivePreset.Win11Fixed7p5,
+            "rejected API call may have released the old request; unknown state must restore the winner before FINAL");
+
+        var peerOnRejection=new MockBackend(native20,native66,native20);
+        peerOnRejection.AcceptRequest=candidate=>candidate==null||candidate.Preset==BleAdaptivePreset.Win11Fixed7p5;
+        peerOnRejection.AfterRejectedRequest=candidate=>{if(candidate?.Preset==BleAdaptivePreset.Win11Fixed15)peerOnRejection.PeersHealthy=false;};
+        var peerRejectedResult=await Run(peerOnRejection);
+        check(peerRejectedResult.Code.StartsWith("peer_rate_regression")&&peerOnRejection.Requests.Last()==null&&
+            peerOnRejection.MeasurePhases.Last()=="PEER_RESTORE_VERIFY"&&peerOnRejection.Requests.Count(p=>p==BleAdaptivePreset.Win11Fixed7p5)==1,
+            "peer regression after a rejected last request restores native immediately, not the locally fastest winner");
 
         await TestStoreAsync(check, outputDir, native66, target);
     }
@@ -334,7 +367,7 @@ internal static class BleAdaptiveSessionRegressionTests
             "a valid new measured preference can replace a corrupt cache safely");
     }
 
-    private sealed class MockBackend(params BleAdaptiveMeasurement[] measurements) : IBleAdaptiveTrialBackend
+    private sealed class MockBackend(params BleAdaptiveMeasurement[] measurements) : IBleAdaptiveTrialBackend,IBleAdaptivePeerGuard
     {
         private readonly Queue<BleAdaptiveMeasurement> measurements = new(measurements);
         public bool Connected { get; private set; } = true;
@@ -348,6 +381,9 @@ internal static class BleAdaptiveSessionRegressionTests
         public int Releases { get; private set; }
         public Action<BleAdaptivePresetCandidate?, CancellationToken>? AfterApplyRequest { get; set; }
         public Action<string>? BeforeMeasure { get; set; }
+        public bool RejectedRequestClearsActive { get; init; }
+        public bool PeersHealthy { get; set; }=true;
+        public Action<BleAdaptivePresetCandidate?>? AfterRejectedRequest { get; set; }
 
         public Task<BleAdaptiveMeasurement> MeasureAsync(string phase, CancellationToken token)
         {
@@ -370,6 +406,11 @@ internal static class BleAdaptiveSessionRegressionTests
             {
                 ActivePreset = candidate?.Preset;
                 AfterApplyRequest?.Invoke(candidate, token);
+            }
+            else
+            {
+                if(RejectedRequestClearsActive)ActivePreset=null;
+                AfterRejectedRequest?.Invoke(candidate);
             }
             return Task.FromResult(accepted);
         }

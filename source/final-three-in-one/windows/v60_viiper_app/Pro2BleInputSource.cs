@@ -2681,7 +2681,7 @@ public sealed partial class Pro2BleInputSource :
                 ? 0
                 : Math.Max(0, (now - latestAt).TotalMilliseconds);
             rawNotifyCount++;
-            activeBleDiagnosticCapture?.RecordRaw(nowTicks, isFd2);
+            activeBleDiagnosticCapture?.RecordRawPayload(nowTicks, isFd2,data);
             runtimeBatteryCapture?.RecordRaw(nowTicks, isFd2);
             parseSeq = rawNotifyCount;
             if (lastRawNotifyTicks != 0)
@@ -3454,7 +3454,7 @@ public sealed partial class Pro2BleInputSource :
         string phase, int milliseconds, IProgress<string> progress, CancellationToken token)
     {
         long captureStartTicks = Stopwatch.GetTimestamp();
-        var capture = new Win10BleDiagnosticCapture(captureStartTicks, DateTimeOffset.UtcNow);
+        var capture = new Win10BleDiagnosticCapture(captureStartTicks, DateTimeOffset.UtcNow,includeDeviceTiming:true);
         lock (gate)
         {
             if (activeBleDiagnosticCapture != null) throw new InvalidOperationException("BLE capture already active.");
@@ -3494,12 +3494,13 @@ public sealed partial class Pro2BleInputSource :
         var trial = new BleTrialMeasurement(phase, samples.DurationSeconds,
             samples.Fd2Count / samples.DurationSeconds, samples.ParsedCount / samples.DurationSeconds,
             samples.Fd2Count, samples.ParsedCount, interval, preference,
-            Win10BleDiagnostic.BuildGapStatistics(samples.Fd2Ticks), lastInputAge, connectedAtEnd, exactSummary);
+            Win10BleDiagnostic.BuildGapStatistics(samples.Fd2Ticks), lastInputAge, connectedAtEnd, exactSummary,
+            capture.SnapshotDeviceTiming());
         progress.Report("[WIN11_PARAMETER_TRIAL] phase=" + phase + " duration_s=" + trial.DurationSeconds.ToString("F2") +
             " fd2_hz=" + trial.Fd2Hz.ToString("F2") + " parsed_hz=" + trial.ParsedHz.ToString("F2") +
             " actual_interval_ms=" + (trial.ConnectionIntervalUnits > 0 ? (trial.ConnectionIntervalUnits * 1.25).ToString("F2") : "unavailable") +
             " p50_gap_ms=" + trial.Gaps.P50Ms.ToString("F2") + " p95_gap_ms=" + trial.Gaps.P95Ms.ToString("F2") +
-            " request_status=" + trial.RequestStatus);
+            " request_status=" + trial.RequestStatus+" "+trial.DeviceTiming!.ToLogFields());
         return trial;
     }
 

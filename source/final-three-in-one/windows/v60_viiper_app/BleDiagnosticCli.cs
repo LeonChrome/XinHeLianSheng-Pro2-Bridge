@@ -22,15 +22,8 @@ internal static class BleDiagnosticCli
             directory,
             "ble-cli-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
         string latestMarker = Path.Combine(directory, "ble-cli-latest.txt");
-        var logGate = new object();
-        void WriteLine(string line)
-        {
-            string stamped = "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] " + line;
-            lock (logGate)
-            {
-                File.AppendAllText(runLog, stamped + Environment.NewLine, new UTF8Encoding(false));
-            }
-        }
+        var orderedLog=new BleOrderedDiagnosticLog(line=>File.AppendAllText(runLog,line+Environment.NewLine,new UTF8Encoding(false)));
+        void WriteLine(string line)=>orderedLog.Report(line);
 
         File.WriteAllText(latestMarker, runLog, new UTF8Encoding(false));
         int durationSeconds = ParseDurationSeconds(args);
@@ -106,7 +99,7 @@ internal static class BleDiagnosticCli
 #endif
         using var timeout = new CancellationTokenSource(
             TimeSpan.FromSeconds(rateWatch ? watchSeconds + 240 : outputIsolation ? 600 : notifyLayer ? 240 : durationSeconds + (adaptivePresets?180:customWin11 ? 100 : 45)));
-        IProgress<string> progress = customWin11 ? new DirectProgress<string>(WriteLine) : new Progress<string>(WriteLine);
+        IProgress<string> progress = new DirectProgress<string>(WriteLine);
         var source = new Pro2BleInputSource();
         source.AutoOptimizeBleEnabled=adaptivePresets;
         try
@@ -114,6 +107,7 @@ internal static class BleDiagnosticCli
             WriteLine("[BLE_TURBO_CLI] begin duration_s=" + durationSeconds +
                       " preferred_address=" + (preferredAddress ?? "none"));
             WriteLine("[BLE_DIAGNOSTIC] adaptive_presets="+adaptivePresets+" virtual_output=false driver_changes=false registry_changes=false");
+            WriteLine("[CLI_LOG_POLICY] progress=inline serialized=true timestamp_scope=logger_acceptance sequence=CLI_ORDER clock=qpc event_or_air_order_proven=false");
             if (customWin11)
             {
                 WriteLine("[WIN11_7P5_ABI] diagnostic_only=true virtual_device_started=false system_writes=false");

@@ -37,7 +37,8 @@ public sealed record BleTrialMeasurement(
     string Phase, double DurationSeconds, double Fd2Hz, double ParsedHz,
     int Fd2Count, int ParsedCount, ushort ConnectionIntervalUnits,
     string RequestStatus, BleGapStatistics Gaps, double LastInputAgeMs = double.PositiveInfinity,
-    bool ConnectedAtEnd = false, NotifyGapSummary? ExactGapSummary = null);
+    bool ConnectedAtEnd = false, NotifyGapSummary? ExactGapSummary = null,
+    Fd2DeviceTimingSummary? DeviceTiming = null);
 
 public sealed record Win10BleDiagnosticReport(
     DateTimeOffset StartedAtUtc,
@@ -204,28 +205,37 @@ internal sealed class Win10BleDiagnosticCapture
     private long maximumFd2GapTicks;
     private long maximumParsedGapTicks;
     private string interruption = "";
+    private readonly Fd2DeviceTimingWindow? deviceTiming;
 
-    public Win10BleDiagnosticCapture(long startedTicks, DateTimeOffset startedAtUtc)
+    public Win10BleDiagnosticCapture(long startedTicks, DateTimeOffset startedAtUtc):this(startedTicks,startedAtUtc,false) { }
+
+    public Win10BleDiagnosticCapture(long startedTicks, DateTimeOffset startedAtUtc,bool includeDeviceTiming)
     {
         StartedTicks = startedTicks;
         StartedAtUtc = startedAtUtc;
+        if(includeDeviceTiming)deviceTiming=new();
     }
 
     public long StartedTicks { get; }
     public DateTimeOffset StartedAtUtc { get; }
 
-    public void RecordRaw(long ticks, bool isFd2)
+    public void RecordRaw(long ticks, bool isFd2)=>RecordRawPayload(ticks,isFd2,default);
+
+    public void RecordRawPayload(long ticks, bool isFd2,ReadOnlySpan<byte> data)
     {
         if (ticks < StartedTicks) return; // An in-flight pre-capture callback is outside this window.
         rawCount++;
         Add(rawTicks, ticks);
         if (isFd2)
         {
+            deviceTiming?.Record(data,ticks);
             fd2Count++;
             NoteArrival(ticks, ref lastFd2Ticks, ref maximumFd2GapTicks);
             Add(fd2Ticks, ticks);
         }
     }
+
+    public Fd2DeviceTimingSummary? SnapshotDeviceTiming()=>deviceTiming?.Snapshot();
 
     public void RecordParsed(long ticks, bool isFd2)
     {

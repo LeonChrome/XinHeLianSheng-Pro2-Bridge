@@ -131,10 +131,20 @@ public static class BleAdaptivePresetPolicy
     /// A two-Hz allowance handles measurement noise, not substantial regression.
     /// </summary>
     public static BleAdaptivePresetDecision EvaluateCandidate(BleAdaptiveMeasurement native,
-        BleAdaptiveMeasurement incumbent, BleAdaptiveMeasurement candidate)
+        BleAdaptiveMeasurement incumbent, BleAdaptiveMeasurement candidate) =>
+        EvaluateMeasurement(native, incumbent, candidate, requireRequestSuccess: true);
+
+    // The runner already owns an accepted request when measuring its next
+    // window. A new measurement is not a new API request; keep that fact intact.
+    public static BleAdaptivePresetDecision EvaluateContinuation(BleAdaptiveMeasurement native,
+        BleAdaptiveMeasurement incumbent, BleAdaptiveMeasurement measured) =>
+        EvaluateMeasurement(native, incumbent, measured, requireRequestSuccess: false);
+
+    private static BleAdaptivePresetDecision EvaluateMeasurement(BleAdaptiveMeasurement native,
+        BleAdaptiveMeasurement incumbent, BleAdaptiveMeasurement candidate, bool requireRequestSuccess)
     {
         BleAdaptivePresetDecision Reject(string code, string summary) => new(false, code, summary);
-        if (!Valid(native, false) || !Valid(incumbent, false) || !Valid(candidate, true))
+        if (!Valid(native, false) || !Valid(incumbent, false) || !Valid(candidate, requireRequestSuccess))
             return Reject("invalid_or_stale_measurement", "连接、输入新鲜度、完整窗口或解析完整性未通过，不保留该预设。");
         if (!MatchingWindows(native, candidate) || !MatchingWindows(incumbent, candidate))
             return Reject("unequal_windows", "前后窗口时长不匹配，不保留该预设。");
@@ -184,7 +194,7 @@ public static class BleAdaptivePresetPolicy
             !Valid(native, false) || !MatchingWindows(native, final) ||
             !Valid(retained, false) || !MatchingWindows(retained, final) ||
             GapRegressed(retained, final)) return strict;
-        var comparedWithNative = EvaluateCandidate(native, native, final);
+        var comparedWithNative = EvaluateContinuation(native, native, final);
         return comparedWithNative.Retain
             ? new(true, "final_playable_preserved", "最终窗口仍达到 60Hz 且优于原连接，保留兼容游玩预设；未通过 133Hz 级验收。")
             : strict;

@@ -16,16 +16,19 @@ namespace Y700Switch2V60Viiper;
 public sealed record BluetoothRestartResult(string OperationId, string PnpId, string InterfaceId,
     DateTimeOffset StartedUtc, DateTimeOffset CompletedUtc, bool RestartAttempted, int? NativeExitCode,
     bool PresentStarted, bool ParametersUnchanged, bool DriverUnchanged, string Message, string NativeOutput,
-    string Mode="restart",int? DisableExitCode=null,bool DisabledConfirmed=false,bool EnableAttempted=false,string RecoveryError="")
+    string Mode="restart",int? DisableExitCode=null,bool DisabledConfirmed=false,bool EnableAttempted=false,string RecoveryError="",
+    bool DeviceRebootPending=false,bool ToolRebootPending=false)
 {
-    public bool Verified => RestartAttempted && NativeExitCode.HasValue &&
+    public bool Verified => !RebootRequired && RestartAttempted && NativeExitCode.HasValue &&
         BluetoothRestartPolicy.IsVerifiedSuccess(NativeExitCode.Value, PresentStarted, ParametersUnchanged, DriverUnchanged)&&
         (Mode=="restart"||Mode=="reinitialize"&&DisableExitCode==0&&DisabledConfirmed&&EnableAttempted&&RecoveryError.Length==0);
-    public bool RebootRequired => RestartAttempted && (NativeExitCode == 3010||DisableExitCode==3010);
+    public bool RebootRequired => DeviceRebootPending || ToolRebootPending || RestartAttempted &&
+        BluetoothRebootEvidence.RequiresReboot(NativeExitCode,DisableExitCode,NativeOutput);
     public string Telemetry => "[BLUETOOTH_RESTART_RESULT] operation=" + OperationId + " pnp_id=\"" + PnpId +
         "\" attempted=" + RestartAttempted + " exit=" + NativeExitCode + " verified=" + Verified +
         " present_started=" + PresentStarted + " parameters_unchanged=" + ParametersUnchanged +
         " driver_unchanged=" + DriverUnchanged + " reboot_required=" + RebootRequired +
+        " device_reboot_pending="+DeviceRebootPending+" tool_reboot_pending="+ToolRebootPending+" reboot_output_evidence="+BluetoothRebootEvidence.HasExplicitPendingMessage(NativeOutput)+
         " mode="+Mode+" disable_exit="+DisableExitCode+" disable_confirmed="+DisabledConfirmed+" enable_attempted="+EnableAttempted+" recovery_error="+RecoveryError+
         " driver_replacement=false registry_writes=false pairing_delete=false automatic_reboot=false";
 }
@@ -75,6 +78,7 @@ public static class BluetoothAdapterRestart
         catch { return 7; }
         DateTimeOffset started = DateTimeOffset.UtcNow;
         bool attempted = false, present = false, parameterSame = false, driverSame = false;
+        bool deviceRebootPending = false,toolRebootPending=false;
         int? exit = null;
         string message = "", output = "";
         BluetoothReinitializationResult? sequence=null;
@@ -100,7 +104,7 @@ public static class BluetoothAdapterRestart
                     SystemBluetoothSnapshot snapshot = await SystemBluetoothDiagnostics.CaptureAsync(timeout.Token);
                     target=BluetoothRestartPolicy.Targets(snapshot).SingleOrDefault(t=>t.PnpId.Equals(pnp,StringComparison.OrdinalIgnoreCase)&&t.InterfaceId.Equals(id,StringComparison.OrdinalIgnoreCase));
                 }
-                if (target == null || !target.CanRestart || !PresentStarted(pnp))
+                if (target == null || !target.CanRestart)
                     throw new InvalidOperationException("所选适配器已拔出、不可用或身份不匹配；未重启其他设备。");
                 string parameters = ParameterSnapshot(), driver = DriverSnapshot(pnp);
                 // Verify Bluetooth setup class separately; never accept a child HID, USB hub or Wi-Fi adapter.
@@ -108,6 +112,9 @@ public static class BluetoothAdapterRestart
                     if (!Guid.TryParse(device?.GetValue("ClassGUID")?.ToString(), out Guid deviceClass) ||
                         deviceClass != new Guid("e0cbf06c-cd8b-4647-bb8a-263b43f0f974"))
                         throw new InvalidOperationException("目标不是蓝牙适配器设备；未执行重启。");
+                deviceRebootPending=DeviceNeedsReboot(pnp);
+                if(deviceRebootPending)throw new InvalidOperationException(BluetoothRebootEvidence.Guidance);
+                if(!PresentStarted(pnp))throw new InvalidOperationException("所选适配器未处于已启动状态，未执行重启。");
                 string backup = Path.ChangeExtension(resultPath, ".before.json");
                 WriteNew(backup, JsonSerializer.Serialize(new { target, parameters, driver, started }));
                 if(reinitialize)
@@ -139,6 +146,9 @@ public static class BluetoothAdapterRestart
                 exit = process.ExitCode;
                 output = (await stdout) + "\n" + (await stderr);
                 }
+                deviceRebootPending|=DeviceNeedsReboot(pnp);
+                // Recognize explicit evidence before bounding the recorded output.
+                toolRebootPending=BluetoothRebootEvidence.RequiresReboot(exit,sequence?.DisableExit,output);
                 // Localized text may expand sixfold in JSON; keep the result
                 // readable under ReadResult's 64 KB limit as well.
                 if (output.Length > 6000) output = output[..6000];
@@ -159,10 +169,12 @@ public static class BluetoothAdapterRestart
             finally { gate.Release(); }
         }
         catch (Exception ex) { message = ex.Message; }
+        if(toolRebootPending||BluetoothRebootEvidence.RequiresReboot(exit,sequence?.DisableExit,output,deviceRebootPending))
+            message=BluetoothRebootEvidence.Guidance;
         if(reinitialize&&File.Exists(Path.ChangeExtension(resultPath,".restore.cmd")))
             message+="\n恢复启用脚本（管理员运行）："+Path.ChangeExtension(resultPath,".restore.cmd");
         var result = new BluetoothRestartResult(operation, pnp, id, started, DateTimeOffset.UtcNow,
-            attempted, exit, present, parameterSame, driverSame, message, output,reinitialize?"reinitialize":"restart",sequence?.DisableExit,sequence?.DisabledConfirmed??false,sequence?.EnableAttempted??false,sequence?.Error??"");
+            attempted, exit, present, parameterSame, driverSame, message, output,reinitialize?"reinitialize":"restart",sequence?.DisableExit,sequence?.DisabledConfirmed??false,sequence?.EnableAttempted??false,sequence?.Error??"",deviceRebootPending,toolRebootPending);
         try { EnsureSafeResultLocation(resultPath); WriteNew(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true })); }
         catch { return 5; }
         return result.Verified ? 0 : result.RebootRequired ? 2 : 1;
@@ -185,6 +197,8 @@ public static class BluetoothAdapterRestart
     }
     public static bool PresentStarted(string pnp) => CM_Locate_DevNodeW(out uint node, pnp, 0) == 0 &&
         CM_Get_DevNode_Status(out uint status, out uint problem, node, 0) == 0 && problem == 0 && (status & 8) != 0;
+    private static bool DeviceNeedsReboot(string pnp)=>CM_Locate_DevNodeW(out uint node,pnp,0)==0&&
+        CM_Get_DevNode_Status(out uint status,out uint problem,node,0)==0&&BluetoothRebootEvidence.DeviceStatusRequiresReboot(status,problem);
     private static bool PresentDisabled(string pnp)=>CM_Locate_DevNodeW(out uint node,pnp,0)==0&&
         CM_Get_DevNode_Status(out uint status,out uint problem,node,0)==0&&problem==22&&(status&8)==0;
     public static string RestoreCommand(BluetoothRestartTarget target)

@@ -543,11 +543,17 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
                 if (!hasInput && lastVirtualWriteTicks != 0)
                 {
                     bool sourceIsRunning = inputSource?.IsRunning == true;
+                    TimeSpan rearInputAge = TimeSpan.MaxValue;
+                    bool hasRearAge = sourceIsRunning && inputSource!.TryGetLatest(out _, out rearInputAge);
                     if (rearButtonMapper.HasPendingAction && (!sourceIsRunning ||
-                        (inputSource!.TryGetLatest(out _, out TimeSpan rearInputAge) && rearInputAge > TimeSpan.FromMilliseconds(100))))
+                        (hasRearAge && rearInputAge > TimeSpan.FromMilliseconds(100))))
                     {
-                        if (rearButtonMapper.TryCancelOutput(out var staleRearRelease)) pendingRearRelease = staleRearRelease;
-                        progress.Report("[REAR_SAFETY_CANCEL] reason=input_gap_or_disconnect rearm=release_then_press");
+                        GamepadState pendingGapRelease;
+                        bool releaseNeeded = !sourceIsRunning
+                            ? rearButtonMapper.TryCancelOutput(out pendingGapRelease)
+                            : rearButtonMapper.TryHandleInputGap(rearInputAge, out pendingGapRelease);
+                        if (releaseNeeded) pendingRearRelease = pendingGapRelease;
+                        if (releaseNeeded) progress.Report("[REAR_SAFETY_CANCEL] reason=input_gap_or_disconnect simple_hold_grace_ms=500 pulse_rearm=release_then_press");
                         if (!await FlushRearReleaseAsync(current).ConfigureAwait(false)) continue;
                     }
                     if (!ShouldPublishDisconnectNeutral(
@@ -653,6 +659,8 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
                 if (inputSource?.IsRunning == true && age <= TimeSpan.FromMilliseconds(100))
                     continuous = rearButtonMapper.Apply(continuous, profile.Mode,
                         Volatile.Read(ref rearButtonConfiguration), loopTicks);
+                else if (inputSource?.IsRunning == true && rearButtonMapper.HasPendingAction)
+                    rearButtonMapper.TryHandleInputGap(age, out continuous);
                 else
                     rearButtonMapper.Reset();
                 packetSourceState = continuous;
@@ -1174,6 +1182,7 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
         string lastOutputState = "";
         HashSet<string> reportedSkipReasons = new(StringComparer.Ordinal);
         Task<byte[]>? pendingRead = null;
+        await using var idleWait = dualSenseScheduler == null ? null : new FeedbackIdleWait(TimeSpan.FromMilliseconds(40));
         long lastHapticTelemetry = Stopwatch.GetTimestamp();
         void QueueFeedbackStop(string source, bool idleOnly)
         {
@@ -1214,18 +1223,14 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
                 pendingRead ??= current.ReadExactAsync(profile.FeedbackSize, cancellationToken);
                 if (dualSenseScheduler != null)
                 {
-                    try
-                    {
-                        feedback = await pendingRead.WaitAsync(
-                            TimeSpan.FromMilliseconds(40), cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (TimeoutException)
+                    if (!await idleWait!.ReadReadyAsync(pendingRead, cancellationToken).ConfigureAwait(false))
                     {
                         // Do not cancel or replace the outstanding read: otherwise
                         // the next frame could be consumed by an abandoned task.
                         QueueFeedbackStop("dualsense-hd-idle-stop", idleOnly: true);
                         continue;
                     }
+                    feedback = await pendingRead.ConfigureAwait(false);
                 }
                 else
                     feedback = await pendingRead.ConfigureAwait(false);

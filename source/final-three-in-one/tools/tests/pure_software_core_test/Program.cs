@@ -71,6 +71,7 @@ internal static class Program
             BleCachedStartupRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             BleFastConnectionRegressionTests.Run(Check);
             BleFastConnectionHintRegressionTests.Run(Check);
+            V327RegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             if (args.Contains("--physical-only"))
             {
                 Console.WriteLine("PASS: " + checks + " physical-input assertions; offline protocol replay only.");
@@ -227,9 +228,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.2.6.0", "v3.2.6 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.2.7.0", "v3.2.7 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.2.6-preserve-7p5-fast-start", "v3.2.6 release metadata");
+            "3.2.7-hid-compatibility-input-fixes", "v3.2.7 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

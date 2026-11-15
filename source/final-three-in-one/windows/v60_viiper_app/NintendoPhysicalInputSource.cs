@@ -31,7 +31,8 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     private readonly object gate = new(), replyGate = new();
     private readonly Queue<GamepadState> states = new();
     private readonly Queue<(long Tick,double Gap)> stamps = new();
-    private readonly SemaphoreSlim inputSignal = new(0,1), commandGate = new(1,1), nfcGate = new(1,1);
+    private readonly InputFrameSignal inputSignal = new();
+    private readonly SemaphoreSlim commandGate = new(1,1), nfcGate = new(1,1);
     private readonly CancellationTokenSource lifetime = new();
     private readonly Channel<Pro2OutputPacket> outputs = Channel.CreateBounded<Pro2OutputPacket>(new BoundedChannelOptions(8)
         { SingleReader=false, SingleWriter=false, FullMode=BoundedChannelFullMode.DropOldest });
@@ -217,7 +218,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
                     while(stamps.Count>1 && Stopwatch.GetElapsedTime(stamps.Peek().Tick,now).TotalSeconds>5) stamps.Dequeue();
                     if(states.Count>=64) { states.Dequeue(); drops++; } states.Enqueue(state);
                 }
-                try { inputSignal.Release(); } catch(SemaphoreFullException) { }
+                inputSignal.Notify();
                 if(lastMetric==0) lastMetric=now;
                 if(Stopwatch.GetElapsedTime(lastMetric,now).TotalSeconds>=5)
                 { lastMetric=now; log("[PHYSICAL_INPUT_WINDOW] "+MetricsSummary); }
@@ -247,7 +248,21 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     public bool TryGetNextFresh(out GamepadState state,out TimeSpan age)
     { lock(gate) { if(IsRunning&&states.TryDequeue(out var next)) { state=next; age=Stopwatch.GetElapsedTime(next.SourceTimestampTicks); return true; } state=GamepadState.Neutral(); age=TimeSpan.MaxValue; return false; } }
     public bool TryGetNewest(out GamepadState state,out TimeSpan age,out int superseded)
-    { lock(gate) { superseded=Math.Max(0,states.Count-1); while(states.Count>1) states.Dequeue(); return TryGetNextFresh(out state,out age); } }
+    {
+        lock(gate)
+        {
+            superseded=0;
+            if(!IsRunning || !states.TryDequeue(out var next)) { state=GamepadState.Neutral();age=TimeSpan.MaxValue;return false; }
+            // Match the BLE route: coalesce analog motion only within one
+            // digital state; never cross a short press/release or trigger edge.
+            while(states.TryPeek(out var candidate) && candidate.Buttons==next.Buttons &&
+                (candidate.L2>0)==(next.L2>0) && (candidate.R2>0)==(next.R2>0))
+            { next=states.Dequeue();superseded++; }
+            state=next;age=Stopwatch.GetElapsedTime(next.SourceTimestampTicks);
+            if(states.Count>0) inputSignal.Notify();
+            return true;
+        }
+    }
     public int PrepareForConsumerSession() { lock(gate) { int count=states.Count; states.Clear(); return count; } }
     public async Task<bool> WaitForInputAsync(TimeSpan timeout,CancellationToken token)=>await inputSignal.WaitAsync(timeout,token);
     public bool TryWriteOutputReport(ReadOnlySpan<byte> report,out string error)=>TryWriteOutputPacket(new(report.ToArray(),"physical-bridge",true,null),out error);

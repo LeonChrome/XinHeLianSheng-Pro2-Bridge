@@ -129,6 +129,35 @@ public sealed class RearButtonMapper
         return needed;
     }
 
+    // Brief input gaps may stop pulses/gestures, but an already active simple
+    // hold follows the same short-gap policy as physical controls. At 500ms it
+    // is released too, and requires a physical release/press to rearm.
+    public bool TryHandleInputGap(TimeSpan age, out GamepadState release)
+    {
+        release = lastPhysical?.Clone() ?? GamepadState.Neutral();
+        if (age.TotalMilliseconds <= 100 || lastPhysical == null) return false;
+        bool keepHolds = age.TotalMilliseconds < 500;
+        GamepadButtons held = SuspendChannelsForGap(keepHolds);
+        if (release.IsPressed(GamepadButtons.DPadUp)) held &= ~GamepadButtons.DPadDown;
+        if (release.IsPressed(GamepadButtons.DPadDown)) held &= ~GamepadButtons.DPadUp;
+        if (release.IsPressed(GamepadButtons.DPadLeft)) held &= ~GamepadButtons.DPadRight;
+        if (release.IsPressed(GamepadButtons.DPadRight)) held &= ~GamepadButtons.DPadLeft;
+        held = RearButtonBinding.SafeButtons(held);
+        bool needed = held != lastMapped || lastTouchActive;
+        var profile = current?.ForMode(currentMode);
+        if (profile?.Left.Enabled == true) release.Buttons &= ~GamepadButtons.PaddleLeft;
+        if (profile?.Right.Enabled == true) release.Buttons &= ~GamepadButtons.PaddleRight;
+        if (profile?.C.Enabled == true) release.Buttons &= ~GamepadButtons.Aux;
+        release.Buttons |= held;
+        if ((held & GamepadButtons.L2) != 0) release.L2 = GamepadState.TriggerMax;
+        if ((held & GamepadButtons.R2) != 0) release.R2 = GamepadState.TriggerMax;
+        lastMapped = held; lastTouchActive = false; touchOwner = -1;
+        return needed;
+    }
+
+    private GamepadButtons SuspendChannelsForGap(bool keepHolds) =>
+        left.SuspendForGap(keepHolds) | right.SuspendForGap(keepHolds) | c.SuspendForGap(keepHolds);
+
     public static bool ProfilesEquivalent(RearButtonProfile? a, RearButtonProfile? b) =>
         ReferenceEquals(a, b) || (a != null && b != null && BindingEquivalent(a.Left, b.Left) &&
             BindingEquivalent(a.Right, b.Right) && BindingEquivalent(a.C, b.C));
@@ -152,10 +181,14 @@ public sealed class RearButtonMapper
         var profile = configuration.ForMode(mode);
         bool profileChanged = !ReferenceEquals(current, configuration) &&
             !ProfilesEquivalent(current?.ForMode(currentMode), profile);
-        if (profileChanged || currentMode != mode || ticks < lastTicks ||
-            (current != null && ticks - lastTicks > Stopwatch.Frequency / 10))
+        if (profileChanged || currentMode != mode || ticks < lastTicks)
         {
             left.Reset(); right.Reset(); c.Reset();
+            touchOwner = -1;
+        }
+        else if (current != null && ticks - lastTicks > Stopwatch.Frequency / 10)
+        {
+            SuspendChannelsForGap(ticks - lastTicks < Stopwatch.Frequency / 2);
             touchOwner = -1;
         }
         current = configuration; currentMode = mode;
@@ -226,9 +259,18 @@ public sealed class RearButtonMapper
         private GamepadButtons lastOutput;
         private readonly Ps5TouchPlayback touch = new();
         private bool allowTouch;
+        private bool simpleHold;
         public Ps5TouchFrame Touch { get; private set; }
         public bool Active => active || touch.HasPending;
         public void Reset() { initialized = down = active = false; start = 0; lastPulse = -1; lastOutput = GamepadButtons.None; touch.Reset(); Touch = default; }
+        public GamepadButtons SuspendForGap(bool keepHold)
+        {
+            touch.Reset(); Touch = default;
+            if (keepHold && active && down && simpleHold) return lastOutput;
+            active = false; lastOutput = GamepadButtons.None; lastPulse = -1;
+            // Keep initialized/down: cancelled macros must not replay while held.
+            return GamepadButtons.None;
+        }
         private GamepadButtons Emit(GamepadButtons buttons, long pulse = 0,
             Ps5TouchGesture gesture = Ps5TouchGesture.None, double fraction = 0, bool cancelTouch = false)
         {
@@ -245,6 +287,8 @@ public sealed class RearButtonMapper
         }
         public GamepadButtons Get(RearButtonBinding binding, bool pressed, long ticks, bool ps5)
         {
+            simpleHold = binding.Enabled && binding.Action == RearButtonAction.Hold &&
+                binding.DelayMs == 0 && binding.TouchGesture == Ps5TouchGesture.None;
             allowTouch = ps5;
             if (!initialized)
             {

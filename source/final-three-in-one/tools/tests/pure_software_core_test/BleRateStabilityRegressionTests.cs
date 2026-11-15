@@ -20,8 +20,8 @@ internal static class BleRateStabilityRegressionTests
             initial.SessionMinimumHz == null && initial.SessionMaximumHz == null,
             "stability initialization is unmeasured, not a zero-rate failure or invented 133Hz");
         check(initial.HighRateThresholdHz == 128 && Pro2GameplayRatePolicy.MinimumGameplayHz == 60 &&
-            Pro2GameplayRatePolicy.HighRateAcceptanceHz == 120,
-            "128Hz sustained health threshold stays separate from 60Hz gameplay and 120Hz preflight");
+            Pro2GameplayRatePolicy.HighRateAcceptanceHz == 128 && Pro2GameplayRatePolicy.NearTargetHz == 120,
+            "128Hz high-rate acceptance and health agree; gameplay 60Hz and warm retention 120Hz remain distinct");
         check(!monitor.ObserveWindow(new(0, 999, 0, 0)) && Read(1).ValidWindowCount == 0,
             "short initialization/instantaneous sample is not a completed rate window");
 

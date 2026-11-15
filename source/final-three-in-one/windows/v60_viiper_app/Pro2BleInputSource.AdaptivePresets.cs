@@ -18,6 +18,7 @@ public sealed partial class Pro2BleInputSource
     public Func<IReadOnlyList<BlePeerRate>>? PeerRatesProvider { get; set; }
     private volatile string compatibilityOptimizationSummary = "";
     private bool adaptiveOptimizationRunAttempted;
+    private readonly BleAdaptiveRetryGate adaptiveRetryGate = new(Stopwatch.Frequency);
     public string CompatibilityOptimizationSummary => compatibilityOptimizationSummary;
     public bool IsCompatibilityOptimizationRunning => compatibilityTrialCts != null;
     public bool CanOptimizeConnectionCompatibility
@@ -67,6 +68,7 @@ public sealed partial class Pro2BleInputSource
         BluetoothLEPreferredConnectionParameters? original = retainedConnectionPreference;
         BleAdaptiveEnvironmentKey? environmentKey = null;
         bool diagnosticsCompleted = false;
+        string completionCode = "cancelled";
         AdaptiveDiagnosticCapture diagnosticCapture = StartAdaptiveDiagnosticEvidence();
         void Report(string message)
         {
@@ -123,6 +125,7 @@ public sealed partial class Pro2BleInputSource
             progress.Report("[BLE_CONNECT_PRIORITY] initializing="+initializing+" cached_start_verified="+(cachedStart!=null)+
                 " before_rate_scope="+(cachedStart!=null?"after_cached_request_not_untouched_native":"current_connection")+" synthetic_reports=0");
             BleAdaptiveRunResult result = cachedStart ?? await BleAdaptiveSessionRunner.RunAsync(capabilities, backend, cached?.Preset, deadline.Token);
+            completionCode = result.Code;
             CompleteAdaptiveDiagnosticEvidence(diagnosticCapture, result);
             diagnosticsCompleted = true;
             if (!SameConnection())
@@ -184,6 +187,7 @@ public sealed partial class Pro2BleInputSource
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         {
+            completionCode = "bounded_timeout";
             MarkAdaptiveDiagnosticInterrupted(diagnosticCapture, "bounded_timeout");
             compatibilityOptimizationSummary = "预设测试达到时间上限，已结束；按当前真实输入决定是否可游玩。";
             progress.Report("[BLE_AUTO_PRESET] bounded_timeout_s=150 unlimited_retry=false");
@@ -191,6 +195,7 @@ public sealed partial class Pro2BleInputSource
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            completionCode = "trial_error";
             MarkAdaptiveDiagnosticInterrupted(diagnosticCapture, "trial_error");
             compatibilityOptimizationSummary = "蓝牙预设测试未完成：" + ex.GetType().Name + "；保留连接并按真实输入显示结果。";
             progress.Report("[BLE_AUTO_PRESET] error_hresult=0x" + ex.HResult.ToString("X8") + " type=" + ex.GetType().Name);
@@ -198,6 +203,19 @@ public sealed partial class Pro2BleInputSource
         }
         finally
         {
+            if (SameConnection() && !win11CompatibilityTrialAttempted)
+            {
+                lock (gate)
+                {
+                    if (completionCode is "native_measurement_not_ready" or "bounded_timeout" or "trial_error" or "cancelled")
+                    {
+                        adaptiveOptimizationRunAttempted = false;
+                        adaptiveRetryGate.NoteIncomplete(Stopwatch.GetTimestamp());
+                        progress.Report("[BLE_AUTO_RETRY] incomplete_measurement=true manual_retry_allowed=true automatic_backoff_s=30 max_incomplete_runs=2");
+                    }
+                    else if (completionCode == "native_target_preserved") adaptiveRetryGate.Reset();
+                }
+            }
             if (!diagnosticsCompleted && token.IsCancellationRequested) MarkAdaptiveDiagnosticInterrupted(diagnosticCapture, "cancelled");
             await SaveAdaptiveDiagnosticEvidenceAsync(diagnosticCapture, environmentKey, progress);
             if (SameConnection()) SetRuntimeBatteryRefreshEnabled(batteryEnabled);

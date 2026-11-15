@@ -928,6 +928,13 @@ func (s *Server) handleUrbStream(conn net.Conn, dev usb.Device) error {
 				}
 
 				pendingMu.Lock()
+				// Claim normal completion atomically against UNLINK. A successful
+				// RET_UNLINK must never be followed by RET_SUBMIT for that URB.
+				_, stillPending := pending[seq]
+				if !stillPending || urbCtx.Err() != nil {
+					pendingMu.Unlock()
+					return
+				}
 				delete(pending, seq)
 				pendingMu.Unlock()
 

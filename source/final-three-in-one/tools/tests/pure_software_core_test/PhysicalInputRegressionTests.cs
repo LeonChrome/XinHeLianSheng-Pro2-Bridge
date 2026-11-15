@@ -233,6 +233,15 @@ internal static class PhysicalInputRegressionTests
             await Until(()=>source.Snapshot().Reports>=before+160,deadline.Token);
             check(source.Snapshot().QueueDrops>0,"physical input queue is bounded "+kind);
             check(source.TryGetNewest(out var state,out _,out int superseded)&&superseded==63&&state.RawNotificationSequence==(ulong)(before+160),"newest fresh report selected "+kind);
+            source.PrepareForConsumerSession();
+            long edgeStart=source.Snapshot().Reports;
+            foreach(byte buttons in new byte[]{0,0,4,4,0})
+            { byte[] edge=Input(kind);edge[kind==NintendoInputKind.Pro2Usb?5:3]=buttons;io.Feed(edge); }
+            await Until(()=>source.Snapshot().Reports>=edgeStart+5,deadline.Token);
+            var observed=new List<GamepadButtons>();
+            while(source.TryGetNewest(out var edgeState,out _,out _))observed.Add(edgeState.Buttons);
+            check(observed.SequenceEqual(new[]{GamepadButtons.None,GamepadButtons.South,GamepadButtons.None}),
+                "backlogged HID input coalesces analog frames without swallowing a short press/release "+kind);
             await using var duplicate=new NintendoPhysicalInputSource(Device(kind,"ownership-"+kind));
             try{await duplicate.ConnectAsync(deadline.Token,new FakeHid(kind));check(false,"duplicate physical claim rejected");}catch(IOException){check(true,"physical ownership prevents two slots sharing one handle");}
             check(source.TryWriteOutputPacket(Pro2OutputPacketMapper.BuildOrdinaryPacket(100,150,"test"),out _),"physical feedback queued "+kind);

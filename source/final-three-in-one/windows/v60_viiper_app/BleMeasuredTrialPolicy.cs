@@ -30,7 +30,7 @@ public static class BleMeasuredTrialPolicy
     public static bool HasAcceptedParameterRequest(string? status) => status != null &&
         (status.Equals("Success", StringComparison.Ordinal) || status.EndsWith("_Success", StringComparison.Ordinal));
 
-    public const double TargetHz = 128;
+    public const double TargetHz = Pro2GameplayRatePolicy.HighRateAcceptanceHz;
     public const double MinimumWindowSeconds = 10;
     public const int MinimumSamples = 20;
     public const double MaximumInputAgeMs = 500;

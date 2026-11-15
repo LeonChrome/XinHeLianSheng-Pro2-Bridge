@@ -20,8 +20,8 @@ public static class BleFastConnectionPolicy
 {
     public const double MinimumWindowSeconds = 1.5;
     public const double MaximumWindowSeconds = 4;
-    public const double HighRateHz = 128;
-    public const double WarmHighCandidateMinimumHz = 120;
+    public const double HighRateHz = Pro2GameplayRatePolicy.HighRateAcceptanceHz;
+    public const double WarmHighCandidateMinimumHz = Pro2GameplayRatePolicy.NearTargetHz;
     public const double CompatibleRateHz = 60;
     public const double MinimumParsedRatio = .99;
     public const double MaximumCompletedAgeSeconds = 4;

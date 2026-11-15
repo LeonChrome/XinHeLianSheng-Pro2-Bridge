@@ -124,8 +124,7 @@ public sealed partial class Pro2BleInputSource :
                     parsedHz < BleFastConnectionPolicy.WarmHighCandidateMinimumHz ? Math.Min(2, fastMinimumIntervalLowWindows + 1) : 0;
                 windowMessage += " minimum_interval_retained=true below120_windows=" + fastMinimumIntervalLowWindows;
             }
-            double minimum = fastMinimumIntervalAdmitted ? BleFastConnectionPolicy.HighRateHz :
-                PureSoftware133Mode.IsEnabled ? PureSoftware133Mode.MinimumAcceptedHz : MinimumTargetNotifyRateHz;
+            double minimum = Pro2GameplayRatePolicy.HighRateAcceptanceHz;
             if (rawHz >= minimum && parsedHz >= minimum &&
                 Stopwatch.GetElapsedTime(lastParsedNotifyTicks, now).TotalMilliseconds < 500)
             {
@@ -236,7 +235,7 @@ public sealed partial class Pro2BleInputSource :
     private GattCharacteristic? legacyCharacteristic;
     private GattCharacteristic? ackCharacteristic;
     private GattCharacteristic? rumbleCharacteristic;
-    private TaskCompletionSource<byte[]>? ackTcs;
+    private Pro2CommandAckWaiter? pendingCommandAck;
     private GamepadState latest = GamepadState.Neutral();
     private DateTimeOffset latestAt;
     private uint updates;
@@ -1441,7 +1440,8 @@ public sealed partial class Pro2BleInputSource :
                 continue;
             }
             long initStarted = Stopwatch.GetTimestamp();
-            ackTcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var currentAck = new Pro2CommandAckWaiter(ackCharacteristic!, initCommand);
+            System.Threading.Volatile.Write(ref pendingCommandAck, currentAck);
             GattCommunicationStatus write = await WriteCharacteristicWithRetryAsync(
                 commandCharacteristic,
                 InitCommands[i],
@@ -1455,8 +1455,10 @@ public sealed partial class Pro2BleInputSource :
                 return false;
             }
 
-            Task completed = await Task.WhenAny(ackTcs.Task, Task.Delay(1500, cancellationToken));
-            if (completed != ackTcs.Task)
+            Task completed = await Task.WhenAny(currentAck.Task, Task.Delay(1500, cancellationToken));
+            System.Threading.Interlocked.CompareExchange(ref pendingCommandAck, null, currentAck);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (completed != currentAck.Task)
             {
                 AuditControl("init_ack_timeout index=" + i + " " + BleInitAuditPolicy.CommandIdentity(initCommand) +
                     " elapsed_ms=" + Stopwatch.GetElapsedTime(initStarted).TotalMilliseconds.ToString("F1") + " continuing=true");
@@ -1464,7 +1466,7 @@ public sealed partial class Pro2BleInputSource :
             }
             else
             {
-                byte[] reply = ackTcs.Task.Result;
+                byte[] reply = currentAck.Task.Result;
                 AuditControl("init_ack index=" + i + " expected_" + BleInitAuditPolicy.CommandIdentity(initCommand) +
                     " reply_" + BleInitAuditPolicy.CommandIdentity(reply) +
                     " identity_match=" + BleInitAuditPolicy.AckMatches(initCommand, reply) +
@@ -1495,7 +1497,7 @@ public sealed partial class Pro2BleInputSource :
                 cancellationToken);
         }
 
-        ackTcs = null;
+        System.Threading.Volatile.Write(ref pendingCommandAck, null);
         if (fd2Characteristic == null)
         {
             RecordConnectionFailure("channels_missing", "FD2 absent");
@@ -2508,7 +2510,8 @@ public sealed partial class Pro2BleInputSource :
             uint address = baseAddress + (uint)offset;
             int expectedLength = Math.Min(9, length - offset);
             byte[] request = BuildBleFlashReadCommand(address);
-            ackTcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var currentAck = new Pro2CommandAckWaiter(ackCharacteristic!, request);
+            System.Threading.Volatile.Write(ref pendingCommandAck, currentAck);
             GattCommunicationStatus write = await WriteCharacteristicWithRetryAsync(
                 command,
                 request,
@@ -2522,15 +2525,17 @@ public sealed partial class Pro2BleInputSource :
                 return;
             }
 
-            Task completed = await Task.WhenAny(ackTcs.Task, Task.Delay(1500, cancellationToken));
-            if (completed != ackTcs.Task)
+            Task completed = await Task.WhenAny(currentAck.Task, Task.Delay(1500, cancellationToken));
+            System.Threading.Interlocked.CompareExchange(ref pendingCommandAck, null, currentAck);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (completed != currentAck.Task)
             {
                 progress.Report("[PRO2_IMU_FLASH] read ACK timeout address=0x" +
                                 address.ToString("X8"));
                 return;
             }
 
-            byte[] response = ackTcs.Task.Result;
+            byte[] response = currentAck.Task.Result;
             if (response.Length < 16 + expectedLength ||
                 BinaryPrimitives.ReadUInt32LittleEndian(response.AsSpan(12, 4)) != address)
             {
@@ -2565,6 +2570,7 @@ public sealed partial class Pro2BleInputSource :
             " sender_current=" + ReferenceEquals(sender, ackCharacteristic) +
             " direction=" + (data.Length >= 8 ? "0x" + data[1].ToString("X2") : "short") +
             " ack=" + (data.Length >= 8 ? "0x" + data[5].ToString("X2") : "short") + " payload_logged=false");
+        if (!ReferenceEquals(sender, ackCharacteristic)) return;
         if (Pro2FirmwareInfo.TryDecode(data, out var firmware))
         {
             lock (gate) firmwareInfo = firmware;
@@ -2575,7 +2581,9 @@ public sealed partial class Pro2BleInputSource :
         ObserveExperimentalCommandResponse(data);
         // A delayed battery reply must not satisfy an initialization/flash ACK.
         if (data.Length >= 8 && data[0] == 0x0b) return;
-        ackTcs?.TrySetResult(data);
+        var pending = System.Threading.Volatile.Read(ref pendingCommandAck);
+        if (pending != null && !pending.TryComplete(sender, data))
+            AuditControl("ack_ignored_mismatch_or_stale " + BleInitAuditPolicy.CommandIdentity(data));
     }
 
     // No implementation in the formal app: the compiler removes these calls there.
@@ -4074,7 +4082,7 @@ public sealed partial class Pro2BleInputSource :
         legacyCharacteristic = null;
         commandCharacteristic = null;
         rumbleCharacteristic = null;
-        ackTcs = null;
+        System.Threading.Volatile.Write(ref pendingCommandAck, null);
         connectedLabel = "";
         lock (gate)
         {
@@ -4130,6 +4138,7 @@ public sealed partial class Pro2BleInputSource :
             win11CompatibilityTrialAttempted = false;
             compatibilityOptimizationSummary = "";
             adaptiveOptimizationRunAttempted = false;
+            adaptiveRetryGate.Reset();
             fastConnectionDiagnostics = null;
             fastConnectionEnvironment = null;
             fastConnectionPreference = null;
@@ -4475,9 +4484,10 @@ public sealed partial class Pro2BleInputSource :
 
     private void SetLinkRateClass(BlePerformanceSnapshot snapshot, bool degraded)
     {
-        rateAccepted = !degraded;
+        rateAccepted = !degraded && snapshot.NotifyRateHz >= Pro2GameplayRatePolicy.HighRateAcceptanceHz &&
+            snapshot.ParsedRateHz >= Pro2GameplayRatePolicy.HighRateAcceptanceHz;
         string rateClass;
-        if (snapshot.NotifyRateHz >= FastNotifyRateHz && snapshot.ParsedRateHz >= FastNotifyRateHz)
+        if (snapshot.NotifyRateHz >= Pro2GameplayRatePolicy.HighRateAcceptanceHz && snapshot.ParsedRateHz >= Pro2GameplayRatePolicy.HighRateAcceptanceHz)
         {
             rateClass = "133hz";
         }

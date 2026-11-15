@@ -27,6 +27,7 @@ public sealed partial class Pro2BleInputSource
     {
         get
         {
+            lock (gate) if (!adaptiveRetryGate.AllowsAutomatic(Stopwatch.GetTimestamp())) return false;
             if (!CanOptimizeConnectionCompatibility) return false;
             var rate = GetRateEvidence();
             lock (gate)

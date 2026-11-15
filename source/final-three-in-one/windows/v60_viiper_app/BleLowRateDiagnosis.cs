@@ -55,7 +55,7 @@ public static class BleLowRateDiagnoser
         if (healthObserved)
             evidence += "\n持续监测：" + health!.State + "；有效窗口：" + health.ValidWindowCount +
                 "；测量时长：" + health.ValidMeasuredSeconds.ToString("F1") + "s；高速健康门槛：" + health.HighRateThresholdHz +
-                "Hz（与 60Hz 游玩门槛、120Hz 初始化验收不同）" +
+                "Hz（60Hz 可游玩；120Hz 仅用于保留已有 7.5ms 连接）" +
                 "\n本次连接有效窗口最低 / 最高：" + Number(health.SessionMinimumHz ?? double.NaN) + " / " +
                 Number(health.SessionMaximumHz ?? double.NaN) + "Hz；低速窗口：" + health.LowWindowCount +
                 "；时间戳不能独立证明空口丢包或电源故障。";

@@ -50,7 +50,7 @@ public sealed record BleAdaptiveCachedPreset(BleAdaptiveEnvironmentKey Environme
 public static class BleAdaptivePresetPolicy
 {
     public const int MaximumTrials = 4;
-    public const double TargetHz = 128;
+    public const double TargetHz = Pro2GameplayRatePolicy.HighRateAcceptanceHz;
     public const double PlayableHz = 60;
     public const double MinimumWindowSeconds = 10;
     public const double MaximumWindowSeconds = 30;

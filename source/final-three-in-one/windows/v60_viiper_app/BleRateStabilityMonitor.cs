@@ -10,10 +10,9 @@ public enum BleNotifyCadenceHint { Unknown, Predominantly15Ms, MixedShortAndLong
 
 public sealed record BleRateStabilityOptions
 {
-    // A measured 133 Hz stream has window/scheduling tolerance. This health
-    // threshold is independent of gameplay (60 Hz) and preflight acceptance
-    // (PureSoftware133Mode.MinimumAcceptedHz, currently 120 Hz).
-    public double HighRateThresholdHz { get; init; } = 128;
+    // A measured 133Hz stream has window/scheduling tolerance. High-rate
+    // admission and health share 128Hz; gameplay remains a separate 60Hz gate.
+    public double HighRateThresholdHz { get; init; } = Pro2GameplayRatePolicy.HighRateAcceptanceHz;
     public int GoodWindowsRequired { get; init; } = 3;
     public int LowWindowsRequired { get; init; } = 2;
     public double MinimumWindowSeconds { get; init; } = 4;

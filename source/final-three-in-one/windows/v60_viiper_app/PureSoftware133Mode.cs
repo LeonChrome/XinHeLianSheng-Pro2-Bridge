@@ -6,7 +6,7 @@ internal static class PureSoftware133Mode
 {
     private const string EnvironmentVariable = "PRO2_PURE_SOFTWARE_133";
 
-    public const double MinimumAcceptedHz = 120.0;
+    public const double MinimumAcceptedHz = Pro2GameplayRatePolicy.HighRateAcceptanceHz;
     public const double MaximumRepeatedStateRatio = 0.01;
 
 #if PURE_SOFTWARE_RELEASE

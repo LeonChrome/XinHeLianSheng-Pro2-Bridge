@@ -55,6 +55,10 @@ type queuedInput struct {
 	Timestamp uint64
 }
 
+// A host HID read must not depend indefinitely on another physical input.
+// This is an idle USB compatibility report, never a new source/FD2 sample.
+const sourcePacedIdleReadLimit = 100 * time.Millisecond
+
 func sameInputDigital(a, b queuedInput) bool {
 	x, y := a.State, b.State
 	return x.Buttons == y.Buttons && x.DPad == y.DPad && (x.L2 > 0) == (y.L2 > 0) && (x.R2 > 0) == (y.R2 > 0) && x.Touch1Active == y.Touch1Active && x.Touch2Active == y.Touch2Active
@@ -251,6 +255,12 @@ func (d *DualSense) HandleTransfer(ctx context.Context, ep uint32, dir uint32, o
 			}
 			return nil
 		case 4:
+			var idle <-chan time.Time
+			if d.sourcePaced {
+				timer := time.NewTimer(sourcePacedIdleReadLimit)
+				defer timer.Stop()
+				idle = timer.C
+			}
 			for {
 				if ctx.Err() != nil && d.sourcePaced {
 					return nil
@@ -262,6 +272,27 @@ func (d *DualSense) HandleTransfer(ctx context.Context, ep uint32, dir uint32, o
 					return d.buildUSBInputReportAt(&sample.State, &ms, sample.Timestamp)
 				}
 				select {
+				case <-idle:
+					if ctx.Err() != nil {
+						return nil
+					}
+					// Prefer a fresh edge if it arrived as the idle timer fired.
+					if sample, ok := d.inputQueue.Pop(); ok {
+						d.mtx.Lock()
+						ms := *d.metaState
+						d.mtx.Unlock()
+						return d.buildUSBInputReportAt(&sample.State, &ms, sample.Timestamp)
+					}
+					d.mtx.Lock()
+					held, ms := *d.inputState, *d.metaState
+					d.mtx.Unlock()
+					// Preserve buttons/gravity, but do not integrate an old angular
+					// velocity across a period with no new physical measurement.
+					held.GyroX, held.GyroY, held.GyroZ = 0, 0, 0
+					d.inputQueue.RecordRepeat()
+					// The builder advances equal/old clocks by one protocol tick;
+					// do not assign 100ms of invented physical sensor time here.
+					return d.buildUSBInputReportAt(&held, &ms, 0)
 				case <-ctx.Done():
 					if !d.sourcePaced && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						d.mtx.Lock()

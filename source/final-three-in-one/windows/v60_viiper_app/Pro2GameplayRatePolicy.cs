@@ -2,11 +2,12 @@ using System;
 
 namespace Y700Switch2V60Viiper;
 
-/// <summary>Gameplay compatibility is distinct from the unchanged 133Hz quality acceptance.</summary>
+/// <summary>Playable input, near-target retention and high-rate acceptance are distinct.</summary>
 public static class Pro2GameplayRatePolicy
 {
     public const double MinimumGameplayHz = 60;
-    public const double HighRateAcceptanceHz = 120;
+    public const double NearTargetHz = 120;
+    public const double HighRateAcceptanceHz = 128;
 
     public static bool CanPlay(bool running, bool connected, double fd2Hz, double parsedHz,
         uint fd2Count, uint parsedCount, double lastInputAgeMs) => running && connected &&

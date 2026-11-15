@@ -2,7 +2,7 @@
 
 让 **Nintendo Switch 2 Pro（Pro2）手柄连接 Windows**，用于 Steam，也能切换成 Pro1、Xbox 或 PS5 兼容手柄。Pro2 无线连接无需专用接收器。
 
-**[推荐下载：v3.2.1 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.2.1/PRO2ControllerAssistant-v3.2.1-win-x64.exe)** · [备用 ZIP 文件夹版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.2.1/PRO2ControllerAssistant-v3.2.1-portable-win-x64.zip) · [更新说明](docs/RELEASE_v3.2.1_ZH.md)
+**[推荐下载：v3.2.7 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.2.7/PRO2ControllerAssistant-v3.2.7-win-x64.exe)** · [备用 ZIP 文件夹版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.2.7/PRO2ControllerAssistant-v3.2.7-portable-win-x64.zip) · [更新说明](docs/RELEASE-v3.2.7.md)
 
 EXE 首次打开会准备内置运行文件，请稍等几秒；ZIP 需完整解压。两者均自带 .NET 和 VIIPER。
 
@@ -28,14 +28,14 @@ EXE 首次打开会准备内置运行文件，请稍等几秒；ZIP 需完整解
 
 Pro2 USB 的厂商命令接口需要已有 WinUSB 绑定，程序不会自动替换设备驱动。完整接入条件、校准和 NFC 范围见 [输入方式与限制](docs/physical-inputs.md)。
 
-## v3.2.1 更新
+## v3.2.7 更新
 
-- 统一四种连接图卡和多手柄窗口，加入高清手柄图、悬停与选中动效。
-- 默认连接时优先 133Hz；Win11 可恢复同一环境已验证的 7.5ms 方案，并重新测量真实输入。
-- **Windows 代码 19** 单独判为虚拟设备配置异常，停止无效反复挂载。首页可备份并重建当前虚拟手柄，诊断中显示服务和筛选器信息；不重启蓝牙，不清理其他手柄。
-- 输入可用而虚拟输出失败时，界面明确区分，避免显示成已经可以游玩。
+- 新连接与重连优先复用同一环境已验证的方案，实测高速后停止轮测；保留已经生效的 7.5ms 连接，减少反复切换参数。
+- 修复 PS5 输入暂停时 HID 读取长期等待、USBIP 取消请求竞争，改善与其他手柄软件同时使用时的兼容性。
+- 修复初始化应答串线、有线／Pro1 短按被合并，以及普通背键长按被短暂输入间隙取消的问题；连发和手势中断后不积压重放。
+- 高速验收与健康监测统一采用 128Hz 容差；60Hz 可游玩。真实 FD2 与虚拟兼容报告分别计数。
 
-遇到代码 19，可点首页“修复虚拟手柄”并授权。若是共享筛选驱动残留，设备重建可能仍失败，需要按诊断修复对应软件；不能保证一次治愈所有系统配置问题。
+已通过 931643 项离线／本机回环断言、Go 后端全量测试、30 轮 Windows 原生 HID 测试及最终 EXE 启动检查。**UU 4.47.x 窗口激活／失活的完整场景尚待复测**，不承诺解决其全部挂起原因。
 
 ## 兼容性
 

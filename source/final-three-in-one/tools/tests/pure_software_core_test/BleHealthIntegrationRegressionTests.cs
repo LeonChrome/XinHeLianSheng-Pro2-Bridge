@@ -86,6 +86,25 @@ internal static class BleHealthIntegrationRegressionTests
         check(source.GetRateEvidence().Stability!.ValidWindowCount == evidence.Stability!.ValidWindowCount,
             "presentation polls do not create measurement windows");
         source.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        foreach (uint count in new uint[] { 625, 665 })
+        {
+            var warm = new Pro2BleInputSource();
+            void WarmField(string name, object value) => typeof(Pro2BleInputSource).GetField(name, flags)!.SetValue(warm, value);
+            typeof(Pro2BleInputSource).GetProperty(nameof(Pro2BleInputSource.IsRunning))!.SetValue(warm, true);
+            long tick = Stopwatch.GetTimestamp();
+            WarmField("transportConnected", true); WarmField("connectionIntervalUnits", (ushort)6);
+            WarmField("fastMinimumIntervalAdmitted", true);
+            WarmField("liveRateProbeTicks", tick - 5 * Stopwatch.Frequency);
+            WarmField("fd2InputNotifyCount", count); WarmField("fd2InputParsedCount", count);
+            WarmField("lastParsedNotifyTicks", tick);
+            warm.RecheckLiveRate();
+            var measured = warm.GetRateEvidence();
+            check(warm.IsHighRateReady == (count == 665) && measured.GameplayReady,
+                "warm-admitted passive 125Hz remains playable without being promoted to 133Hz; real 133Hz can recover without requests");
+            check(measured.Fd2Hz >= count / 5.0 - 1 && measured.Fd2Hz <= count / 5.0,
+                "passive classification keeps the actual measured rate instead of substituting a target value");
+            warm.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
         if (Environment.OSVersion.Version.Build < 22000)
         {
             var stopped = new Pro2BleInputSource();

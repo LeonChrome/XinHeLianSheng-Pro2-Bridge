@@ -130,7 +130,7 @@ public sealed partial class MainViewModel
         .Select(s => { if(s.PhysicalInput is {} physical) {var h=physical.Snapshot();return new BlePeerRate(s.Index,h.Identity,h.Running,h.Running&&h.AgeMs<500,h.Hz);} var r = s.InputSource.GetRateEvidence(); return new BlePeerRate(s.Index,
             s.InputSource.ConnectedAddress, r.Connected, r.RecentWindow && r.LastInputAgeMs < 500, Math.Min(r.Fd2Hz, r.ParsedHz)); }).ToArray();
 
-    private async Task OptimizeSlotCompatibilityAsync(Pro2ControllerSlot slot, CancellationToken token)
+    private async Task OptimizeSlotCompatibilityAsync(Pro2ControllerSlot slot, CancellationToken token, bool automatic = false)
     {
         if (slot.PhysicalInput != null)
         {
@@ -142,7 +142,7 @@ public sealed partial class MainViewModel
         {
             // Eligibility is rechecked after waiting; another loop may have
             // already optimized or disconnected this very same link.
-            if (!slot.InputSource.CanOptimizeConnectionCompatibility)
+            if (automatic ? !slot.InputSource.CanAutomaticallyOptimizeConnectionCompatibility : !slot.InputSource.CanOptimizeConnectionCompatibility)
             {
                 slot.Status = !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
                     ? "Win10 参数授权在首页；这是系统全局设置，不单独修改某只手柄。"
@@ -150,7 +150,7 @@ public sealed partial class MainViewModel
                 return;
             }
             var outcome = await slot.InputSource.OptimizeConnectionCompatibilityAsync(
-                new DirectProgress<string>(line => AppendLog("[PRO2_SLOT " + slot.Index + "] " + line)), token);
+                new DirectProgress<string>(line => AppendLog("[PRO2_SLOT " + slot.Index + "] " + line)), token, automatic);
             slot.Status = outcome.Summary;
             slot.RefreshFromSource();
         }

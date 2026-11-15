@@ -227,9 +227,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.2.5.0", "v3.2.5 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.2.6.0", "v3.2.6 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.2.5-connection-speed-optimization", "v3.2.5 release metadata");
+            "3.2.6-preserve-7p5-fast-start", "v3.2.6 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

@@ -102,16 +102,16 @@ public sealed partial class MainViewModel
     {
         if (PrimaryPhysical != null || pro2Slots[0].AutoReconnectEnabled) return; // Per-slot loop owns serialized optimization.
         if (previewOnly || shuttingDown || !AutoOptimizeBle || Busy || !HasLowRateWarning ||
-            !inputSource.CanOptimizeConnectionCompatibility ||
+            !inputSource.CanAutomaticallyOptimizeConnectionCompatibility ||
             Interlocked.Exchange(ref bleAutoOptimizationQueued, 1) != 0) return;
         async Task Optimize()
         {
             try
             {
-                if (!shuttingDown && AutoOptimizeBle && inputSource.CanOptimizeConnectionCompatibility)
+                if (!shuttingDown && AutoOptimizeBle && inputSource.CanAutomaticallyOptimizeConnectionCompatibility)
                 {
                     AppendLog("[BLE_AUTO_PRESET] trigger=confirmed_live_low_rate once_per_connection=true");
-                    await TryWin11CompatibilityAsync();
+                    await RunCompatibilityOptimizationAsync(automatic: true);
                 }
             }
             finally { Interlocked.Exchange(ref bleAutoOptimizationQueued, 0); }
@@ -120,9 +120,11 @@ public sealed partial class MainViewModel
         else _ = Task.Run(Optimize);
     }
 
-    public Task TryWin11CompatibilityAsync() => RunExclusiveAsync("自动优化蓝牙", async token =>
+    public Task TryWin11CompatibilityAsync() => RunCompatibilityOptimizationAsync(automatic: false);
+
+    private Task RunCompatibilityOptimizationAsync(bool automatic) => RunExclusiveAsync("自动优化蓝牙", async token =>
     {
-        if (!inputSource.CanOptimizeConnectionCompatibility)
+        if (automatic ? !inputSource.CanAutomaticallyOptimizeConnectionCompatibility : !inputSource.CanOptimizeConnectionCompatibility)
         {
             Status = "当前连接无需优化、正在测试或本轮方案已测完；正常高速连接不会被修改。";
             return;
@@ -136,7 +138,7 @@ public sealed partial class MainViewModel
             {
                 AppendLog(message);
                 RefreshBleCompatibilityPresentation();
-            }), token);
+            }), token, automatic);
         }
         finally { bleOperationGate.Release(); }
         Status = outcome.Summary;

@@ -15,6 +15,34 @@ public sealed partial class Pro2BleInputSource
     private BleAdaptivePresetCandidate? fastConnectionPreference;
     private BluetoothLEPreferredConnectionParameters? fastConnectionOriginalPreference;
     private IReadOnlyList<BlePeerRate>? fastConnectionPeerBaseline;
+    private bool fastMinimumIntervalAdmitted;
+    private int fastMinimumIntervalLowWindows;
+
+    private bool OwnsFixed7p5Preference => fastConnectionPreference?.Preset == BleAdaptivePreset.Win11Fixed7p5 &&
+        connectionParametersRequest != null && retainedConnectionPreference is { MinConnectionInterval: 6, MaxConnectionInterval: 6, ConnectionLatency: 0 };
+
+    // Manual optimization remains available. Automatic callers preserve a
+    // measured near-target minimum-interval link instead of restarting tests.
+    public bool CanAutomaticallyOptimizeConnectionCompatibility
+    {
+        get
+        {
+            if (!CanOptimizeConnectionCompatibility) return false;
+            var rate = GetRateEvidence();
+            lock (gate)
+            {
+                if (BleFastConnectionPolicy.ShouldPreserveMinimumInterval(fastMinimumIntervalAdmitted,
+                    OwnsFixed7p5Preference, rate.Connected, rate.Running, rate.RecentWindow, rate.IntervalUnits,
+                    rate.Fd2Hz, rate.ParsedHz, rate.LastInputAgeMs)) return false;
+                // One slow passive window cannot undo the retained request.
+                if (fastMinimumIntervalAdmitted && OwnsFixed7p5Preference && rate.Connected && rate.Running &&
+                    rate.RecentWindow && rate.IntervalUnits == 6 && rate.LastInputAgeMs is >= 0 and < 500 &&
+                    rate.Fd2Hz >= 60 && rate.ParsedHz >= rate.Fd2Hz * .99 && rate.ParsedHz <= rate.Fd2Hz &&
+                    fastMinimumIntervalLowWindows < 2) return false;
+            }
+            return true;
+        }
+    }
 
     // Metadata only: overlap this with GATT discovery, never with another BLE
     // connection attempt. A timeout disables remembered hints, not connection.
@@ -133,14 +161,17 @@ public sealed partial class Pro2BleInputSource
             bool high = SameConnection() && PeersHealthy() && BleFastConnectionPolicy.IsHigh(firstWindow, secondWindow);
             bool compatible = SameConnection() && PeersHealthy() && BleFastConnectionPolicy.IsCompatible(firstWindow, secondWindow);
             bool win11 = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
+            bool nearTarget = win11 && SameConnection() && PeersHealthy() &&
+                BleFastConnectionPolicy.IsWarmHighCandidate(firstWindow, secondWindow, OwnsFixed7p5Preference);
             // Win10 has no per-link public request API. Re-running its existing
             // settings cannot improve a measured 66Hz link; leave it playable.
-            bool accepted = high || (!win11 && compatible);
-            string code = high ? "fast_real_input_verified" : accepted ? "win10_fast_compatible" : "fast_check_full_optimization_required";
+            bool accepted = high || nearTarget || (!win11 && compatible);
+            string code = high ? "fast_real_input_verified" : nearTarget ? "fast_minimum_interval_retained" :
+                accepted ? "win10_fast_compatible" : "fast_check_full_optimization_required";
             progress.Report("[BLE_FAST_CONNECT_RESULT] result=" + code + " first_fd2_hz=" + first.Measured.Fd2Hz.ToString("F2") +
                 " second_fd2_hz=" + second.Measured.Fd2Hz.ToString("F2") + " high=" + high + " compatible=" + compatible +
                 " elapsed_ms=" + Stopwatch.GetElapsedTime(started).TotalMilliseconds.ToString("F0") +
-                " long_stability_proven=false full_preset_scan_skipped=" + accepted);
+                " near_target_preserved=" + nearTarget + " long_stability_proven=false full_preset_scan_skipped=" + accepted);
             if (!accepted)
             {
                 if (SameConnection()) RestoreFastConnectionPreference(owner, diagnostic, progress);
@@ -154,9 +185,13 @@ public sealed partial class Pro2BleInputSource
                 // A compatible Win10 window is not a passed high-rate gate.
                 rateAccepted = high;
                 linkRateClass = high ? "133hz" : "rate_limited";
+                fastMinimumIntervalAdmitted = nearTarget && !high;
+                fastMinimumIntervalLowWindows = 0;
             }
             compatibilityOptimizationSummary = high ? "真实输入已达 133Hz 级 · 保持当前参数" :
+                nearTarget ? "当前输入可游玩 · 保持 7.5ms，继续观察，不重复轮测" :
                 "当前输入可游玩 · 可在首页优化 Win10 蓝牙参数";
+            if (nearTarget && !high) win11ParameterRouteStatus = "Fixed7p5RetainedPassiveMonitor";
             CompleteAdaptiveDiagnosticEvidence(diagnostic, new(fastConnectionPreference,
                 firstWindow.Measurement, secondWindow.Measurement, true, code, Array.Empty<BleAdaptiveTrialRecord>()));
             if (high && fastConnectionEnvironment != null && fastConnectionPreference != null)

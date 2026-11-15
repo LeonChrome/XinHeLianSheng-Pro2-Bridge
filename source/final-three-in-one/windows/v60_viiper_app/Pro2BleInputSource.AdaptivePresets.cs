@@ -36,7 +36,8 @@ public sealed partial class Pro2BleInputSource
     }
 
     public Task<Pro2CompatibilityTrialOutcome> OptimizeConnectionCompatibilityAsync(
-        IProgress<string> progress, CancellationToken token) => CanOptimizeConnectionCompatibility
+        IProgress<string> progress, CancellationToken token, bool automatic = false) =>
+        (automatic ? CanAutomaticallyOptimizeConnectionCompatibility : CanOptimizeConnectionCompatibility)
         ? RunAdaptiveConnectionOptimizationAsync(progress, token, initializing: false)
         : Task.FromResult(new Pro2CompatibilityTrialOutcome(false, "not_eligible",
             "当前连接无需优化、正在测试或本轮预设已测完；保持现有输入。"));
@@ -339,8 +340,9 @@ public sealed partial class Pro2BleInputSource
             liveRateProbeRaw = fd2InputNotifyCount; liveRateProbeParsed = fd2InputParsedCount;
             liveNotifyGaps.Reset(); // Measurement boundary, not gameplay queue/counter reset.
             lastLiveGapSummary = measured.ExactGapSummary ?? default;
-            rateAccepted = measured.Fd2Hz >= Pro2GameplayRatePolicy.HighRateAcceptanceHz &&
-                measured.ParsedHz >= Pro2GameplayRatePolicy.HighRateAcceptanceHz && measured.ConnectedAtEnd && measured.LastInputAgeMs < 500;
+            double highThreshold = fastMinimumIntervalAdmitted ? BleFastConnectionPolicy.HighRateHz : Pro2GameplayRatePolicy.HighRateAcceptanceHz;
+            rateAccepted = measured.Fd2Hz >= highThreshold &&
+                measured.ParsedHz >= highThreshold && measured.ConnectedAtEnd && measured.LastInputAgeMs < 500;
             linkRateClass = rateAccepted ? "133hz" : "rate_limited";
         }
         if (IsRunning) SetConnectionPhase(rateAccepted ? Pro2ConnectionPhase.Ready : Pro2ConnectionPhase.RateLimited);

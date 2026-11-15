@@ -21,6 +21,7 @@ public static class BleFastConnectionPolicy
     public const double MinimumWindowSeconds = 1.5;
     public const double MaximumWindowSeconds = 4;
     public const double HighRateHz = 128;
+    public const double WarmHighCandidateMinimumHz = 120;
     public const double CompatibleRateHz = 60;
     public const double MinimumParsedRatio = .99;
     public const double MaximumCompletedAgeSeconds = 4;
@@ -39,6 +40,32 @@ public static class BleFastConnectionPolicy
 
     public static bool IsCompatible(BleFastConnectionWindow first, BleFastConnectionWindow second) =>
         Contiguous(first, second) && IsCompatible(first.Measurement, second.Measurement);
+
+    /// <summary>
+    /// Preserve an already accepted, still-owned Win11 fixed-7.5ms request when
+    /// initial input is usable and near target. This is compatibility admission,
+    /// not IsHigh or proof of stable 133Hz. The caller must verify Win11 ownership
+    /// and continue passive health monitoring without saving this as high proof.
+    /// </summary>
+    public static bool IsWarmHighCandidate(BleFastConnectionWindow first, BleFastConnectionWindow second,
+        bool acceptedFixed7p5) => acceptedFixed7p5 && Contiguous(first, second) &&
+        Distinct(first.Measurement, second.Measurement) &&
+        first.Measurement.Sample.ConnectionIntervalUnits == 6 && second.Measurement.Sample.ConnectionIntervalUnits == 6 &&
+        Valid(first.Measurement, WarmHighCandidateMinimumHz, 60, 16, 60) &&
+        Valid(second.Measurement, WarmHighCandidateMinimumHz, 60, 16, 60);
+
+    /// <summary>
+    /// Suppress automatic preset cycling while warm-admitted input remains live
+    /// at the already owned minimum interval. Manual optimization is separate;
+    /// this never changes measured rates or promotes compatibility to IsHigh.
+    /// </summary>
+    public static bool ShouldPreserveMinimumInterval(bool admittedWarm, bool ownsFixed7p5,
+        bool connected, bool running, bool recent, ushort interval, double fd2Hz,
+        double parsedHz, double lastInputAgeMs) =>
+        admittedWarm && ownsFixed7p5 && connected && running && recent && interval == 6 &&
+        double.IsFinite(fd2Hz) && double.IsFinite(parsedHz) && fd2Hz >= WarmHighCandidateMinimumHz &&
+        parsedHz >= WarmHighCandidateMinimumHz && parsedHz >= fd2Hz * MinimumParsedRatio && parsedHz <= fd2Hz &&
+        double.IsFinite(lastInputAgeMs) && lastInputAgeMs >= 0 && lastInputAgeMs < 500;
 
     private static bool Distinct(BleAdaptiveMeasurement? first, BleAdaptiveMeasurement? second) =>
         first != null && second != null && !ReferenceEquals(first, second) &&

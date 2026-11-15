@@ -2118,8 +2118,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                         continue;
                     }
 
-                    if (AutoOptimizeBle && slot.InputSource.CanOptimizeConnectionCompatibility && !Busy)
-                        await OptimizeSlotCompatibilityAsync(slot, cancellationToken);
+                    if (AutoOptimizeBle && slot.InputSource.CanAutomaticallyOptimizeConnectionCompatibility && !Busy)
+                        await OptimizeSlotCompatibilityAsync(slot, cancellationToken, automatic: true);
                     ReportReconnectRecovery(slot.Index);
                     await WaitForReconnectCheckAsync(slot.Index, cancellationToken);
                     continue;

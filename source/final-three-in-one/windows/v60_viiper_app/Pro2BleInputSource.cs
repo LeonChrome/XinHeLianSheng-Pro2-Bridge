@@ -118,7 +118,14 @@ public sealed partial class Pro2BleInputSource :
             liveRateProbeTicks = now;
             liveRateProbeRaw = fd2InputNotifyCount;
             liveRateProbeParsed = fd2InputParsedCount;
-            double minimum = PureSoftware133Mode.IsEnabled ? PureSoftware133Mode.MinimumAcceptedHz : MinimumTargetNotifyRateHz;
+            if (fastMinimumIntervalAdmitted)
+            {
+                fastMinimumIntervalLowWindows = rawHz < BleFastConnectionPolicy.WarmHighCandidateMinimumHz ||
+                    parsedHz < BleFastConnectionPolicy.WarmHighCandidateMinimumHz ? Math.Min(2, fastMinimumIntervalLowWindows + 1) : 0;
+                windowMessage += " minimum_interval_retained=true below120_windows=" + fastMinimumIntervalLowWindows;
+            }
+            double minimum = fastMinimumIntervalAdmitted ? BleFastConnectionPolicy.HighRateHz :
+                PureSoftware133Mode.IsEnabled ? PureSoftware133Mode.MinimumAcceptedHz : MinimumTargetNotifyRateHz;
             if (rawHz >= minimum && parsedHz >= minimum &&
                 Stopwatch.GetElapsedTime(lastParsedNotifyTicks, now).TotalMilliseconds < 500)
             {
@@ -127,6 +134,7 @@ public sealed partial class Pro2BleInputSource :
                 lastPerformanceWarning = "";
                 lastPerformanceFailure = "";
                 linkRateClass = "133hz";
+                if (fastMinimumIntervalAdmitted) compatibilityOptimizationSummary = "真实输入已达 133Hz 级 · 保持 7.5ms";
             }
             else
             {
@@ -134,6 +142,8 @@ public sealed partial class Pro2BleInputSource :
                 rateAccepted = false;
                 linkRateClass = "rate_limited";
                 lastPerformanceWarning = "真实输入速率未达标：" + windowMessage;
+                if (fastMinimumIntervalAdmitted && rawHz >= 120 && parsedHz >= 120)
+                    compatibilityOptimizationSummary = "当前输入可游玩 · 保持 7.5ms，继续观察，不重复轮测";
             }
         }
         connectionProgress?.Report(windowMessage);
@@ -4125,6 +4135,8 @@ public sealed partial class Pro2BleInputSource :
             fastConnectionPreference = null;
             fastConnectionOriginalPreference = null;
             fastConnectionPeerBaseline = null;
+            fastMinimumIntervalAdmitted = false;
+            fastMinimumIntervalLowWindows = 0;
             ResetAdaptiveDiagnosticEvidenceNoLock();
             retainedConnectionPreference = null;
             liveParsedRateHz = 0;

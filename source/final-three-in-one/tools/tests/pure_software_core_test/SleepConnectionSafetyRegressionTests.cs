@@ -5,6 +5,17 @@ internal static class SleepConnectionSafetyRegressionTests
 {
     public static async Task RunAsync(Action<bool, string> check)
     {
+        const ulong savedWakeAddress = 0x38C6CE27FC2D;
+        check(Pro2ReconnectAdvertisementPolicy.CanUse(savedWakeAddress, savedWakeAddress, true, TimeSpan.FromMilliseconds(10)),
+            "fresh connectable advertisement from the exact saved slot address may immediately interrupt scan backoff without a manufacturer flag");
+        foreach (var args in new[] { (savedWakeAddress, savedWakeAddress, false, 0.0), (savedWakeAddress, savedWakeAddress, true, 5.01),
+            (savedWakeAddress, savedWakeAddress, true, -1.01), (savedWakeAddress, 0x112233445566UL, true, 0.0), (0UL, savedWakeAddress, true, 0.0) })
+            check(!Pro2ReconnectAdvertisementPolicy.CanUse(args.Item1, args.Item2, args.Item3, TimeSpan.FromSeconds(args.Item4)),
+                "nonconnectable, stale, future, other-slot and unknown-address packets cannot wake a GATT connection");
+        foreach (string reason in new[] { "no_pro2", "no_advertisements", "saved_not_seen" })
+            check(Pro2ReconnectAdvertisementPolicy.CanInterruptScanBackoff(reason), "known wake packet can interrupt scan-only backoff " + reason);
+        foreach (string reason in new[] { "unreachable", "timeout", "gatt_draining", "gatt_stalled", "access_denied", "channels_missing" })
+            check(!Pro2ReconnectAdvertisementPolicy.CanInterruptScanBackoff(reason), "real connection failure preserves quarantine and cooldown " + reason);
         // Deliberately hold a simulated battery/rumble write in flight. Sleep cannot
         // cut its connection until that producer has finished; no reconnect after drop.
         var trafficJoined = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

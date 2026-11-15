@@ -94,7 +94,8 @@ public sealed partial class Pro2BleInputSource
                     (cached?.Preset.ToString() ?? "none") + " cache_is_retest_hint_only=true");
                 win11ParameterRouteStatus = "AdaptiveBoundedPresets";
             }
-            var peerBaseline = PeerRatesProvider?.Invoke() ?? Array.Empty<BlePeerRate>();
+            var peerBaseline = initializing && fastConnectionPeerBaseline != null ? fastConnectionPeerBaseline :
+                PeerRatesProvider?.Invoke() ?? Array.Empty<BlePeerRate>();
             bool PeersHealthy() => BlePeerRateGuard.Healthy(peerBaseline, PeerRatesProvider?.Invoke() ?? Array.Empty<BlePeerRate>());
             progress.Report("[BLE_PEER_GUARD] tracked_peers=" + System.Linq.Enumerable.Count(peerBaseline, p => p.Connected && p.Fresh) + " cached_only=true system_writes=false");
             var backend = new AdaptiveTrialBackend(SameConnection, PeersHealthy,
@@ -113,7 +114,7 @@ public sealed partial class Pro2BleInputSource
                     if (candidate != null) win11CompatibilityTrialAttempted = true;
                     bool submitted = SubmitAdaptiveConnectionPreset(owner, candidate, original, diagnosticCapture, progress);
                     // Allow parameter negotiation before counting a full 10s window.
-                    if (submitted && ct.CanBeCanceled) await Task.Delay(1500, ct);
+                    if (submitted) await WaitForAdaptivePreferenceAsync(ct);
                     return submitted;
                 }, () => ReleaseAdaptiveTrialRequest(diagnosticCapture, progress), Report);
             BleAdaptiveRunResult? cachedStart = initializing
@@ -163,9 +164,17 @@ public sealed partial class Pro2BleInputSource
             try
             {
                 if(cachedStart!=null)
+                {
                     progress.Report("[BLE_CONNECT_PRIORITY] exact_cache_reverified=true cache_lifetime_extended=false");
+                    if (cached != null) BleFastConnectionHintStore.SaveFromValidatedCache(cached);
+                }
                 else if (environmentKey != null && result.Selected != null && result.FinalVerified)
-                    BleAdaptivePresetStore.Save(new(environmentKey, result.Selected.Preset, result.Native, result.Final, DateTimeOffset.UtcNow));
+                {
+                    var entry = new BleAdaptiveCachedPreset(environmentKey, result.Selected.Preset, result.Native, result.Final, DateTimeOffset.UtcNow);
+                    BleAdaptivePresetStore.Save(entry);
+                    if (high && result.Selected.Preset is BleAdaptivePreset.Win11Fixed7p5 or BleAdaptivePreset.Win11ThroughputOptimized)
+                        BleFastConnectionHintStore.SaveFromValidatedCache(entry);
+                }
                 else BleAdaptivePresetStore.Invalidate(environmentKey);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
@@ -210,7 +219,8 @@ public sealed partial class Pro2BleInputSource
     }
 
     private bool SubmitAdaptiveConnectionPreset(BluetoothLEDevice owner, BleAdaptivePresetCandidate? candidate,
-        BluetoothLEPreferredConnectionParameters? original, AdaptiveDiagnosticCapture diagnosticCapture, IProgress<string> progress)
+        BluetoothLEPreferredConnectionParameters? original, AdaptiveDiagnosticCapture diagnosticCapture, IProgress<string> progress,
+        bool refreshUnmatchedInterval = false)
     {
         string phase = candidate == null ? "restore_original" : "apply_or_retain";
         string source = candidate == null ? "previous_preference" : candidate.IsExperimental ? "own_abi" : "system_preset";
@@ -229,6 +239,18 @@ public sealed partial class Pro2BleInputSource
                 ? new(candidate.MinUnits!.Value, candidate.MaxUnits!.Value, candidate.Latency!.Value, candidate.TimeoutUnits!.Value) : null;
             parameters = candidate == null ? original
                 : payload?.Parameters ?? BluetoothLEPreferredConnectionParameters.ThroughputOptimized;
+            if (!refreshUnmatchedInterval && parameters != null && retainedConnectionPreference is { } retained && connectionParametersRequest != null &&
+                connectionParametersRequest.Status == BluetoothLEPreferredConnectionParametersRequestStatus.Success &&
+                parameters.MinConnectionInterval == retained.MinConnectionInterval && parameters.MaxConnectionInterval == retained.MaxConnectionInterval &&
+                parameters.ConnectionLatency == retained.ConnectionLatency && parameters.LinkTimeout == retained.LinkTimeout)
+            {
+                RecordAdaptiveRequest(diagnosticCapture, new(candidate?.Id ?? "restore_original", phase,
+                    retained.MinConnectionInterval, retained.MaxConnectionInterval, retained.ConnectionLatency,
+                    retained.LinkTimeout, "RetainedExisting", true, ApiCalled: false, ParameterSource: "owned_request"));
+                progress.Report("[BLE_AUTO_PRESET_REQUEST] preset=" + (candidate?.Id ?? "restore_original") +
+                    " status=RetainedExisting api_called=false actual_interval_not_inferred=true");
+                return true;
+            }
             if (parameters == null)
             {
                 var released = connectionParametersRequest;

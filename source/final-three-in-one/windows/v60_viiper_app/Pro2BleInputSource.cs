@@ -1303,6 +1303,7 @@ public sealed partial class Pro2BleInputSource :
         bool serviceFirst)
     {
         ResetLiveState();
+        long connectionStarted = Stopwatch.GetTimestamp();
         BeginProtocolAudit(progress);
         ConnectionStage("打开设备", FormatAddress(candidate.Address));
         SetConnectionPhase(Pro2ConnectionPhase.Connecting);
@@ -1318,6 +1319,9 @@ public sealed partial class Pro2BleInputSource :
 
         device = opened;
         connectionProgress = progress;
+        Task<BleAdaptiveEnvironmentKey?>? fastEnvironmentTask = AutoOptimizeBleEnabled &&
+            !customConnectionParameterExperiment && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+            ? CaptureFastConnectionEnvironmentAsync(opened, cancellationToken) : null;
         progress.Report("[BLE_COMPATIBILITY] " + BleCompatibilityInspector.Current.Telemetry);
         opened.ConnectionStatusChanged += OnBluetoothConnectionStatusChanged;
         progress.Report("[PRO2_BLE] opened address=" + FormatAddress(candidate.Address) +
@@ -1329,7 +1333,9 @@ public sealed partial class Pro2BleInputSource :
             ConnectionStage("打开 GATT 会话");
             await ObserveGattSessionAsync(opened, progress, cancellationToken);
             ObserveWindowsConnectionParameters(opened, progress);
-            await Task.Delay(500, cancellationToken);
+            // Session/GATT operations already await their own completion. Keep
+            // the historical pause for isolated diagnostics only.
+            if (!AutoOptimizeBleEnabled) await Task.Delay(500, cancellationToken);
             if (!candidate.IsManualSelection && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
                 BleCompatibilityInspector.Current.Plan.CanRequestPreferredParameters)
                 TryRequestWindows11ThroughputPreference(opened, "initial", progress);
@@ -1396,6 +1402,10 @@ public sealed partial class Pro2BleInputSource :
                             " rumble=" + (rumbleCharacteristic != null));
             return false;
         }
+
+        if (commandCharacteristic.Uuid == CmdUuid && ackCharacteristic.Uuid == AckUuid &&
+            fd2Characteristic?.Uuid == NotifyFd2Uuid)
+            await PrepareFastConnectionAsync(opened, fastEnvironmentTask, progress, cancellationToken);
 
 #if PRO2_WIRELESS_AUDIO_EXPERIMENT
         // Opt-in, independently compiled diagnostic only. The production build
@@ -1495,6 +1505,9 @@ public sealed partial class Pro2BleInputSource :
         ConnectionStage("FD2 输入验收");
         if (await WaitForFd2MotionAsync(TimeSpan.FromSeconds(6), cancellationToken))
         {
+            progress.Report("[BLE_CONNECT_TIMING] first_fd2_ms=" +
+                Stopwatch.GetElapsedTime(connectionStarted).TotalMilliseconds.ToString("F0") +
+                " scope=opened_candidate_to_live_fd2 scan_excluded=true");
             SetConnectionPhase(Pro2ConnectionPhase.Measuring);
             if (!await EnsureUsableBlePerformanceAsync(progress, cancellationToken))
             {
@@ -1520,6 +1533,9 @@ public sealed partial class Pro2BleInputSource :
                 lastUserActivityTicks = Stopwatch.GetTimestamp();
             }
             SetConnectionPhase(rateAccepted ? Pro2ConnectionPhase.Ready : Pro2ConnectionPhase.RateLimited);
+            progress.Report("[BLE_CONNECT_TIMING] usable_input_ms=" +
+                Stopwatch.GetElapsedTime(connectionStarted).TotalMilliseconds.ToString("F0") +
+                " scope=opened_candidate_to_usable_input scan_excluded=true");
             StartRumbleWriter(progress);
             StartRuntimeBatteryRefresh(progress);
             LogBatteryTransport(progress);
@@ -2202,7 +2218,7 @@ public sealed partial class Pro2BleInputSource :
             }
         }
 
-        await Task.Delay(150, CancellationToken.None);
+        if (discoveryPolicy == null) await Task.Delay(150, CancellationToken.None);
         cancellationToken.ThrowIfCancellationRequested();
         lock (found)
         {
@@ -3200,6 +3216,7 @@ public sealed partial class Pro2BleInputSource :
     {
         if (AutoOptimizeBleEnabled && !customConnectionParameterExperiment)
         {
+            if (await TryFastConnectionAcceptanceAsync(progress, cancellationToken)) return true;
             var optimization=await RunAdaptiveConnectionOptimizationAsync(progress, cancellationToken, initializing: true);
             Pro2RateEvidence evidence = GetRateEvidence();
             // Do not use the lifetime average spanning several slow/fast presets.
@@ -3525,6 +3542,12 @@ public sealed partial class Pro2BleInputSource :
         }
         try
         {
+            if (AutoOptimizeBleEnabled && fastConnectionPreference != null && retainedConnectionPreference != null)
+            {
+                progress.Report("[PRO2_BLE_LINK] preference_retained reason=" + reason +
+                    " preset=" + fastConnectionPreference.Id + " request_sent=false fd2_check_pending=true");
+                return true;
+            }
             BluetoothLEPreferredConnectionParameters preferred =
                 BluetoothLEPreferredConnectionParameters.ThroughputOptimized;
             uint currentInterval;
@@ -4097,6 +4120,11 @@ public sealed partial class Pro2BleInputSource :
             win11CompatibilityTrialAttempted = false;
             compatibilityOptimizationSummary = "";
             adaptiveOptimizationRunAttempted = false;
+            fastConnectionDiagnostics = null;
+            fastConnectionEnvironment = null;
+            fastConnectionPreference = null;
+            fastConnectionOriginalPreference = null;
+            fastConnectionPeerBaseline = null;
             ResetAdaptiveDiagnosticEvidenceNoLock();
             retainedConnectionPreference = null;
             liveParsedRateHz = 0;

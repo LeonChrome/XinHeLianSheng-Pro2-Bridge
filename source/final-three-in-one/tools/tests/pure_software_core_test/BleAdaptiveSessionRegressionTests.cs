@@ -125,6 +125,42 @@ internal static class BleAdaptiveSessionRegressionTests
         check(nativeFast10.Requests.Count == 0 && nativeFast10Result.Code == "native_target_preserved",
             "healthy Windows 10 native connection is not touched merely because audited system tools exist");
 
+        foreach (var emptyPlan in new[]
+        {
+            (Capabilities: caps, Native: target),
+            (Capabilities: new BleAdaptiveCapabilities(false, false, false, true), Native: target),
+            (Capabilities: new BleAdaptiveCapabilities(true, false, true), Native: native66)
+        })
+        foreach (bool peerRecovers in new[] { false, true })
+        {
+            var nativePeerRegression = new MockBackend(emptyPlan.Native, emptyPlan.Native);
+            nativePeerRegression.BeforeMeasure = phase =>
+            {
+                if (phase == "NATIVE") nativePeerRegression.PeersHealthy = false;
+            };
+            nativePeerRegression.AfterApplyRequest = (candidate, _) =>
+            {
+                if (candidate == null) nativePeerRegression.PeersHealthy = peerRecovers;
+            };
+            var guardedNative = await BleAdaptiveSessionRunner.RunAsync(emptyPlan.Capabilities,
+                nativePeerRegression, null, CancellationToken.None);
+            check(nativePeerRegression.Requests.SequenceEqual(new BleAdaptivePreset?[] { null }) &&
+                nativePeerRegression.MeasurePhases.SequenceEqual(new[] { "NATIVE", "PEER_RESTORE_VERIFY" }) &&
+                nativePeerRegression.Releases == 0,
+                "a no-candidate high or API-unavailable plan restores the original request once and measures peer recovery without trying presets");
+            check(!guardedNative.FinalVerified && guardedNative.Selected == null &&
+                guardedNative.Code == (peerRecovers ? "peer_rate_regression_restored" : "peer_rate_regression_restore_unverified") &&
+                guardedNative.Trials.Single().Decision == "peer_rate_regression",
+                "local native speed never hides a peer regression or claims a verified high result after an empty-plan rollback");
+        }
+        var failedNativePeerRestore = new MockBackend(target, target)
+            { PeersHealthy = false, AllowNativeRestoration = false };
+        var failedNativePeerResult = await Run(failedNativePeerRestore);
+        check(failedNativePeerRestore.Requests.SequenceEqual(new BleAdaptivePreset?[] { null }) &&
+            failedNativePeerRestore.Releases == 1 && failedNativePeerRestore.MeasurePhases.Last() == "PEER_RESTORE_VERIFY" &&
+            !failedNativePeerResult.FinalVerified && failedNativePeerResult.Code == "peer_rate_regression_restore_unverified",
+            "failed peer rollback in a native-high empty plan releases the trial request and never certifies restored input");
+
         var firstTarget = new MockBackend(native66, target, target);
         var firstTargetResult = await Run(firstTarget);
         check(firstTarget.Requests.Count == 1 && firstTargetResult.Selected?.Preset == BleAdaptivePreset.Win11Fixed7p5 &&

@@ -5,6 +5,11 @@ internal static class BleMeasuredTrialRegressionTests
 {
     public static void Run(Action<bool, string> check)
     {
+        foreach (string status in new[] { "Success", "adaptive_win11_fixed_7p5_Success", "custom_7p5_Success", "trial_restore_Success" })
+            check(BleMeasuredTrialPolicy.HasAcceptedParameterRequest(status), "accepted retained API status remains evidence " + status);
+        foreach (string? status in new string?[] { null, "", "native", "unsupported_pre_win11", "observing_native", "fd2_report_rate_DeferUntilMeasured",
+            "adaptive_released_native_interval_not_guaranteed", "adaptive_win11_fixed_7p5_AccessDenied", "write_success", "Success_failed" })
+            check(!BleMeasuredTrialPolicy.HasAcceptedParameterRequest(status), "a read-only window does not fabricate parameter API success " + status);
         BleMeasuredTrialSample Sample(int raw = 660, int parsed = 660) =>
             new(10, raw, parsed, 4, true, true, 15, 12);
         var before = Sample() with { RequestedSuccessfully = false };

@@ -57,8 +57,6 @@ public static class BleAdaptiveSessionRunner
             }
         }
         BleAdaptivePresetPlan plan = BleAdaptivePresetPolicy.CreatePlan(capabilities, native, preferred);
-        if (plan.Candidates.Count == 0)
-            return new(null, native, native, BleAdaptivePresetPolicy.IsValidMeasurement(native), plan.Code, trials);
 
         BleAdaptiveMeasurement best = native;
         BleAdaptiveMeasurement latest = native;
@@ -116,6 +114,17 @@ public static class BleAdaptiveSessionRunner
         }
         try
         {
+            token.ThrowIfCancellationRequested();
+            if (!backend.Connected) return DisconnectedResult();
+            // A local high/native-only result does not excuse an earlier
+            // connection request slowing another pad. Verify peers even when
+            // there are no candidate presets left to try.
+            if (!PeersHealthy()) return await RestoreForPeerRegressionAsync();
+            if (plan.Candidates.Count == 0)
+            {
+                finished = true;
+                return new(null, native, native, BleAdaptivePresetPolicy.IsValidMeasurement(native), plan.Code, trials);
+            }
             int index = 0;
             foreach (BleAdaptivePresetCandidate candidate in plan.Candidates)
             {

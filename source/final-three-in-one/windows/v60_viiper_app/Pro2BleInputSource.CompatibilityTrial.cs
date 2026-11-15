@@ -122,6 +122,7 @@ public sealed partial class Pro2BleInputSource
     {
         return new(measurement.DurationSeconds, measurement.Fd2Count, measurement.ParsedCount,
             measurement.LastInputAgeMs, connected && measurement.ConnectedAtEnd,
-            true, measurement.Gaps.P95Ms, measurement.ConnectionIntervalUnits);
+            BleMeasuredTrialPolicy.HasAcceptedParameterRequest(measurement.RequestStatus),
+            measurement.Gaps.P95Ms, measurement.ConnectionIntervalUnits);
     }
 }

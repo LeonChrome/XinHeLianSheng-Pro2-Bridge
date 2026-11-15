@@ -240,17 +240,15 @@ public sealed partial class MainViewModel
         var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Passive };
         Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs> onReceived = (_, args) =>
         {
-            if (Pro2SleepSafety.IsWakeAdvertisement(target, args.BluetoothAddress,
-                args.Advertisement.ManufacturerData.Any(data => data.CompanyId == 0x0553)))
-            {
-                var candidate = new Pro2ManualCandidate(args.BluetoothAddress, args.BluetoothAddressType,
-                    args.Advertisement.LocalName ?? "", args.RawSignalStrengthInDBm, true, 30);
-                bool connectable = args.AdvertisementType is BluetoothLEAdvertisementType.ConnectableUndirected
-                    or BluetoothLEAdvertisementType.ConnectableDirected ||
-                    args.AdvertisementType == BluetoothLEAdvertisementType.Extended && args.IsConnectable;
-                if (candidate.IsValid && (DateTimeOffset.UtcNow - args.Timestamp).TotalSeconds is >= -1 and <= 5)
-                    woke.TrySetResult(new(candidate, Stopwatch.GetTimestamp(), connectable));
-            }
+            bool connectable = args.AdvertisementType is BluetoothLEAdvertisementType.ConnectableUndirected
+                or BluetoothLEAdvertisementType.ConnectableDirected ||
+                args.AdvertisementType == BluetoothLEAdvertisementType.Extended && args.IsConnectable;
+            if (!Pro2ReconnectAdvertisementPolicy.CanUse(target, args.BluetoothAddress, connectable,
+                DateTimeOffset.UtcNow - args.Timestamp)) return;
+            bool nintendo = args.Advertisement.ManufacturerData.Any(data => data.CompanyId == 0x0553);
+            var candidate = new Pro2ManualCandidate(args.BluetoothAddress, args.BluetoothAddressType,
+                args.Advertisement.LocalName ?? "", args.RawSignalStrengthInDBm, nintendo, nintendo ? 30 : 0);
+            if (candidate.IsValid) woke.TrySetResult(new(candidate, Stopwatch.GetTimestamp(), connectable));
         };
         Windows.Foundation.TypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementWatcherStoppedEventArgs> onStopped = (_, args) =>
         {
@@ -287,10 +285,10 @@ public sealed partial class MainViewModel
 
     private async Task WaitForOfflineRetryAsync(Pro2ControllerSlot slot, TimeSpan delay, CancellationToken token)
     {
-        string savedAddress = LastKnownPro2AddressForSlot(slot);
+        string savedAddress = slot.Index == 1 && manualReconnectTarget != null
+            ? manualReconnectTarget.AddressText : LastKnownPro2AddressForSlot(slot);
         string reason = slot.InputSource.ConnectionDiagnosis.Code;
-        if ((slot.Index == 1 && manualReconnectTarget != null) ||
-            reason is not ("no_pro2" or "no_advertisements" or "saved_not_seen") ||
+        if (!Pro2ReconnectAdvertisementPolicy.CanInterruptScanBackoff(reason) ||
             !BleDiagnosticTargetResolver.TryParsePublicAddress(savedAddress, out ulong target))
         {
             await Task.Delay(delay, token);
@@ -310,7 +308,8 @@ public sealed partial class MainViewModel
             {
                 AutoSleepState(slot.Index).WakeAdvertisement = advertisement;
                 AppendLog("[PRO2_BLE_RECOVERY] slot=" + slot.Index + " action=offline_backoff_interrupted_by_wake address=" +
-                    advertisement.Candidate.AddressText + " connectable=" + advertisement.Connectable);
+                    advertisement.Candidate.AddressText + " connectable=" + advertisement.Connectable +
+                    " manufacturer_flag=" + advertisement.Candidate.NintendoManufacturer + " identity_gate=exact_pro2_gatt required=true");
                 return;
             }
         }

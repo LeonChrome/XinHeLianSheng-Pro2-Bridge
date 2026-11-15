@@ -25,6 +25,11 @@ public sealed record BleMeasuredTrialResult(bool RetainRequest, string Code, str
 /// </summary>
 public static class BleMeasuredTrialPolicy
 {
+    // This describes the retained parameter request, not a new request per
+    // measurement. Native/Win10/deferral/release windows have no accepted API.
+    public static bool HasAcceptedParameterRequest(string? status) => status != null &&
+        (status.Equals("Success", StringComparison.Ordinal) || status.EndsWith("_Success", StringComparison.Ordinal));
+
     public const double TargetHz = 128;
     public const double MinimumWindowSeconds = 10;
     public const int MinimumSamples = 20;

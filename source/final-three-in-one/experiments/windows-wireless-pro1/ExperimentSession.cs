@@ -15,6 +15,8 @@ namespace Pro2WirelessExperiment;
 public sealed class ExperimentSession:IAsyncDisposable
 {
     private readonly Action<string> show;
+    private readonly string runtimeDirectory;
+    private readonly bool integrated;
     private readonly object protocolGate=new();
     private readonly Channel<string> journal=Channel.CreateBounded<string>(new BoundedChannelOptions(8192){SingleReader=true,SingleWriter=false,FullMode=BoundedChannelFullMode.Wait});
     private readonly Task journalTask;
@@ -51,8 +53,9 @@ public sealed class ExperimentSession:IAsyncDisposable
     public bool CanReadNfc=>source?.CanReadUsbNfc==true&&captureTask is not{IsCompleted:false};
     public string Summary=>source==null?"未连接 USB 手柄":source.MetricsSummary;
     public string State=>radioEnded?radioEndReason:receiverConnected?"无线 Pro1 已连接 · 接收端频率待验证":relayStarted?"等待接收设备配对 Pro Controller":UsbConnected?"USB 已连接 · 无线发射尚未启动":"未连接";
-    public ExperimentSession(string directory,Action<string>? display=null)
+    public ExperimentSession(string directory,Action<string>? display=null,string? runtimeDirectory=null,bool integrated=false)
     {
+        this.runtimeDirectory=Path.GetFullPath(runtimeDirectory??AppContext.BaseDirectory);this.integrated=integrated;
         DirectoryPath=Path.GetFullPath(directory);CreatePrivateDirectory(DirectoryPath);
         show=display??(_=>{});
         journalTask=Task.Run(WriteJournalAsync);
@@ -102,7 +105,7 @@ public sealed class ExperimentSession:IAsyncDisposable
     {
         if(source!=null)throw new InvalidOperationException("本实验已经持有实体手柄。");
         if(device.Kind==NintendoInputKind.Pro1Bluetooth)throw new NotSupportedException("本实验仅接收实体 USB 手柄。");
-        if(Mutex.TryOpenExisting(@"Global\Y700Switch2V60ViiperManager",out var manager))
+        if(!integrated&&Mutex.TryOpenExisting(@"Global\Y700Switch2V60ViiperManager",out var manager))
         {
             using(manager)
             {
@@ -127,10 +130,10 @@ public sealed class ExperimentSession:IAsyncDisposable
     }
     private void ReleaseInputLease()
     {var lease=Interlocked.Exchange(ref inputLease,null);if(lease!=null){lease.Release();lease.Dispose();}}
-    public async Task<WirelessRelayRadio> PrepareRadioAsync(WirelessRelayRadio selected,CancellationToken token)
+    public async Task<WirelessRelayRadio> PrepareRadioAsync(WirelessRelayRadio selected,CancellationToken token,bool continuous=false)
     {
         if(radioLease!=null||relayStarted)throw new InvalidOperationException("本轮已经选择发射器；请停止后再换设备。");
-        radioLease=await RadioDriverLease.PrepareAsync(selected,Log,token);
+        radioLease=await RadioDriverLease.PrepareAsync(selected,Log,token,runtimeDirectory,continuous);
         return WirelessRelayEnvironment.EnumerateRadios().SingleOrDefault(r=>r.InstanceId.Equals(selected.InstanceId,StringComparison.OrdinalIgnoreCase))
             ??throw new IOException("准备后没有重新发现所选发射器；停止测试会请求恢复。");
     }
@@ -154,7 +157,7 @@ public sealed class ExperimentSession:IAsyncDisposable
         var start=new ProcessStartInfo(Path.GetFullPath(executable)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,WorkingDirectory=Path.GetDirectoryName(Path.GetFullPath(executable))!};
         void Arg(string flag,string value){start.ArgumentList.Add(flag);start.ArgumentList.Add(value);}
         Arg("--instance",selected.InstanceId);Arg("--session-file",sessionPath);Arg("--output",Path.Combine(DirectoryPath,"radio-result.json"));
-        Arg("--port",radioEndpoint.Port.ToString());Arg("--managed-port",managedPort.ToString());Arg("--seconds",Math.Clamp(seconds,15,600).ToString());Arg("--wait-seconds","180");
+        Arg("--port",radioEndpoint.Port.ToString());Arg("--managed-port",managedPort.ToString());Arg("--seconds",(seconds==0?0:Math.Clamp(seconds,15,600)).ToString());Arg("--wait-seconds","180");
         if(selected.Realtek)Arg("--firmware-folder",Path.GetFullPath(firmwareFolder!));
         Log("[RADIO_PREFLIGHT] instance="+selected.InstanceId+" service="+selected.Service+" driver_provider="+selected.DriverProvider+" driver_version="+selected.DriverVersion+" driver_date="+selected.DriverDate+" exe_sha256="+Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(executable,token)))+" system_pairing_imported=false");
         receiveTask=Task.Run(()=>ReceiveAsync(lifetime.Token));

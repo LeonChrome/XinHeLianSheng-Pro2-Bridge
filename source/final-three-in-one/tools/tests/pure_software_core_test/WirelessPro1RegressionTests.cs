@@ -35,6 +35,11 @@ internal static class WirelessPro1RegressionTests
         check(!unsupportedRadio.Ready&&!unsupportedRadio.CanPrepare,"an unsupported adapter cannot become a transmitter merely by using WinUSB");
         check(!(systemRadio with{Service="unknown"}).CanPrepare,"an unknown driver state cannot trigger automatic radio preparation");
         check(systemRadio.Label!=(systemRadio with{InstanceId=@"USB\VID_0BDA&PID_0852\RADIO_B"}).Label,"manual selection distinguishes two radios of the same model by exact instance");
+        WirelessRelayRadio[] available=[systemRadio,unsupportedRadio];
+        check(WirelessRelayRadioSelection.Resolve(available,null)==null,"multiple adapters require explicit selection instead of choosing the first radio");
+        check(WirelessRelayRadioSelection.Resolve(available,systemRadio.InstanceId)==systemRadio,"adapter refresh preserves the selected exact instance");
+        check(WirelessRelayRadioSelection.Resolve([unsupportedRadio],systemRadio.InstanceId)==null,"unplugging the chosen adapter never redirects driver preparation to a different radio");
+        check(WirelessRelayRadioSelection.Resolve([systemRadio],null)==systemRadio,"a single radio is a visible selectable default");
         byte[] session=Enumerable.Range(0,16).Select(i=>(byte)i).ToArray(),payload=new byte[362];payload[0]=0x31;
         var encoded=WirelessRelayDatagram.Encode(session,WirelessRelayMessage.FreshInput,7,123,payload);
         check(WirelessRelayDatagram.TryDecode(encoded,session,out var decoded)&&decoded!.Sequence==7&&decoded.Timestamp==123&&decoded.Payload.SequenceEqual(payload),"authenticated maximum NFC-sized relay datagram roundtrip");

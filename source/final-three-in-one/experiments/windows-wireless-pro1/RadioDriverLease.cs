@@ -21,10 +21,10 @@ public sealed class RadioDriverLease:IAsyncDisposable
     private RadioDriverLease(string state,string instance,Process? helper,Action<string> trace)
     {StateDirectory=state;InstanceId=instance;guard=helper;log=trace;}
     public static string Root=>Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"PRO2WirelessReceiverControlBoard","radio");
-    public static async Task<string> InspectAsync(string instance,CancellationToken token)
+    public static async Task<string> InspectAsync(string instance,CancellationToken token,string? runtimeDirectory=null)
     {
-        string helper=Path.Combine(AppContext.BaseDirectory,"RadioDriver.ps1");
-        if(!File.Exists(helper))throw new FileNotFoundException("发射器准备工具缺失，请完整解压测试包。",helper);
+        string helper=Path.Combine(runtimeDirectory??AppContext.BaseDirectory,"RadioDriver.ps1");
+        if(!File.Exists(helper))throw new FileNotFoundException("蓝牙转发组件缺失，请重新启动助手；独立实验包需完整解压。",helper);
         var info=PowerShell(helper,false);Add(info,"-Operation","Inspect","-InstanceId",instance);
         info.RedirectStandardOutput=info.RedirectStandardError=true;
         using var process=Process.Start(info)??throw new IOException("无法启动发射器检查。");
@@ -33,11 +33,12 @@ public sealed class RadioDriverLease:IAsyncDisposable
         if(process.ExitCode!=0)throw new IOException("发射器检查失败："+await error);
         return await output;
     }
-    public static async Task<RadioDriverLease?> PrepareAsync(WirelessRelayRadio radio,Action<string> log,CancellationToken token)
+    public static async Task<RadioDriverLease?> PrepareAsync(WirelessRelayRadio radio,Action<string> log,CancellationToken token,string? runtimeDirectory=null,bool continuous=false)
     {
         if(radio.Ready)return null; // Never restore a WinUSB configuration we did not change.
         if(!radio.CanPrepare)throw new NotSupportedException("所选蓝牙尚无可用外发后端，未修改驱动。可选已支持的 Realtek / Actions。");
-        string inspection=await InspectAsync(radio.InstanceId,token);
+        runtimeDirectory=Path.GetFullPath(runtimeDirectory??AppContext.BaseDirectory);
+        string inspection=await InspectAsync(radio.InstanceId,token,runtimeDirectory);
         using(var parsed=JsonDocument.Parse(inspection))
         {
             if(!parsed.RootElement.GetProperty("known_binding_available").GetBoolean())
@@ -46,11 +47,12 @@ public sealed class RadioDriverLease:IAsyncDisposable
         string state=Path.Combine(Root,DateTime.Now.ToString("yyyyMMdd-HHmmss-fff")+"-"+Guid.NewGuid().ToString("N")[..6]);
         CreatePrivate(state);
         string helper=Path.Combine(state,"RadioDriver.ps1");
-        File.Copy(Path.Combine(AppContext.BaseDirectory,"RadioDriver.ps1"),helper);
+        File.Copy(Path.Combine(runtimeDirectory,"RadioDriver.ps1"),helper);
         WriteRestoreLauncher(state,radio.InstanceId,helper);
         using var owner=Process.GetCurrentProcess();
         var info=PowerShell(helper,true);
         Add(info,"-Operation","Prepare","-InstanceId",radio.InstanceId,"-StateDirectory",state,"-OwnerPid",Environment.ProcessId.ToString(),"-OwnerStartTicks",owner.StartTime.ToUniversalTime().Ticks.ToString());
+        Add(info,"-BackendPath",Path.Combine(runtimeDirectory,"pro2-wireless-pro1-radio.exe"),"-MaxMinutes",continuous?"0":"12");
         log("[RADIO_PREPARE] instance="+radio.InstanceId+" state="+state+" backup=current_windows_driver scope=exact_instance system_bluetooth_temporarily_unavailable=true restore=automatic_and_cmd");
         Process? helperProcess;
         try{helperProcess=Process.Start(info)??throw new IOException("未能启动管理员准备程序。");}

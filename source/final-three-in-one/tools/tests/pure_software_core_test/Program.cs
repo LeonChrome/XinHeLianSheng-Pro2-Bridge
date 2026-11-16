@@ -25,6 +25,12 @@ internal static class Program
         Directory.CreateDirectory(output);
         try
         {
+            if(args.Contains("--relay-integration-only"))
+            {
+                WirelessPro1RegressionTests.Run(Check);
+                WirelessRelayIntegrationRegressionTests.RunAsync(Check,output).GetAwaiter().GetResult();
+                Console.WriteLine("PASS: "+checks+" relay integration assertions; radio_opened=false driver_changes=0.");return 0;
+            }
             if(args.Contains("--wireless-only"))
             {
                 WirelessPro1RegressionTests.Run(Check);
@@ -239,9 +245,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.3.0.0", "v3.3.0 release assembly version");
-        Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.3.0-nfc-reader", "v3.3.0 release metadata");
+        Check(assembly.GetName().Version?.ToString() == "3.4.0.0", "v3.4.0 release assembly version");
+        Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.StartsWith(
+            "3.4.0-wireless-relay",StringComparison.Ordinal)==true, "v3.4.0 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

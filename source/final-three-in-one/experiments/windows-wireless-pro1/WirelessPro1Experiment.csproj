@@ -16,6 +16,7 @@
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="ExperimentSession.cs;ExperimentWindow.cs;RadioDriverLease.cs" />
     <ProjectReference Include="../../windows/v60_viiper_app/Y700Switch2V60Viiper.csproj" />
   </ItemGroup>
 </Project>

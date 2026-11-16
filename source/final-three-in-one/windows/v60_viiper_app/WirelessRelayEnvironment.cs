@@ -10,7 +10,7 @@ public sealed record WirelessRelayRadio(string InstanceId,string Name,string Ser
 {
     public bool Ready=>KnownBackend&&Service.Equals("WinUSB",StringComparison.OrdinalIgnoreCase);
     public bool CanPrepare=>KnownBackend&&Service.Equals("BTHUSB",StringComparison.OrdinalIgnoreCase);
-    public string Label=>Name+" · "+InstanceId.Split('\\').Last()+" · "+(Ready?"发射模式":CanPrepare?"系统蓝牙 · 可准备":"当前后端未支持");
+    public string Label=>Name+" · "+InstanceId.Replace("USB\\","",StringComparison.OrdinalIgnoreCase).Replace('\\',' ')+" · "+(Ready?"发射模式":CanPrepare?"系统蓝牙 · 可准备":"当前后端未支持");
 }
 public static class WirelessRelayEnvironment
 {
@@ -33,5 +33,16 @@ public static class WirelessRelayEnvironment
             result.Add(new(id,name,service,realtek||actions,realtek,driver?.GetValue("ProviderName") as string??"",driver?.GetValue("DriverVersion") as string??"",driver?.GetValue("DriverDate") as string??""));
         }
         return result.DistinctBy(r=>r.InstanceId,StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+}
+public static class WirelessRelayRadioSelection
+{
+    // Preserve an explicit selection through re-enumeration. With multiple
+    // radios, never fall back to another instance if the chosen one disappears.
+    public static WirelessRelayRadio? Resolve(IReadOnlyList<WirelessRelayRadio> radios,string? previousInstance)
+    {
+        if(!string.IsNullOrWhiteSpace(previousInstance))
+            return radios.FirstOrDefault(r=>r.InstanceId.Equals(previousInstance,StringComparison.OrdinalIgnoreCase));
+        return radios.Count==1?radios[0]:null;
     }
 }

@@ -270,6 +270,8 @@
                             <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding CompactCanStop}"/>
                             <Button Content="NFC 读卡…" Click="PhysicalInputs_Click" ToolTip="Pro2 无线读取 NTAG215 / amiibo，保存原始文件；Pro1 蓝牙为试验支持"/>
                             <Button x:Name="MultiControllerButton" Content="管理手柄…" Click="MultiController_Click" ToolTip="四个槽位统一选择有线／无线、实体手柄和游戏输出模式"/>
+                            <Button x:Name="WirelessRelayButton" Content="蓝牙转发…" Click="WirelessRelay_Click" IsEnabled="{Binding CanOperate}" Visibility="Collapsed"
+                                    ToolTip="USB 连接 Pro2 / Pro1，选择蓝牙适配器，向其他设备转发为 Pro1 手柄；会先暂停本机输出"/>
                             <Button x:Name="Win10OneClickButton" Content="一键优化到 133Hz · Win10" Click="OneClickWin10Optimize_Click" Style="{StaticResource Primary}"
                                     IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10OneClick, Converter={StaticResource BoolVisibility}}"
                                     ToolTip="{Binding Win10OneClickHint}"/>

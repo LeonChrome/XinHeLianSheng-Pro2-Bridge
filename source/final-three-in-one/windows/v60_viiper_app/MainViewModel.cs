@@ -230,7 +230,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         {
             AppendLog(StartupProcessGuard.LastSummary);
         }
-        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：Pro2 / Pro1 / Xbox / PS5 · 游戏按键图标安装与还原。");
+        AppendLog("PRO2 手柄助手 v" + SystemBluetoothDiagnostics.CurrentAppVersion + "：Pro2 / Pro1 / Xbox / PS5 · 游戏按键图标安装与还原。"+(WirelessRelayRuntime.IsAvailable?" · USB 蓝牙转发":""));
+        if(WirelessRelayRuntime.IsAvailable)AppendLog("[WIRELESS_RELAY_POLICY] embedded=true radio_selection=exact_instance continuous_until_stop=true startup_driver_changes=0");
         AppendLog("[BLE_INIT_POLICY] default=no_pair_finalize pairing_finalize_15_03=blocked comparison_checkbox=skip_usb_init next_connection_only=true");
         AppendLog("[FEATURE_POLICY] gyro_quality=" + Pro2QualityMode.GyroEnabled +
             " haptics_quality=" + Pro2QualityMode.HapticsEnabled +
@@ -328,10 +329,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool CanStart => !Busy;
-    public bool CanStop => Running && !Busy;
-    public bool CanOperate => !Busy;
-    public bool CanManageRuntime => !Running && !Busy;
+    public bool CanStart => !Busy && !WirelessRelayModeActive;
+    public bool CanStop => Running && !Busy && !WirelessRelayModeActive;
+    public bool CanOperate => !Busy && !WirelessRelayModeActive;
+    public bool CanManageRuntime => !Running && !Busy && !WirelessRelayModeActive;
     public bool CanManualBleControl =>
         !Busy &&
         !AutoReconnectEnabled &&
@@ -3925,6 +3926,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         Func<CancellationToken, Task> action,
         bool isStartupAutomationOperation = false)
     {
+        if (WirelessRelayModeActive)
+        {
+            Status="请先停止蓝牙转发并关闭转发窗口，再操作本机手柄。";
+            AppendLog("[WIRELESS_RELAY_MODE] blocked_local_operation="+operation);
+            return;
+        }
         if (shuttingDown)
         {
             return;

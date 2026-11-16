@@ -6,7 +6,9 @@ param(
     [Parameter(Mandatory=$true)][string]$InstanceId,
     [string]$StateDirectory,
     [int]$OwnerPid=0,
-    [long]$OwnerStartTicks=0
+    [long]$OwnerStartTicks=0,
+    [string]$BackendPath,
+    [ValidateRange(0,60)][int]$MaxMinutes=12
 )
 $ErrorActionPreference='Stop'
 # A PowerShell 7 parent can pass its module path through the .NET app into
@@ -108,8 +110,9 @@ function Stop-OwnedRadio {
     $process=Get-Process -Id $record.pid -ErrorAction SilentlyContinue
     $baseline=Read-Baseline
     $expected=$baseline.native_executable
-    if(-not $expected -or [IO.Path]::GetFileName($expected) -ine 'pro2-wireless-pro1-radio.exe' -or [IO.Path]::GetDirectoryName($expected) -ine [IO.Path]::GetDirectoryName($baseline.owner_exe)){throw 'Recorded native process path is invalid.'}
+    if(-not $expected -or -not [IO.Path]::IsPathRooted($expected) -or [IO.Path]::GetFileName($expected) -ine 'pro2-wireless-pro1-radio.exe' -or $record.exe -ine $expected){throw 'Recorded native process path is invalid.'}
     if($process -and $process.Path -ieq $expected -and $process.StartTime.ToUniversalTime().Ticks -eq $record.start_ticks){
+        if((Get-FileHash -LiteralPath $expected).Hash -ne $baseline.native_sha256){throw 'Owned native backend changed since preparation; refusing to terminate another program.'}
         Log 'Stopping exact owned radio backend before driver restoration.'
         Stop-Process -Id $process.Id -Force
         Start-Sleep -Milliseconds 500
@@ -171,8 +174,8 @@ try{
     $reg=& (Join-Path $env:windir 'System32\reg.exe') export ('HKLM\SYSTEM\CurrentControlSet\Enum\'+$InstanceId) (Join-Path $backup 'device-enum.reg') /y 2>&1
     if($LASTEXITCODE -ne 0){throw 'Original device configuration export failed.'}
     $files=@(Get-ChildItem -LiteralPath $backup -File -Recurse|ForEach-Object{[pscustomobject]@{relative=$_.FullName.Substring($StateDirectory.TrimEnd('\').Length+1);sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
-    $nativeExecutable=Join-Path (Split-Path -Parent $owner.Path) 'pro2-wireless-pro1-radio.exe'
-    if(-not(Test-Path -LiteralPath $nativeExecutable)){throw 'Native radio backend must be beside the owner executable.'}
+    $nativeExecutable=if($BackendPath){[IO.Path]::GetFullPath($BackendPath)}else{Join-Path (Split-Path -Parent $owner.Path) 'pro2-wireless-pro1-radio.exe'}
+    if([IO.Path]::GetFileName($nativeExecutable) -ine 'pro2-wireless-pro1-radio.exe' -or -not(Test-Path -LiteralPath $nativeExecutable -PathType Leaf)){throw 'Exact native radio backend is missing.'}
     Save-Json 'baseline.json' ([ordered]@{adapter=$before;original_inf_sha256=$originalHash;files=$files;created=(Get-Date).ToString('o');owner_pid=$OwnerPid;owner_start_ticks=$OwnerStartTicks;owner_exe=$owner.Path;native_executable=$nativeExecutable;native_sha256=(Get-FileHash -LiteralPath $nativeExecutable).Hash;binding_inf=$package.inf;binding_inf_sha256=(Get-FileHash -LiteralPath $package.inf).Hash;binding_catalog_sha256=(Get-FileHash -LiteralPath $package.catalog).Hash})
     Log ('Fresh current-Windows baseline saved; original='+$before.inf+' version='+$before.version)
     $null=Read-Baseline
@@ -184,7 +187,7 @@ try{
     Save-Json 'ready.json' ([ordered]@{success=$true;status='EXACT_INSTANCE_WINUSB_READY';before=$before;after=$after;reboot_required=$reboot;guard_pid=$PID})
     Log 'WinUSB ready; watching owner and restore request. No signing/trust policy changes.'
     $watch=[Diagnostics.Stopwatch]::StartNew()
-    while($watch.Elapsed.TotalMinutes -lt 12){
+    while($MaxMinutes -eq 0 -or $watch.Elapsed.TotalMinutes -lt $MaxMinutes){
         if(Test-Path -LiteralPath (Join-Path $StateDirectory 'restore.request')){Log 'Restore requested by owner.';break}
         $owner=Get-Process -Id $OwnerPid -ErrorAction SilentlyContinue
         if(-not $owner -or $owner.StartTime.ToUniversalTime().Ticks -ne $OwnerStartTicks){Log 'Owner exited; restore automatically.';break}

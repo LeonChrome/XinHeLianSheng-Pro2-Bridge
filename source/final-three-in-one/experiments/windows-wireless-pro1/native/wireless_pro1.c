@@ -258,7 +258,7 @@ static void watchdog(btstack_timer_source_t*t){
         if(!stack_working&&stamp-boot>30){failed=1;puts("{\"event\":\"RADIO_INIT_TIMEOUT\"}");emit_link(3,2);stop_backend();}
         else if(stamp-last_heartbeat>5){failed=1;puts("{\"event\":\"MANAGED_HEARTBEAT_TIMEOUT\"}");stop_backend();}
         else if(!ever_connected&&stamp-boot>wait_seconds){failed=1;puts("{\"event\":\"PAIRING_WINDOW_TIMEOUT\"}");stop_backend();}
-        else if(connected&&stamp-ready>=seconds){completed=1;stop_backend();}
+        else if(seconds>0&&connected&&stamp-ready>=seconds){completed=1;stop_backend();}
         if(stamp-last_progress>=5){last_progress=stamp;printf("{\"event\":\"WIRELESS_WINDOW\",\"connected\":%s,\"source\":%"PRIu64",\"submitted\":%"PRIu64",\"hci_completed\":%"PRIu64",\"superseded\":%"PRIu64",\"stale\":%"PRIu64",\"host_commands\":%"PRIu64"}\n",connected?"true":"false",source_received,submitted,completions,source_superseded,source_stale,host_commands);}
     }
     btstack_run_loop_set_timer(t,50);btstack_run_loop_add_timer(t);
@@ -305,7 +305,7 @@ static int relay_main(int argc,char**argv){
         else if(!strcmp(arg,"--peer")){if(!sscanf_bd_addr(value,peer))return 2;have_peer=1;}
         else return 2;
     }
-    if(!instance||!relay_set_instance(instance)||!session_file||!result_path||listen_port<1024||listen_port>65535||managed_port<1024||managed_port>65535||listen_port==managed_port||seconds<15||seconds>600||wait_seconds<15||wait_seconds>300)return 2;
+    if(!instance||!relay_set_instance(instance)||!session_file||!result_path||listen_port<1024||listen_port>65535||managed_port<1024||managed_port>65535||listen_port==managed_port||(seconds!=0&&(seconds<15||seconds>600))||wait_seconds<15||wait_seconds>300)return 2;
     FILE*sf=fopen(session_file,"rb");if(!sf)return 3;size_t got=fread(session,1,16,sf);int extra=fgetc(sf);fclose(sf);if(got!=16||extra!=EOF)return 3;
     realtek=!_strnicmp(instance,"USB\\VID_0BDA",12);ats=!realtek;
     LARGE_INTEGER freq;QueryPerformanceFrequency(&freq);qpc_frequency=(double)freq.QuadPart;boot=last_heartbeat=last_progress=now();

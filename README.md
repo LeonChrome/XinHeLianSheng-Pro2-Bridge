@@ -1,48 +1,40 @@
 # PRO2 手柄助手
 
-让 **Nintendo Switch 2 Pro（Pro2）手柄连接 Windows**，用于 Steam，也能切换成 Pro1、Xbox 或 PS5 兼容手柄。Pro2 无线连接无需专用接收器。
+让 Nintendo Switch 2 Pro（Pro2）手柄在 Windows 上用于 Steam 和其他游戏，也能转换成 Pro1、Xbox 或 PS5 兼容手柄。
 
-**[推荐下载：v3.2.7 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.2.7/PRO2ControllerAssistant-v3.2.7-win-x64.exe)** · [备用 ZIP 文件夹版](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.2.7/PRO2ControllerAssistant-v3.2.7-portable-win-x64.zip) · [更新说明](docs/RELEASE-v3.2.7.md)
+**[推荐下载：v3.5.0 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.5.0/PRO2ControllerAssistant-v3.5.0-win-x64.exe)** · [源码与构建依赖包](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.5.0/PRO2ControllerAssistant-v3.5.0-source.zip) · [更新说明](docs/RELEASE-v3.5.0.md)
 
-EXE 首次打开会准备内置运行文件，请稍等几秒；ZIP 需完整解压。两者均自带 .NET 和 VIIPER。
+支持 Windows 10 2004 及以上 / Windows 11 x64。EXE 自带 .NET 和运行组件，无需另装 .NET。
 
-![连接首页](docs/images/pro2-v3.2.1-home.png)
+![首页预览](docs/images/pro2-v3.5.0-home-local.png)
 
 ## 主要功能
 
-- **连接方式**：首页统一选择 Pro2 无线／USB、Pro1 蓝牙／USB；四个槽位分别记住设备和连接方式，可混用。Pro1 输入属于新增路线，仍待更多实机验证。
-- **四种游戏身份**：Steam / Pro2、Pro1、Xbox、PS5，各手柄独立选择。
-- **键位与摇杆**：ABXY 按位置、字母或自定义映射，左右摇杆死区独立调节；未连接也能设置。
-- **背键 / C 键**：Pro1、Xbox、PS5 输出支持单键、组合键、连发、顺序动作和延迟；PS5 可模拟触控板点击、滑动与画圈。
-- **震动与体感**：震动强度调节、PS5 普通震动与触觉转换、摇杆和陀螺仪校准。Xbox 模式不含原生体感。
-- **连接诊断**：真实输入频率、电量档位、固件、耳机状态；自动重连、可选休眠、蓝牙优化与虚拟 USB 故障诊断。
-- **游戏图标**：《影之刃零》Steam 版可按实际位置显示 Pro2 键名，支持查找多个 Steam 库、安装与还原。
+- **四种输入**：Pro2 无线 / USB、Pro1 蓝牙 / USB，在同一首页选择。
+- **本机游玩**：Steam / Pro2、Pro1、Xbox、PS5 四种输出；最多四个槽位，各自选择输入与身份。
+- **蓝牙转发**：将手柄输入发给其他设备，可选 Pro1、Xbox、PS5 身份及蓝牙适配器；与本机输出共用首页。
+- **改键与背键**：ABXY 按位置、字母或自定义映射；背键 / C 键支持组合键、连发、顺序动作、延迟及 PS5 触控手势。
+- **震动与体感**：调节震动强度、校准摇杆与陀螺仪、设置摇杆死区；Xbox 协议不含体感。
+- **NFC 与诊断**：Pro2 无线 / USB 只读 amiibo，校验后保存 540 字节文件；显示真实输入频率、电量、固件和连接诊断。支持自动重连、可选休眠与蓝牙优化。
+- **游戏图标**：《影之刃零》Steam 版可按手柄实际位置显示 Pro2 键名，支持安装与还原。
 
-## 使用方法
+## 怎么使用
 
-1. 从托盘退出旧助手，运行新版。**上方选实际手柄和连接方式，下方选游戏里的手柄身份。**
-2. Pro2 无线：开启配对广播后在助手连接，无需先添加到 Windows 蓝牙。Pro1 无线：先在 Windows 配对，再在助手选择设备。有线使用 USB 数据线；Pro2 USB 先退出 Steam，接入助手后再启动 Steam。
-3. 点击连接。首次按提示安装内置 **USBIP 驱动**，可能需要管理员授权或重启。已安装但未找到时，手动选择安装目录中的 `usbip.exe`。多只手柄进入“管理手柄”。
+1. 从托盘退出旧助手，打开新版，选择实际手柄和有线 / 无线连接方式。
+2. Pro2 无线：开启手柄配对广播，在助手连接。Pro1 无线：先在 Windows 配对，再选设备。有线需 USB 数据线；Pro2 USB 请先接入助手，再启动 Steam。
+3. **本机游玩**：选手柄身份并连接。首次按提示安装内置 USBIP 驱动；找不到已有安装时，可手动选择 `usbip.exe`。
+4. **蓝牙转发**：选外发身份和发射适配器，点“连接并转发”，接收设备再搜索配对。USB 输入需要一只发射器；无线输入还需要另一只系统蓝牙。只接管所选适配器，停止或退出后恢复临时切换的驱动。
 
-默认按位置对应：**Pro2 下方 B → Xbox A / PS5 ×**；可在“键位映射”修改。Steam Input 和游戏自身改键仍会继续生效，同种输出模式共用该模式的映射配置。背键 / C 键单独设置，实体 Pro1 没有这些按键。
+默认按实际位置对应：**Pro2 下方 B → Xbox A / PS5 ×**。“键位映射”可修改，Steam Input 和游戏自身改键仍会叠加。
 
-Pro2 USB 的厂商命令接口需要已有 WinUSB 绑定，程序不会自动替换设备驱动。完整接入条件、校准和 NFC 范围见 [输入方式与限制](docs/physical-inputs.md)。
+## 兼容范围
 
-## v3.2.7 更新
+- Pro2 BLE 目标为真实 133Hz，达到 60Hz 也允许兼容游玩。Win11 自动尝试参数；Win10 按首页引导授权优化，修改前备份并提供恢复。实际速度取决于系统、驱动、适配器和无线环境，不保证每台电脑都达到目标。
+- **蓝牙外发目前覆盖 Realtek 0BDA:0852、Actions 10D7:B012**，一次转发一只实体手柄；不代表任意蓝牙型号均可发射。准备发射器会暂时中断它原有的蓝牙连接。
+- Pro1 外发已验证按键与摇杆响应；Xbox / PS5 外发通过离线检查，仍待不同接收设备实测。PS5 外发目前支持普通震动与体感，未接入蓝牙原生触觉音频、自适应扳机或 PS5 主机认证；Xbox 主机认证也未实现。原生 Pro2 蓝牙身份暂不外发。
+- NFC 是只读实验，不写卡、不验证 amiibo 真实性；文件可供兼容模拟器自行导入。Pro1 外发的 NFC 快照应答尚未完成接收端游戏验收。
+- 自动休眠默认关闭。若启用后影响 NS2 主机配对，重新与主机配对即可。
 
-- 新连接与重连优先复用同一环境已验证的方案，实测高速后停止轮测；保留已经生效的 7.5ms 连接，减少反复切换参数。
-- 修复 PS5 输入暂停时 HID 读取长期等待、USBIP 取消请求竞争，改善与其他手柄软件同时使用时的兼容性。
-- 修复初始化应答串线、有线／Pro1 短按被合并，以及普通背键长按被短暂输入间隙取消的问题；连发和手势中断后不积压重放。
-- 高速验收与健康监测统一采用 128Hz 容差；60Hz 可游玩。真实 FD2 与虚拟兼容报告分别计数。
+本项目自有代码沿用 Apache-2.0；**包含 BTstack 的转发构建仅供免费个人、非商业使用**，第三方组件按各自许可分发。见 [许可与依赖](NOTICE.md)。
 
-已通过 931643 项离线／本机回环断言、Go 后端全量测试、30 轮 Windows 原生 HID 测试及最终 EXE 启动检查。**UU 4.47.x 窗口激活／失活的完整场景尚待复测**，不承诺解决其全部挂起原因。
-
-## 兼容性
-
-支持 **Windows 10 2004 及以上 / Windows 11 x64**。Pro2 无线需要可用的 BLE 蓝牙，目标为真实 **133Hz**，达到 **60Hz** 也允许兼容游玩。Win11 自动尝试参数；Win10 按首页引导授权优化，修改前备份并提供恢复。Win10 全局 BLE 参数可能影响其他蓝牙设备或需要重启。
-
-实际频率受系统、适配器、驱动与无线环境影响，不保证所有电脑达到 133Hz。虚拟重复报告不算新输入。Pro2 USB 曾完成约 30 秒 249.99Hz 实测；Pro1 输入、实卡 NFC、四只实体手柄并发及各模式长时间游戏仍需更多验收。PS5 触觉属于转换输出；无线耳机音频和跨设备蓝牙转发尚不支持。
-
-**自动休眠默认关闭。** 启用后本机可能占用手柄配对记录；回 NS2 主机时若连不上，重新配对即可。
-
-[反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [源码与构建](source/final-three-in-one/README.md) · [许可证](LICENSE) · [第三方致谢](ACKNOWLEDGEMENTS.md) · [历史版本](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases)
+[源码与构建](source/final-three-in-one/README.md) · [详细输入说明](docs/physical-inputs.md) · [转发说明](source/final-three-in-one/experiments/windows-wireless-pro1/INTEGRATED.md) · [反馈问题](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/issues) · [历史版本](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases)

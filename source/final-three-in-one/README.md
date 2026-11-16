@@ -1,50 +1,81 @@
-# PRO2 手柄助手 · 源码
+# PRO2 手柄助手 v3.5.0 · 源码与构建
 
-当前源码构建：**v3.2.1**。主要程序位于 `windows/v60_viiper_app`，离线回归位于 `tools/tests`，四模式虚拟设备后端位于 `tools/viiper/haptic-src/device`。
+主程序：`windows/v60_viiper_app`。原生外发后端：`experiments/windows-wireless-pro1/native`。虚拟设备后端及其修改源码：`tools/viiper/haptic-src`。离线检查：`tools/tests/pure_software_core_test`。均沿用现有项目结构。
 
-本目录保留原有布局，不另建独立架构。ESP、Pico、三合一相关目录仅作历史参考：[旧构建说明](README_THREE_IN_ONE_ARCHIVE.md)。
+## 获取源码
 
-## 构建
+GitHub `pro2-v3.5.0` 标签提供完整仓库快照；Release 的 `PRO2ControllerAssistant-v3.5.0-source.zip` 提供当前 Windows 程序、四模式后端、原生转发代码、测试、界面资源、构建依赖及许可。后者还包含固定版本的 BTstack 编译输入和 Realtek 运行固件，避免依赖作者电脑目录。
 
-在 Windows x64 上安装 .NET 8 SDK，Python 3，以及 `tools/viiper/haptic-src/go.mod` 指定的 Go 版本。以下命令均从本目录运行：
+二进制 EXE 构建自 `a3b7188`；该版本发布标签随后整理文档、许可和构建入口，未改变已测试的运行逻辑。
+
+## 环境
+
+Windows x64、PowerShell 7、.NET 8 SDK。若重建 VIIPER，安装 `tools/viiper/haptic-src/go.mod` 要求的 Go 版本。原生转发需要 **LLVM-MinGW x64 的 clang**，不能直接用缺少 MinGW 头文件和导入库的 MSVC clang 替代。把工具加入 PATH，或在脚本参数中指定完整路径。
+
+以下命令从仓库或源码依赖包的根目录运行。
+
+## 1. 准备依赖
+
+源码依赖包已提供下述 `third_party` 内容，可跳过下载。直接克隆仓库时执行：
 
 ```powershell
-Push-Location tools/viiper/haptic-src
-$env:CGO_ENABLED = '0'
+git clone --filter=blob:none https://github.com/bluekitchen/btstack.git third_party/btstack
+git -C third_party/btstack checkout e38553977a25fb0b55b383c72c289be0975f422c
+
+New-Item -ItemType Directory -Force third_party/realtek-firmware | Out-Null
+Invoke-WebRequest https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/rtl_bt/rtl8852cu_fw.bin -OutFile third_party/realtek-firmware/rtl8852cu_fw
+Invoke-WebRequest https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/LICENCE.rtlwifi_firmware.txt -OutFile third_party/realtek-firmware/LICENCE.rtlwifi_firmware.txt
+```
+
+构建脚本校验固件 SHA256：`9B8B27741A914C1CECC1AB9837194236890522101A57BA1898EB55F8D538DAE0`。若上游文件更新导致不匹配，使用该发布源码依赖包的匹配文件，不绕过校验。
+
+VIIPER 可使用仓库保留的 `tools/viiper/haptic-v0.8.0/viiper-haptic-v2.8.exe`。重建方法：
+
+```powershell
+Push-Location source/final-three-in-one/tools/viiper/haptic-src
+$env:CGO_ENABLED='0'
 go test ./... -count=1 -timeout=120s
 go build -buildvcs=false -tags release -trimpath -ldflags '-s -w -X main.Version=2.8-output-recovery' -o ../haptic-v0.8.0/viiper-haptic-v2.8.exe ./cmd/viiper
 Pop-Location
-
-dotnet publish windows/v60_viiper_app/Y700Switch2V60Viiper.csproj -c Release -r win-x64 --self-contained true -p:PureSoftwareRelease=true -p:PublishSingleFile=false -p:CompatibilityRendering=true -p:DebugType=None -o artifacts/pure-software
-python tools/windows-launcher/package.py artifacts/pure-software artifacts/PRO2ControllerAssistant-v3.2.1-win-x64.exe --go (Get-Command go).Source
 ```
 
-发布时内嵌 VIIPER 和仓库保留的 USBIP 安装器 / 许可证。最终 EXE 自带 .NET；USBIP 内核驱动仍需在首次使用时按提示安装。
+USBIP 安装器和原许可保留在 `source/final-three-in-one/tools/usbip-win2/v0.9.7.7`。内核驱动仍需由最终用户按 Windows 提示安装；复制 EXE 不会绕过安装或管理员要求。
 
-分发 EXE 使用独立启动封装，默认软件绘制，包含校验与一次兼容回退；目录版也可直接打 ZIP 作为备用。具体构建见 [启动封装](tools/windows-launcher/README.md)。
-
-v2.8 使用 `viiper-haptic-v2.8.exe` 后端，新增 API 数据流生命周期和 USBIP 独占导入保护，不能用旧后端替代。真实 FD2、上游状态、协议报告和保持重复分别统计，重复报告不算新物理采样。触控手势由 `Ps5TouchGestures.cs` 和现有背键引擎按新输入帧推进，经 PS5 通道传递触点坐标，不制造 FD2。
-
-ABXY 映射由 `FaceButtonMapping.cs` 在背键引擎前处理；四种输出模式分别保存，默认保持原有位置映射。`ViiperBridgeSession.UsbipHealth.cs` 在后台检查本机挂载与 PnP 状态，恢复仅针对对应导出，不重连 BLE，也不清除其他槽位。
-
-游戏图标资源位于 `windows/v60_viiper_app/Assets/GameGlyphs/PBZ`，由独立服务管理三个补丁文件。发布包不含本地资源提取参数或解包工具。
-
-## 离线检查
+## 2. 构建完整 EXE
 
 ```powershell
-dotnet build tools/tests/pure_software_core_test/PureSoftwareCoreTest.csproj -c Release -p:PureSoftwareRelease=true -o artifacts/qa-bin
-./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/qa-results
-
-# 单独检查触控轨迹、旧配置迁移与按键安全
-./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/touch-results --touch-only
-# 单独检查 ABXY 映射组合、配置切换与挂载恢复判定
-./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/v28-results --v28-only
-# 单独检查四路同模式 / 混合模式输入、反馈隔离、模式切换、地址保留和速率保护
-./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/multi-results --multi-only
-# 使用内置图标补丁，在临时游戏目录检查安装、升级与恢复
-./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/glyph-results --glyph-only
+$relay='source/final-three-in-one/experiments/windows-wireless-pro1'
+$out=Join-Path (Get-Location) 'artifacts/pro2-v3.5.0'
+& "$relay/Build-Native.ps1" -BuildDirectory "$out/native" -Compiler (Get-Command clang).Source
+& "$relay/Publish-Integrated.ps1" -ArtifactDirectory $out -SkipNativeBuild -Dotnet (Get-Command dotnet).Source
 ```
 
-离线检查不修改真实蓝牙参数或驱动：参数恢复回归使用临时 HKCU 测试键，图标安装回归使用临时游戏目录。这些检查不证明某台电脑已达到 133Hz，真实速率需连接 Pro2 实测。
+输出：`artifacts/pro2-v3.5.0/publish/PRO2ControllerAssistant.exe`。脚本嵌入 VIIPER、USBIP 安装器、无线后端、匹配固件、恢复脚本和许可，并校验无线运行包文件哈希。不会运行实机蓝牙测试或自动修改驱动。
 
-[使用说明](../../README.md) · [v3.2.1 更新说明](../../docs/RELEASE_v3.2.1_ZH.md)
+单独构建本机模式可使用：
+
+```powershell
+dotnet publish source/final-three-in-one/windows/v60_viiper_app/Y700Switch2V60Viiper.csproj -c Release -p:PureSoftwareRelease=true -p:CompatibilityRendering=true -o artifacts/local-only
+```
+
+## 3. 离线检查
+
+```powershell
+$tests='source/final-three-in-one/tools/tests/pure_software_core_test/PureSoftwareCoreTest.csproj'
+$bundle=Join-Path (Get-Location) 'artifacts/pro2-v3.5.0/wireless-runtime.zip'
+dotnet build $tests -c Release -p:PureSoftwareRelease=true -p:CompatibilityRendering=true -p:EmbedWirelessRelay=true "-p:WirelessRelayBundlePath=$bundle" -o artifacts/qa-bin
+./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/qa-wireless --wireless-only
+./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/qa-relay --relay-integration-only
+./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/qa-ui --relay-ui-only
+./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/qa-physical --physical-only
+```
+
+回环检查需要允许 localhost TCP/UDP；UI 检查使用预览数据。上述离线入口不打开实体蓝牙、不 attach USBIP、不修改驱动。源码也保留明确命名的实机测试入口，不要把它们与离线检查混用。
+
+## 协议与许可
+
+当前蓝牙外发为 Pro1、Xbox One S Classic HID、DualSense Classic HID。原生 Pro2 BLE 身份、PS5 蓝牙触觉音频及主机认证未实现；Xbox / PS5 接收端仍待实测。真实物理输入、外发提交、HCI 回执和接收端实际频率分别看待，不用虚拟重复帧充当新输入。
+
+BTstack 具有个人、非商业用途限制；完整构建据此按免费个人非商业用途分发。自有源码及所有依赖的具体许可见根目录 [NOTICE](../../NOTICE.md)。
+
+[使用说明](../../README.md) · [v3.5.0 更新](../../docs/RELEASE-v3.5.0.md) · [转发细节](experiments/windows-wireless-pro1/INTEGRATED.md)

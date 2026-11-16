@@ -1,11 +1,15 @@
 [CmdletBinding()]
 param(
-    [string]$BtstackRoot='D:\CODEX\.codex-work\btstack',
-    [string]$Compiler='D:\CODEX\.codex-work\tools\llvm-mingw-20260922-ucrt-x86_64\bin\clang.exe',
-    [string]$BuildDirectory='D:\CODEX\artifacts\pro2-v3.4.0\native'
+    [string]$BtstackRoot=(Join-Path $PSScriptRoot '../../../../third_party/btstack'),
+    [string]$Compiler='clang',
+    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../../../../artifacts/pro2-v3.5.0/native')
 )
 $ErrorActionPreference='Stop'
-if(-not(Test-Path -LiteralPath $Compiler)){throw 'Portable clang is missing.'}
+if(-not(Test-Path -LiteralPath $Compiler)){
+    $resolved=Get-Command $Compiler -ErrorAction SilentlyContinue
+    if($null -eq $resolved){throw 'LLVM-MinGW clang is missing. Add it to PATH or pass -Compiler with its full path.'}
+    $Compiler=$resolved.Source
+}
 if(-not(Test-Path -LiteralPath (Join-Path $BtstackRoot 'LICENSE'))){throw 'BTstack checkout and original license required.'}
 $null=New-Item -ItemType Directory -Path $BuildDirectory -Force
 $native=Join-Path $PSScriptRoot 'native'
@@ -34,7 +38,11 @@ if($LASTEXITCODE -ne 0){throw 'Native radio link failed.'}
 & $exe '--self-test'
 if($LASTEXITCODE -ne 0){throw 'Native offline checks failed.'}
 Copy-Item -LiteralPath (Join-Path $BtstackRoot 'LICENSE') -Destination (Join-Path $BuildDirectory 'BTstack-LICENSE.txt')
-$revision=& git -C $BtstackRoot rev-parse HEAD
+$revision=if(Test-Path -LiteralPath (Join-Path $BtstackRoot '.git')){
+    & git -C $BtstackRoot rev-parse HEAD
+}elseif(Test-Path -LiteralPath (Join-Path $BtstackRoot 'BTSTACK_COMMIT.txt')){
+    (Get-Content -LiteralPath (Join-Path $BtstackRoot 'BTSTACK_COMMIT.txt') -Raw).Trim()
+}else{'unrecorded_source_revision'}
 $sourceHashes=@{};Get-ChildItem -LiteralPath $native -File|ForEach-Object{$sourceHashes[$_.Name]=(Get-FileHash -LiteralPath $_.FullName).Hash}
 @{executable=$exe;sha256=(Get-FileHash -LiteralPath $exe).Hash;btstack_revision=$revision;sources=$sourceHashes;purpose='LOCAL_PERSONAL_EXPERIMENT_ONLY';system_changes=0}|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $BuildDirectory 'build.json') -Encoding UTF8
 Write-Output ('RADIO_EXE='+$exe)

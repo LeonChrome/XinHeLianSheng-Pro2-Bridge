@@ -1,15 +1,18 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [string]$ArtifactDirectory='D:\CODEX\artifacts\pro2-v3.5.0-integrated',
-    [string]$Dotnet='D:\CODEX\.dotnet-sdk\dotnet.exe',
-    [string]$FirmwareDirectory='D:\CODEX\.codex-work\realtek-relay-test\firmware',
+    [string]$ArtifactDirectory=(Join-Path $PSScriptRoot '../../../../artifacts/pro2-v3.5.0'),
+    [string]$Dotnet='dotnet',
+    [string]$FirmwareDirectory=(Join-Path $PSScriptRoot '../../../../third_party/realtek-firmware'),
     [switch]$SkipNativeBuild
 )
 $ErrorActionPreference='Stop'
-$env:DOTNET_ROOT=Split-Path -Parent $Dotnet
-$env:DOTNET_CLI_HOME='D:\CODEX\.dotnet-cli-home'
-$env:NUGET_PACKAGES='D:\CODEX\.nuget-packages'
+if(-not(Test-Path -LiteralPath $Dotnet)){
+    $resolved=Get-Command $Dotnet -ErrorAction SilentlyContinue
+    if($null -eq $resolved){throw '.NET 8 SDK is missing. Add dotnet to PATH or pass -Dotnet with its full path.'}
+    $Dotnet=$resolved.Source
+}
+$env:DOTNET_ROOT=Split-Path -Parent ([IO.Path]::GetFullPath($Dotnet))
 $native=Join-Path $ArtifactDirectory 'native'
 New-Item -ItemType Directory -Path $ArtifactDirectory -Force | Out-Null
 if(-not $SkipNativeBuild){& (Join-Path $PSScriptRoot 'Build-Native.ps1') -BuildDirectory $native}

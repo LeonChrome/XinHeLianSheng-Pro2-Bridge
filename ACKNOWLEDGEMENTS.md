@@ -1,11 +1,17 @@
-# Acknowledgements
+# 致谢
 
-This project was inspired by community research around Nintendo-style controller compatibility on Windows and Steam.
+当前 Windows 程序及转发功能参考并使用以下项目，具体许可保留在源码和分发包中：
 
-Early experiments explored several Switch controller compatibility paths. The final V5.9 implementation is an ESP32-S3 bridge with BLE input from the real controller and native USB output to the host PC.
+- VIIPER / usbip-win2：本机虚拟 USB 手柄与输出通道；修改后的 VIIPER 对应源码在仓库内提供。
+- BlueKitchen BTstack：可选择适配器的原生蓝牙 HID 外发。固定版本 `e38553977a25fb0b55b383c72c289be0975f422c`，保留个人非商业许可。
+- SDL、Switch 2 controller research、Nintendo Switch Reverse Engineering：输入、体感、震动及控制器协议参考。
+- PicoSwitch2 v2.6.0：Pro2 BLE NFC 的公开主机记录、分块与读取流程参考；移植到现有 C# 传输，没有要求 Pico 硬件。[上游](https://github.com/notsosaelin/PicoSwitch2/tree/v2.6.0)及其 Apache-2.0 许可随包提供。
+- Sony 维护的 Linux HID PlayStation 驱动、SDL Xbox 驱动、USB Host Shield 的 Xbox One S 解析记录：无线报告布局核对。
+- DJm00n/ControllersInfo：设备捕获的 DualSense / Xbox One S 蓝牙 HID 描述符数据。
+- .NET、WPF、Go、LLVM-MinGW，以及各自上游依赖。
 
-Thanks to the authors and maintainers of the open-source projects and references that made this work possible, including ESP-IDF, TinyUSB, SDL / Steam Input research, esptool, and community Switch controller compatibility notes.
+手柄产品图用于辨识设备，来源与权利说明见 `source/final-three-in-one/experiments/windows-wireless-pro1/Notices/Controller-product-images-SOURCES.txt`。
 
-This repository is independent and is not affiliated with Nintendo, Sony, Microsoft, Valve, Espressif, WCH, or related companies.
+原 ESP / Pico / 三合一目录仅为历史代码，不是当前 Windows 版本的运行前提。项目与 Nintendo、Sony、Microsoft、Valve 等厂商无隶属或背书关系。
 
-The Windows Pro2 BLE NFC read-only implementation follows the publicly captured native-reader sequence, framing and page ranges in [PicoSwitch2 v2.6.0](https://github.com/notsosaelin/PicoSwitch2/tree/v2.6.0), notably `tools/nfc_probe.ps1`, `firmware/src/nfc/ns2_nfc_mirror.c`, and the 2026-07-25 physical-tag experiment. These are reimplemented in the existing C# transport; Pico hardware and the upstream application are not required. PicoSwitch2 is licensed under Apache-2.0; its license is distributed in the portable package's `Notices/PicoSwitch2-LICENSE.txt`. Upstream hardware validation is distinct from validation of this Windows port.
+[许可与第三方组件](NOTICE.md)

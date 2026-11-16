@@ -93,6 +93,16 @@ public sealed partial class Pro2BleInputSource
                 if(command[3]==5&&Pro2NfcProtocol.TryParseStatus(reply,out var state))
                     NfcTrace("[PRO2_NFC_STATUS] state=0x"+state.State.ToString("X2")+" detail=0x"+state.Detail.ToString("X2")+
                         " uid_length="+state.Uid.Length+" uid_logged=false");
+                if(command[3]==0x15)
+                {
+                    int length=reply.Length>=11?reply[9]|reply[10]<<8:-1;
+                    int extra=length>=0?reply.Length-11-length:-1;
+                    bool paddingZero=extra>=0;
+                    if(paddingZero)for(int i=11+length;i<reply.Length;i++)if(reply[i]!=0){paddingZero=false;break;}
+                    NfcTrace("[PRO2_NFC_CHUNK] "+identity+" frame_bytes="+reply.Length+
+                        " framing="+Convert.ToHexString(reply.AsSpan(0,Math.Min(11,reply.Length)))+
+                        " declared_bytes="+length+" trailing_bytes="+extra+" trailing_zero="+paddingZero+" tag_payload_logged=false");
+                }
                 return reply;
             }
             catch(Exception error)

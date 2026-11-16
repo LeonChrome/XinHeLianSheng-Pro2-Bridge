@@ -229,9 +229,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.2.9.0", "v3.2.9 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.2.10.0", "v3.2.10 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.2.9-pro2-nfc-readonly", "v3.2.9 release metadata");
+            "3.2.10-pro2-nfc-readonly", "v3.2.10 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

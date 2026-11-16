@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -14,7 +15,7 @@ public sealed record Pro2NfcStatus(byte State, byte Detail, byte[] Uid);
 public sealed record Pro2NfcReadResult(byte[] Uid, byte[] Data, byte[] Signature);
 public static class Pro2NfcProtocol
 {
-    public const int TagLength = 540, BufferLength = 600, ChunkLength = 70;
+    public const int TagLength = 540, BufferLength = 600;
     public static readonly Guid ExtendedWriteUuid = new("3dacbc7e-6955-40b5-8eaf-6f9809e8b379");
     public static readonly Guid SecondaryReplyUuid = new("506d9f7d-4278-4e95-a549-326ba77657e0");
     private static byte[] Command(byte sub, params byte[] payload)
@@ -36,7 +37,7 @@ public static class Pro2NfcProtocol
     }
     public static byte[] BuildReadBufferCommand(int offset)
     {
-        if(offset<0||offset>=BufferLength||offset%ChunkLength!=0)throw new ArgumentOutOfRangeException(nameof(offset));
+        if(offset<0||offset>=BufferLength)throw new ArgumentOutOfRangeException(nameof(offset));
         return Command(0x15,(byte)offset,(byte)(offset>>8));
     }
     public static bool IsReadOnlyCommand(ReadOnlySpan<byte> command)
@@ -48,8 +49,7 @@ public static class Pro2NfcProtocol
             3=>command.SequenceEqual(BuildScanCommand()),
             4 or 5=>command.Length==8,
             6=>command.Length==27&&command[10]==4&&command.SequenceEqual(BuildReadCommand(command.Slice(10,7))),
-            0x15=>command.Length==10&&BinaryPrimitives.ReadUInt16LittleEndian(command[8..])<BufferLength&&
-                BinaryPrimitives.ReadUInt16LittleEndian(command[8..])%ChunkLength==0,
+            0x15=>command.Length==10&&BinaryPrimitives.ReadUInt16LittleEndian(command[8..])<BufferLength,
             _=>false
         };
     }
@@ -82,11 +82,15 @@ public static class Pro2NfcProtocol
     public static bool TryParseChunk(ReadOnlySpan<byte> response,int offset,out byte[] data,out bool last)
     {
         data=[];last=false;
-        if(offset<0||offset>=BufferLength||offset%ChunkLength!=0||response.Length<11||
+        if(offset<0||offset>=BufferLength||response.Length<11||
             !MatchesResponse(BuildReadBufferCommand(offset),response)||response[5] is not (0x78 or 0xf8))return false;
         int length=BinaryPrimitives.ReadUInt16LittleEndian(response[9..]);last=(response[8]&1)!=0;
-        int expected=Math.Min(ChunkLength,BufferLength-offset);
-        if(response[8]>1||length!=expected||response.Length!=11+length||last!=(offset+length==BufferLength))return false;
+        // Genuine firmware can return a different chunk size or a longer frame.
+        // Advance by the declared payload, never by an assumed 70-byte block or
+        // by the notification length. The upstream probe likewise excludes any
+        // bytes outside that declared span; only flag bit 0 denotes the end.
+        if(length<=0||length>BufferLength-offset||response.Length<11+length||
+            last!=(offset+length==BufferLength))return false;
         data=response.Slice(11,length).ToArray();return true;
     }
     public static Pro2NfcReadResult ParseTag(ReadOnlySpan<byte> buffer,ReadOnlySpan<byte> expectedUid)
@@ -145,22 +149,29 @@ public sealed class Pro2NfcReader(
             if(uid.Length==0)throw new TimeoutException("未检测到标签，请贴近 NFC 区后重试。");
             progress?.Invoke("已发现标签 · 正在读取 NTAG215");
             await Send(Pro2NfcProtocol.BuildReadCommand(uid),ct).ConfigureAwait(false);
-            bool ready=false;
-            for(int i=0;i<10;i++)
+            bool ready=false;Pro2NfcStatus? lastState=null;
+            long operationStarted=Stopwatch.GetTimestamp();
+            // The descriptor itself permits 2000ms. The old ten 100ms polls
+            // could abort a healthy pending operation before that elapsed.
+            while(Stopwatch.GetElapsedTime(operationStarted).TotalSeconds<4)
             {
                 var status=await Status().ConfigureAwait(false);
+                lastState=status;
+                if(status.Uid.Length==7&&!status.Uid.SequenceEqual(uid))throw new IOException("等待读取时标签 UID 改变。");
                 if(status.State==4){ready=true;break;}
                 if(status.State==7&&status.Detail==0x41)throw new IOException("读取时标签已移开。");
                 await Task.Delay(100,ct).ConfigureAwait(false);
             }
-            if(!ready)throw new IOException("Pro2 未进入 NFC 读取状态。");
+            if(!ready)throw new IOException("NFC 读取未在等待窗口内完成（状态 0x"+
+                (lastState?.State.ToString("X2")??"--")+"，详情 0x"+(lastState?.Detail.ToString("X2")??"--")+"），请保持标签贴稳后重试。");
             byte[] buffer=new byte[Pro2NfcProtocol.BufferLength];
-            for(int offset=0;offset<buffer.Length;offset+=Pro2NfcProtocol.ChunkLength)
+            for(int offset=0;offset<buffer.Length;)
             {
                 byte[] reply=await Send(Pro2NfcProtocol.BuildReadBufferCommand(offset),ct).ConfigureAwait(false);
                 if(!Pro2NfcProtocol.TryParseChunk(reply,offset,out var data,out _))
-                    throw new IOException("NFC 分块数据不完整；未保存文件。");
-                data.CopyTo(buffer,offset);progress?.Invoke("读取数据 · "+Math.Min(offset+data.Length,600)+" / 600 字节");
+                    throw new IOException("NFC 分块格式或长度不一致（偏移 "+offset+"，应答 "+reply.Length+" 字节）；未保存文件。");
+                data.CopyTo(buffer,offset);offset+=data.Length;
+                progress?.Invoke("读取数据 · "+offset+" / 600 字节");
             }
             var finalStatus=await Status().ConfigureAwait(false);
             if(finalStatus.State!=4||(finalStatus.Uid.Length==7&&!finalStatus.Uid.SequenceEqual(uid)))

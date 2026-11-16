@@ -6,8 +6,12 @@
 - 连续两次确认同一 UID 后才开始读取；恢复中换卡会中止。记录 `PRO2_NFC_ATTEMPT` 与 `PRO2_NFC_RECOVERY`，不记录实际 UID 或完整标签内容。
 - 应答超时、取消、数据截断、UID/BCC/格式校验失败不走这条重试路线，避免误用迟到应答或拼接不确定内容。
 
-不需要重新配对；不重启蓝牙、不改输入间隔，不发送写卡、固件或配对命令。仍为无线只读实验，实机兼容路线与完整导出待复测。
+不需要重新配对；不重启蓝牙、不改输入间隔，不发送写卡、固件或配对命令。仍为无线只读实验。
 
-参数依据：[主机 NFC 指令记录](https://github.com/ndeadly/switch2_controller_research/blob/master/commands.md)、[PicoSwitch2 主动读卡工具](https://github.com/notsosaelin/PicoSwitch2/blob/v2.6.0/tools/nfc_probe.ps1)。两条描述符公开存在，不代表当前 Windows 实机都已验证成功。
+参数依据：[主机 NFC 指令记录](https://github.com/ndeadly/switch2_controller_research/blob/master/commands.md)、[PicoSwitch2 主动读卡工具](https://github.com/notsosaelin/PicoSwitch2/blob/v2.6.0/tools/nfc_probe.ps1)。全零 UID 路线已在本机完成实卡读取；绑定 UID 路线的完整校验成功尚未确认。
 
 验证：932282 项离线断言通过，包含两种描述符白名单、07/3D 与 07/3E 后恢复、读取拒绝后切换参数、最多两次恢复、更换标签中止，以及应答超时／取消／坏数据不重试。构建无警告、无错误；该恢复路径的实机效果仍待复测。
+
+2026-11-16 本机实卡：Pro2 固件 1.1.5，`console_zero_uid` 第一次参数尝试成功，600 字节缓冲拆出 540 字节标签数据。元数据 UID、内容 UID、BCC0、BCC1 均通过，页 3 为 `F1 10 FF EE`。停止扫描已确认，无需重新连接；未发送写卡命令。
+
+本次读卡前／期间／结束后的真实 FD2 为 **132.83 / 133.03 / 132.33Hz**，Parsed 与 FD2 一致。此处“第一次参数尝试”是最后一次读卡操作内部的尝试编号；同一日志中此前三次手动读卡失败，不能据此声称连续成功率已验证。保存文件、模拟器导入、其他标签／电脑和加密真实性认证仍待验证。

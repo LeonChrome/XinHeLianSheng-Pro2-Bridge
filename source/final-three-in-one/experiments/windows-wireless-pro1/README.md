@@ -1,4 +1,4 @@
-# USB → 无线 Pro1 转发实验 0.1
+# USB → 无线 Pro1 转发实验 0.2
 
 复用现有助手的实体 USB 输入、校准、体感和震动转换。独立入口，不启动 USBIP，不改变正式助手的默认功能。当前目标是完整 Pro1 Classic HID；PS5 / Xbox 蓝牙输出不包含在本轮。
 
@@ -11,7 +11,14 @@
 - 将读出的 NTAG215 540 字节快照转换为 Pro1 NFC 状态及分块应答；也可载入已有 540 / 572 字节文件。可手动移除快照。
 - 重复分块请求重发相同内容；拒绝写卡、写闪存及未知命令。读取超时或应答失步后，要求重新连接实体手柄。
 
-这些是已编译、已做离线协议回放的实现，完整 Pro1 蓝牙连接、USB 实卡读取和接收端 amiibo 识别仍需实机验收。
+已完成编译及离线协议回放。0.2 已在本机真实 Pro2 USB 的同一连接连续三次读出 540 字节 amiibo，UID/BCC 与格式检查全部通过；每次约 0.42～0.43 秒，结束后 5 秒输入窗口约 249.99Hz，队列丢弃为 0。这是有限窗口的真实 USB 读卡验收。完整 Pro1 蓝牙连接与接收端 amiibo 识别仍需验收。
+
+## 0.2 修复
+
+- 移除 USB NFC 初始化中不会应答的可选 `01/01` 命令，避免读卡前就超时。保留已经实测有应答的 `01/0C`，后续命令均按真实 ACK 判断。
+- 日志补充 USB NFC 状态、实际 89 字节分块及末包声明长度；不会把 100 字节传输帧的尾部补零当成标签数据。
+- USB 单独测试也持续消费输入队列，避免“尚未开始无线输出”导致的队列丢弃误报。未发送到无线的报告单列为基线消费。
+- 窗口明确显示系统蓝牙 / WinUSB 状态与“无线尚未启动”的原因，不再只留一个禁用按钮。
 
 ## 运行
 
@@ -33,7 +40,7 @@
 
 当前是 **实体读取 → 本地只读快照 → Pro1 协议应答**。读取后移开实体卡，不会自动撤回已经缓存的虚拟标签；使用“移除标签快照”。快照可替换，正在进行的旧读取不会覆盖用户随后载入或移除的标签。
 
-不转发 NFC 写入，不验证 amiibo 真伪，不承诺所有游戏或主机固件兼容。Pro1 官方有线模式会关闭 NFC，因此 Pro1 USB 本轮只提供普通操作、体感和震动；NFC 可用预先读好的文件。Pro2 官方支持有线 NFC，但本项目 USB 读卡仍待本机实卡验证。见[任天堂说明](https://www.nintendo.com/en-gb/Support/Troubleshooting/How-to-Enable-Disable-Nintendo-Switch-Pro-Controller-Wired-Communication-on-Nintendo-Switch-2-2892719.html)。
+不转发 NFC 写入，不验证 amiibo 真伪，不承诺所有游戏或主机固件兼容。Pro1 官方有线模式会关闭 NFC，因此 Pro1 USB 本轮只提供普通操作、体感和震动；NFC 可用预先读好的文件。Pro2 官方支持有线 NFC，本项目也已完成真实 USB 连续读卡验收。见[任天堂说明](https://www.nintendo.com/en-gb/Support/Troubleshooting/How-to-Enable-Disable-Nintendo-Switch-Pro-Controller-Wired-Communication-on-Nintendo-Switch-2-2892719.html)。
 
 ## 日志与判定
 

@@ -33,7 +33,7 @@ public sealed class ExperimentSession:IAsyncDisposable
     private readonly SemaphoreSlim sendGate=new(1,1);
     private readonly byte[] session=RandomNumberGenerator.GetBytes(16);
     private long sendSequence,receivedSequence,selectedInputs,rumblePackets,rumbleFailures;
-    private long invalidIpc;
+    private long invalidIpc,usbBaselineConsumed;
     private Task<NintendoNfcTag>? captureTask;
     private int disposed;
     private bool relayStarted,receiverConnected;
@@ -47,13 +47,13 @@ public sealed class ExperimentSession:IAsyncDisposable
     public bool RadioStarted=>relayStarted;
     public bool CanReadNfc=>source?.CanReadUsbNfc==true&&captureTask is not{IsCompleted:false};
     public string Summary=>source==null?"未连接 USB 手柄":source.MetricsSummary;
-    public string State=>radioEnded?radioEndReason:receiverConnected?"无线 Pro1 已连接 · 接收端频率待验证":relayStarted?"等待接收设备配对 Pro Controller":UsbConnected?"USB 输入已就绪":"未连接";
+    public string State=>radioEnded?radioEndReason:receiverConnected?"无线 Pro1 已连接 · 接收端频率待验证":relayStarted?"等待接收设备配对 Pro Controller":UsbConnected?"USB 已连接 · 无线发射尚未启动":"未连接";
     public ExperimentSession(string directory,Action<string>? display=null)
     {
         DirectoryPath=Path.GetFullPath(directory);CreatePrivateDirectory(DirectoryPath);
         show=display??(_=>{});
         journalTask=Task.Run(WriteJournalAsync);
-        Log("[EXPERIMENT_BEGIN] version=0.1 windows="+Environment.OSVersion.Version+" x64="+Environment.Is64BitOperatingSystem+" source=existing_assistant physical_usb_only=true registry_changes=0 driver_changes=0");
+        Log("[EXPERIMENT_BEGIN] version=0.2 windows="+Environment.OSVersion.Version+" x64="+Environment.Is64BitOperatingSystem+" source=existing_assistant physical_usb_only=true registry_changes=0 driver_changes=0");
     }
     private static void CreatePrivateDirectory(string path)
     {
@@ -116,6 +116,11 @@ public sealed class ExperimentSession:IAsyncDisposable
         try{source=new(device,Log);await source.ConnectAsync(token).ConfigureAwait(false);source.PrepareForConsumerSession();}
         catch{if(source!=null)await source.DisposeAsync();source=null;ReleaseInputLease();throw;}
         Log("[USB_BASELINE] "+source.MetricsSummary);
+        foreach(var adapter in WirelessRelayEnvironment.EnumerateRadios())
+            Log("[RELAY_RADIO_ENVIRONMENT] name="+adapter.Name+" instance="+adapter.InstanceId+" service="+adapter.Service+" driver="+adapter.DriverVersion+" ready="+adapter.Ready+" radio_opened=false");
+        // Continuously drain real reports even during USB-only diagnostics.
+        // An idle consumer queue is not a failed USB link or lost RF packets.
+        producerTask=Task.Run(()=>ProduceAsync(lifetime.Token));
     }
     private void ReleaseInputLease()
     {var lease=Interlocked.Exchange(ref inputLease,null);if(lease!=null){lease.Release();lease.Dispose();}}
@@ -145,7 +150,7 @@ public sealed class ExperimentSession:IAsyncDisposable
         receiveTask=Task.Run(()=>ReceiveAsync(lifetime.Token));
         radio=Process.Start(start)??throw new IOException("原生发射端未启动。");relayStarted=true;
         stdoutTask=Task.Run(()=>PumpLogAsync(radio.StandardOutput,"RADIO"));stderrTask=Task.Run(()=>PumpLogAsync(radio.StandardError,"RADIO_ERROR"));
-        heartbeatTask=Task.Run(()=>HeartbeatAsync(lifetime.Token));producerTask=Task.Run(()=>ProduceAsync(lifetime.Token));
+        heartbeatTask=Task.Run(()=>HeartbeatAsync(lifetime.Token));
         Log(FormattableString.Invariant($"[RELAY_START] identity=Pro_Controller target_vid_pid=057E:2009 physical_input=source_only target_report_hz={targetHz:F3} imu=real_history_hold newest_wire_index=0 output_superseding=recorded receiver_rate_verified=false nfc=read_only_snapshot"));
     }
     private async Task PumpLogAsync(StreamReader reader,string kind)
@@ -178,18 +183,20 @@ public sealed class ExperimentSession:IAsyncDisposable
     {
         try
         {
-            while(!token.IsCancellationRequested&&radio?.HasExited==false)
+            while(!token.IsCancellationRequested)
             {
+                if(radio?.HasExited==true)break;
                 if(source!.TryGetNextFresh(out var state,out var age))
                 {
                     byte[]? report=null;long selectedTicks=state.SourceTimestampTicks;
                     lock(protocolGate)
                     {
-                        if(protocol!=null)
+                        if(protocol!=null&&receiverConnected)
                         {
                             protocol.Observe(state,state.SourceTimestampTicks);
                             if(cadence!.TrySelect(state,out var selected)){selectedTicks=selected.SourceTimestampTicks;report=protocol.BuildInput(selected,selectedTicks,Stopwatch.Frequency,1000/targetHz);}
                         }
+                        else Interlocked.Increment(ref usbBaselineConsumed);
                     }
                     if(report!=null&&Stopwatch.GetElapsedTime(selectedTicks).TotalMilliseconds<=100)
                     {await SendAsync(WirelessRelayMessage.FreshInput,report,selectedTicks,token).ConfigureAwait(false);Interlocked.Increment(ref selectedInputs);}
@@ -301,7 +308,7 @@ public sealed class ExperimentSession:IAsyncDisposable
             foreach(var task in new[]{receiveTask,producerTask,heartbeatTask,stdoutTask,stderrTask})if(task!=null)try{await task.ConfigureAwait(false);}catch(Exception e){Log("[WORKER_STOP] "+e.GetType().Name);}
             if(captureTask!=null)try{await captureTask.ConfigureAwait(false);}catch(Exception e){Log("[NFC_STOP] "+e.GetType().Name);}
             var physical=source?.Snapshot();if(source!=null)await source.DisposeAsync().ConfigureAwait(false);
-            object result=new{version="0.1",windows=Environment.OSVersion.Version.ToString(),physical,selectedInputs,rumblePackets,rumbleFailures,invalidIpc,
+            object result=new{version="0.2",windows=Environment.OSVersion.Version.ToString(),physical,selectedInputs,usbBaselineConsumed,rumblePackets,rumbleFailures,invalidIpc,
                 hostCommands=protocol?.HostCommands,nfcCommands=protocol?.NfcCommands,rejectedCommands=protocol?.RejectedCommands,
                 targetHz,cadenceSkipped=cadence?.Skipped,staleTransitions=cadence?.StaleTransitions,
                 receiverRateVerified=false,tagWrites=0,driverChanges=0,registryChanges=0,radioExit=radio?.ExitCode,logDropped,journalFailure};

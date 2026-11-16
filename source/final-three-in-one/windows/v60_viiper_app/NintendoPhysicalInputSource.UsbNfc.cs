@@ -46,6 +46,14 @@ public sealed partial class NintendoPhysicalInputSource
                     // only a separately checked USB response; never fabricate ACKs.
                     response=(byte[])response.Clone();response[2]=1;
                     log(FormattableString.Invariant($"[USB_NFC_COMMAND] command={command:X2}/{sub:X2} response_bytes={response.Length} elapsed_ms={Stopwatch.GetElapsedTime(sent).TotalMilliseconds:F2} ack={response[5]:X2} payload_logged=false"));
+                    if(sub==5&&Pro2NfcProtocol.TryParseStatus(response,out var state))
+                        log("[USB_NFC_STATUS] state=0x"+state.State.ToString("X2")+" detail=0x"+state.Detail.ToString("X2")+" uid_length="+state.Uid.Length+" uid_logged=false");
+                    if(sub==0x15)
+                    {
+                        int offset=payload.Length==2?payload[0]|payload[1]<<8:-1;
+                        int declared=response.Length>=11?response[9]|response[10]<<8:-1;
+                        log("[USB_NFC_CHUNK] offset="+offset+" declared_bytes="+declared+" response_bytes="+response.Length+" framing="+Convert.ToHexString(response.AsSpan(0,Math.Min(11,response.Length)))+" tag_payload_logged=false");
+                    }
                     return response;
                 }
                 catch(Exception e)
@@ -59,10 +67,11 @@ public sealed partial class NintendoPhysicalInputSource
             }
             if(!usbNfcInitialized)
             {
-                // Explicit, read-session-only peripheral initialization from
-                // console captures. It is never added to normal USB startup.
+                // 01/0C is ACKed by the real USB device. Do not copy BLE's
+                // optional 01/01 into USB: this firmware never ACKs it and it
+                // aborts a working 250Hz session before any scan is requested.
                 await Send(1,0x0c,[],deadline.Token).ConfigureAwait(false);
-                await Send(1,1,[0,0,0,0],deadline.Token).ConfigureAwait(false);
+                log("[USB_NFC_INIT_POLICY] route=usb_acked_0c optional_01_01=not_sent reason=observed_no_ack no_fake_success=true");
                 usbNfcInitialized=true;
             }
             async Task<byte[]> Exchange(byte[] request,CancellationToken ct)

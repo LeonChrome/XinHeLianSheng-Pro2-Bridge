@@ -17,6 +17,7 @@ internal sealed class ExperimentWindow:Window
     private readonly ComboBox cadence=new(){ItemsSource=new[]{"Pro1 标准 · 66.7Hz（优先验证体感 / NFC）","133Hz · 高速实验，接收端待验证","250Hz · 高速实验，接收端待验证"},SelectedIndex=0,MinWidth=420};
     private readonly TextBlock status=new(){Text="检查本机设备中…",TextWrapping=TextWrapping.Wrap};
     private readonly TextBlock metrics=new(){Text="未连接",TextWrapping=TextWrapping.Wrap,FontSize=13};
+    private readonly TextBlock radioHint=new(){TextWrapping=TextWrapping.Wrap,Margin=new(0,7,0,0),Foreground=Brushes.DarkGoldenrod};
     private readonly TextBox log=new(){IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.NoWrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Auto,FontFamily=new("Consolas"),FontSize=11,Background=new SolidColorBrush(Color.FromRgb(247,249,248))};
     private readonly Button refresh=new(){Content="刷新设备"},connect=new(){Content="连接 USB"},start=new(){Content="开始无线 Pro1"},capture=new(){Content="读取 amiibo"},load=new(){Content="载入 .bin"},stop=new(){Content="停止"};
     private readonly CancellationTokenSource lifetime=new();
@@ -27,7 +28,7 @@ internal sealed class ExperimentWindow:Window
     private bool busy,closing,closed;
     public ExperimentWindow()
     {
-        Title="PRO2 / PRO1 · USB 无线转发实验 0.1";Width=1030;Height=770;MinWidth=850;MinHeight=620;Background=Brushes.White;
+        Title="PRO2 / PRO1 · USB 无线转发实验 0.2";Width=1030;Height=770;MinWidth=850;MinHeight=620;Background=Brushes.White;
         var root=new Grid{Margin=new Thickness(24)};
         foreach(var height in new[]{GridLength.Auto,GridLength.Auto,GridLength.Auto,GridLength.Auto,GridLength.Auto,GridLength.Auto,new GridLength(1,GridUnitType.Star)})root.RowDefinitions.Add(new(){Height=height});
         void Row(UIElement item,int row){Grid.SetRow(item,row);root.Children.Add(item);}
@@ -41,7 +42,9 @@ internal sealed class ExperimentWindow:Window
         foreach(var button in new[]{refresh,connect,start,capture,load,stop}){button.Margin=new(0,0,9,8);button.Padding=new(13,8,13,8);actions.Children.Add(button);}
         var remove=new Button{Content="移除标签快照",Padding=new(13,8,13,8),Margin=new(0,0,9,8)};remove.Click+=(_,_)=>session?.RemoveTag();actions.Children.Add(remove);
         var folder=new Button{Content="打开本轮日志",Padding=new(13,8,13,8),Margin=new(0,0,0,8)};actions.Children.Add(folder);Row(actions,3);
-        status.FontSize=15;status.FontWeight=FontWeights.SemiBold;status.Margin=new(0,0,0,10);Row(status,4);metrics.Margin=new(0,0,0,12);Row(metrics,5);Row(log,6);Content=root;
+        status.FontSize=15;status.FontWeight=FontWeights.SemiBold;status.Margin=new(0,0,0,10);
+        var connectionState=new StackPanel();connectionState.Children.Add(status);connectionState.Children.Add(radioHint);
+        Row(connectionState,4);metrics.Margin=new(0,8,0,12);Row(metrics,5);Row(log,6);Content=root;
         refresh.Click+=async(_,_)=>await ActAsync(ProbeAsync);
         connect.Click+=async(_,_)=>await ActAsync(ConnectAsync);
         start.Click+=async(_,_)=>await ActAsync(StartAsync);
@@ -106,5 +109,11 @@ internal sealed class ExperimentWindow:Window
         connect.IsEnabled=!busy&&session?.UsbConnected!=true&&devices.SelectedItem!=null;
         start.IsEnabled=!busy&&session?.RadioStarted!=true&&radios.SelectedItem is WirelessRelayRadio{Ready:true};
         capture.IsEnabled=!busy&&session?.CanReadNfc==true;load.IsEnabled=!busy&&session!=null;stop.IsEnabled=!busy&&session!=null;
+        radioHint.Text=radios.SelectedItem switch
+        {
+            WirelessRelayRadio{Ready:true}=>"发射器已准备。USB 连接后可启动无线 Pro1。",
+            WirelessRelayRadio selected=>"无线尚未启动："+selected.Name+" 仍是 Windows 系统蓝牙（"+selected.Service+"）。需要先准备可恢复的 WinUSB 发射模式；USB 输入和读卡可单独测试。",
+            _=>"未发现本轮支持的发射适配器。USB 输入和 Pro2 读卡可单独测试。"
+        };
     }
 }

@@ -25,7 +25,8 @@ internal static class Program
         if(args.Contains("--usb-capture"))
         {
             string output=Value(args,"--output")??Path.Combine(AppContext.BaseDirectory,"usb-run");
-            return CaptureUsbAsync(output,args.Contains("--read-nfc")).GetAwaiter().GetResult();
+            int repeats=int.TryParse(Value(args,"--nfc-repeat"),out int requested)?Math.Clamp(requested,1,3):1;
+            return CaptureUsbAsync(output,args.Contains("--read-nfc"),repeats).GetAwaiter().GetResult();
         }
         if(args.Contains("--journal-self-test"))
         {
@@ -59,7 +60,7 @@ internal static class Program
     }
     private static string? Value(string[] args,string name)
     {int index=Array.IndexOf(args,name);return index>=0&&index+1<args.Length?args[index+1]:null;}
-    private static async Task<int> CaptureUsbAsync(string path,bool readNfc)
+    private static async Task<int> CaptureUsbAsync(string path,bool readNfc,int repeats)
     {
         await using var session=new ExperimentSession(path);
         try
@@ -68,7 +69,15 @@ internal static class Program
             if(devices.Length!=1){session.Log("[USB_CAPTURE_NOT_STARTED] pro2_usb_count="+devices.Length+" no_device_commands_sent=true");return 2;}
             using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(readNfc?70:25));
             await session.ConnectUsbAsync(devices[0],deadline.Token);await Task.Delay(5000,deadline.Token);
-            if(readNfc)await session.CaptureNfcAsync(deadline.Token);
+            if(readNfc)
+            {
+                for(int i=0;i<repeats;i++)
+                {
+                    session.Log("[USB_CARD_ACCEPTANCE] read="+(i+1)+"/"+repeats+" same_physical_connection=true");
+                    await session.CaptureNfcAsync(deadline.Token);
+                    if(i+1<repeats)await Task.Delay(2000,deadline.Token);
+                }
+            }
             await Task.Delay(10000,deadline.Token);return 0;
         }
         catch(Exception e){session.Log("[USB_CAPTURE_FAILED] "+e);return 1;}

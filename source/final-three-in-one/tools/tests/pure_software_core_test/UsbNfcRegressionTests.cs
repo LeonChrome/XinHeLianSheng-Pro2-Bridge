@@ -7,8 +7,9 @@ internal static class UsbNfcRegressionTests
 {
     public static async Task RunAsync(Action<bool,string> check)
     {
-        foreach(string scenario in new[]{"success","cancel","wrong_transport","timeout"})
+        foreach(string scenario in new[]{"success","usb89_padded100","cancel","wrong_transport","timeout"})
         {
+            bool shouldSucceed=scenario is "success" or "usb89_padded100";
             using var stop=new CancellationTokenSource(TimeSpan.FromSeconds(8));
             var device=new NintendoHidDevice("offline",@"USB\VID_057E&PID_2069\TEST",Guid.NewGuid().ToString(),NintendoInputKind.Pro2Usb,64,64,"offline USB");
             var io=new StreamingUsb();var channel=new NfcUsb(scenario,stop);var trace=new List<string>();
@@ -18,18 +19,21 @@ internal static class UsbNfcRegressionTests
             try
             {
                 var result=await input.ReadUsbNfcAsync(stop.Token);success=true;
-                check(scenario=="success"&&result.Transport=="Pro2Usb"&&result.Data.SequenceEqual(channel.Buffer[60..]),"shared NFC reader obtains unchanged USB tag bytes");
+                check(shouldSucceed&&result.Transport=="Pro2Usb"&&result.Data.SequenceEqual(channel.Buffer[60..]),"shared NFC reader obtains unchanged USB tag bytes "+scenario);
             }
             catch(Exception e)when(e is IOException or OperationCanceledException or TimeoutException)
-            {check(scenario!="success","USB NFC failure cannot return a complete tag "+scenario);}
-            check(success==(scenario=="success"),"USB NFC completion result matches response validity "+scenario);
+            {check(!shouldSucceed,"USB NFC failure cannot return a complete tag "+scenario);}
+            check(success==shouldSucceed,"USB NFC completion result matches response validity "+scenario);
             check(input.IsRunning&&input.IsOutputReady,"USB NFC does not destroy the input or feedback session "+scenario);
-            check(channel.Calls.Where(c=>c.Command==1).All(c=>new byte[]{1,3,4,5,6,0x0c,0x15}.Contains(c.Sub)),"USB NFC command whitelist excludes tag writes, flash writes and report mode changes");
+            check(channel.Calls.Where(c=>c.Command==1).All(c=>new byte[]{3,4,5,6,0x0c,0x15}.Contains(c.Sub)),"USB NFC whitelist excludes tag writes, report mode changes and unacknowledged optional 01/01");
+            check(!channel.Calls.Any(c=>c.Command==1&&c.Sub==1),"known real USB no-ACK command 01/01 is never sent");
             if(success)
             {
                 check(input.Snapshot().Reports>before+10,"actual HID reader continues taking reports through NFC transaction");
                 check(channel.Calls.Count(c=>c.Command==1&&c.Sub==4)>=2,"USB NFC always confirms stop before and after reading");
                 check(trace.Any(t=>t.Contains("[USB_NFC_END] success=True")&&t.Contains("report_mode_changes=0")),"USB NFC keeps before/during metrics and no-report-mode-change evidence");
+                if(scenario=="usb89_padded100")
+                    check(channel.Offsets.SequenceEqual(new[]{0,89,178,267,356,445,534}),"real USB 89-byte chunks and padded final 66-byte chunk advance by declared bytes");
             }
             else
             {
@@ -56,6 +60,7 @@ internal static class UsbNfcRegressionTests
     {
         public readonly byte[] Buffer=new byte[600];
         public readonly ConcurrentQueue<(byte Command,byte Sub)> Calls=new();
+        public readonly List<int> Offsets=[];
         public Action? During;
         private readonly string scenario;
         private readonly CancellationTokenSource stop;
@@ -68,6 +73,7 @@ internal static class UsbNfcRegressionTests
         public byte[] Send(byte command,byte sub,byte[] data)
         {
             Calls.Enqueue((command,sub));byte[] reply=[command,1,0,sub,0,0x78,0,0];if(command!=1)return reply;
+            if(sub==1)throw new TimeoutException("Real USB 01/01 has no ACK; this must never be a prerequisite.");
             if(sub==5)
             {Array.Resize(ref reply,24);reply[8]=reading?(byte)4:(byte)9;reply[16]=7;Buffer.AsSpan(8,7).CopyTo(reply.AsSpan(17));}
             if(sub==6)
@@ -79,7 +85,8 @@ internal static class UsbNfcRegressionTests
             }
             if(sub==0x15)
             {
-                int offset=BinaryPrimitives.ReadUInt16LittleEndian(data),count=Math.Min(84,600-offset);Array.Resize(ref reply,11+count);
+                int offset=BinaryPrimitives.ReadUInt16LittleEndian(data),count=Math.Min(scenario=="usb89_padded100"?89:84,600-offset);Offsets.Add(offset);
+                Array.Resize(ref reply,scenario=="usb89_padded100"?100:11+count);
                 reply[8]=offset+count==600?(byte)1:(byte)0;BinaryPrimitives.WriteUInt16LittleEndian(reply.AsSpan(9),(ushort)count);Buffer.AsSpan(offset,count).CopyTo(reply.AsSpan(11));
             }
             return reply;

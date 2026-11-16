@@ -24,7 +24,7 @@ internal static class Pro2NfcRegressionTests
     private static byte[] Status(bool reading,bool wrongUid=false,byte? state=null,byte detail=0)
     {
         byte[] body=new byte[61];body[0]=state??(reading?(byte)4:(byte)9);body[1]=detail;body[8]=7;Uid.CopyTo(body,9);
-        if(wrongUid)body[9]^=1;return Reply(5,body);
+        if(wrongUid)body[10]^=1;return Reply(5,body);
     }
     private static byte[] Chunk(int offset,byte[] buffer,int maximum=70,int paddedFrameLength=0)
     {
@@ -35,10 +35,13 @@ internal static class Pro2NfcRegressionTests
     public static async Task RunAsync(Action<bool,string> check)
     {
         check(Convert.ToHexString(Pro2NfcProtocol.BuildScanCommand())=="01910103000500000000002C01","Pro2 scan uses the observed open-ended discovery payload");
-        check(Convert.ToHexString(Pro2NfcProtocol.BuildReadCommand(Uid))=="0191010600130000D007041234567890AB0103003B3C7778860000",
-            "latest Pro2 read descriptor contains actual UID and only NTAG215 read ranges");
+        check(Convert.ToHexString(Pro2NfcProtocol.BuildReadCommand(Uid))=="0191010600130000D007000000000000000103003B3C7778860000",
+            "default read descriptor uses the captured console zero-UID read form");
+        check(Convert.ToHexString(Pro2NfcProtocol.BuildReadCommand(Uid,Pro2NfcReadDescriptorMode.UidBound))=="0191010600130000D007041234567890AB0103003B3C7778860000",
+            "UID-bound fallback preserves the upstream active probe read form");
         var commands=new[]{Pro2NfcProtocol.BuildScanCommand(),Pro2NfcProtocol.BuildStopCommand(),
-            Pro2NfcProtocol.BuildStatusCommand(),Pro2NfcProtocol.BuildReadCommand(Uid),Pro2NfcProtocol.BuildReadBufferCommand(560)};
+            Pro2NfcProtocol.BuildStatusCommand(),Pro2NfcProtocol.BuildReadCommand(Uid),
+            Pro2NfcProtocol.BuildReadCommand(Uid,Pro2NfcReadDescriptorMode.UidBound),Pro2NfcProtocol.BuildReadBufferCommand(560)};
         foreach(var command in commands)
         {
             byte[] extended=Pro2NfcProtocol.BuildExtendedPacket(command);
@@ -53,6 +56,8 @@ internal static class Pro2NfcRegressionTests
         }
         byte[] changed=Pro2NfcProtocol.BuildReadCommand(Uid);changed[24]=0xff;
         check(!Pro2NfcProtocol.IsReadOnlyCommand(changed),"arbitrary page ranges cannot enter the shipped reader");
+        byte[] partialUid=Pro2NfcProtocol.BuildReadCommand(Uid);partialUid[11]=1;
+        check(!Pro2NfcProtocol.IsReadOnlyCommand(partialUid),"partial zero UID is not an allowed read descriptor");
         foreach(int offset in new[]{-1,600,65535,int.MaxValue})
         {try{Pro2NfcProtocol.BuildReadBufferCommand(offset);check(false,"invalid buffer offset");}catch(ArgumentOutOfRangeException){check(true,"offset cannot escape the 600-byte read-only buffer");}}
         foreach(int offset in new[]{0,1,69,84,588,599})
@@ -132,6 +137,9 @@ internal static class Pro2NfcRegressionTests
         await Replay(check,"chunk_84");await Replay(check,"padded_95");await Replay(check,"busy_delayed");
         await Replay(check,"busy_timeout");await Replay(check,"removed");
         await Replay(check,"amiibo");await Replay(check,"amiibo_84");await Replay(check,"amiibo_bad_bcc");
+        await Replay(check,"terminal_3e_success");await Replay(check,"terminal_3d_success");
+        await Replay(check,"terminal_all");await Replay(check,"read_nack_fallback");
+        await Replay(check,"changed_after_error");await Replay(check,"timeout_on_read");await Replay(check,"cancel_on_read");
         using(var cancelled=new CancellationTokenSource())
         {
             cancelled.Cancel();int sent=0;
@@ -155,6 +163,8 @@ internal static class Pro2NfcRegressionTests
             "[14:17:50.281] [PRO2_NFC_STATUS] state=0x09 detail=0x00 uid_length=7",
             "[14:17:50.281] [PRO2_NFC_CHUNK] buffer_offset=0 frame_bytes=95 declared_bytes=84",
             "[14:17:50.281] [PRO2_NFC_VALIDATE] data_uid_match=True bcc0_valid=True bcc1_valid=True page3=F110FFEE format=amiibo_ntag215",
+            "[14:17:50.281] [PRO2_NFC_ATTEMPT] attempt=2/3 descriptor=uid_bound",
+            "[14:17:50.281] [PRO2_NFC_RECOVERY] attempt=1/3 retry_allowed=True state_meaning=unconfirmed",
             "[14:17:50.282] [PRO2_NFC] 读取未完成：无法确认 NFC 应答订阅状态。",
             "[14:17:51.788] [PRO2_NFC_RATE] phase=after fd2_hz=132.72 parsed_hz=132.72",
             "[14:17:51.789] [PRO2_NFC_RESULT] success=False commands=0 tag_writes=0"];
@@ -163,10 +173,12 @@ internal static class Pro2NfcRegressionTests
     }
     private static async Task Replay(Action<bool,string> check,string failure)
     {
-        bool reading=false;int chunks=0,stops=0,readStatusPolls=0;var seen=new List<byte>();
+        bool reading=false;int chunks=0,stops=0,readStatusPolls=0,readAttempts=0,terminalReplies=0;var seen=new List<byte>();
+        var readModes=new List<Pro2NfcReadDescriptorMode>();
         var buffer=Buffer(failure.StartsWith("amiibo"));object primaryOwner=new();
         if(failure=="amiibo_bad_bcc")buffer[63]^=1;
-        bool succeeds=failure is "success" or "primary_ack" or "chunk_84" or "padded_95" or "busy_delayed" or "amiibo" or "amiibo_84";
+        bool succeeds=failure is "success" or "primary_ack" or "chunk_84" or "padded_95" or "busy_delayed" or "amiibo" or "amiibo_84" or
+            "terminal_3e_success" or "terminal_3d_success" or "read_nack_fallback";
         bool wide=failure is "chunk_84" or "amiibo_84";
         int expectedChunks=wide?8:9;var diagnostics=new List<string>();
         var offsets=new List<int>();
@@ -191,6 +203,7 @@ internal static class Pro2NfcRegressionTests
             {
                 stops++;
                 if(failure=="stop_failure"&&chunks==9)throw new IOException("simulated stop failure");
+                reading=false;
                 return Respond(Reply(4));
             }
             if(failure=="timeout"&&command[3]==3)throw new TimeoutException("simulated no response");
@@ -203,10 +216,23 @@ internal static class Pro2NfcRegressionTests
                     readStatusPolls++;
                     if(failure=="busy_timeout"||failure=="busy_delayed"&&readStatusPolls<=22)return Respond(Status(true,state:2));
                     if(failure=="removed")return Respond(Status(true,state:7,detail:0x41));
+                    if(failure=="terminal_all"||(failure is "terminal_3e_success" or "terminal_3d_success" or "changed_after_error")&&readAttempts==1)
+                    {
+                        terminalReplies++;return Respond(Status(true,state:7,detail:failure=="terminal_3d_success"?(byte)0x3d:(byte)0x3e));
+                    }
                 }
+                if(!reading&&failure=="changed_after_error"&&readAttempts>0)return Respond(Status(false,true));
                 return Respond(Status(reading,failure=="uid_changed"&&chunks==expectedChunks));
             }
-            if(command[3]==6){reading=true;return Respond(Reply(6));}
+            if(command[3]==6)
+            {
+                readAttempts++;readStatusPolls=0;
+                readModes.Add(command.AsSpan(10,7).SequenceEqual(new byte[7])?Pro2NfcReadDescriptorMode.ConsoleZeroUid:Pro2NfcReadDescriptorMode.UidBound);
+                if(failure=="timeout_on_read")throw new TimeoutException("simulated ambiguous read ACK timeout");
+                if(failure=="cancel_on_read"){cts.Cancel();ct.ThrowIfCancellationRequested();}
+                if(failure=="read_nack_fallback"&&readAttempts==1){var nack=Reply(6);nack[5]=0;return Respond(nack);}
+                reading=true;return Respond(Reply(6));
+            }
             if(command[3]==0x15)
             {
                 chunks++;int offset=BinaryPrimitives.ReadUInt16LittleEndian(command.AsSpan(8));offsets.Add(offset);
@@ -224,6 +250,10 @@ internal static class Pro2NfcRegressionTests
             if(failure=="busy_delayed")check(readStatusPolls==23,"pending state beyond descriptor 2s is allowed to complete");
             if(failure.StartsWith("amiibo"))check(diagnostics.Any(line=>line.Contains("format=amiibo_ntag215")&&line.Contains("valid=True")),
                 "native amiibo format is logged after complete assembly");
+            if(failure is "terminal_3e_success" or "terminal_3d_success" or "read_nack_fallback")
+                check(readModes.SequenceEqual(new[]{Pro2NfcReadDescriptorMode.ConsoleZeroUid,Pro2NfcReadDescriptorMode.UidBound})&&
+                    stops>=3&&diagnostics.Any(line=>line.StartsWith("[PRO2_NFC_RECOVERY]")),
+                    "explicit error recovers in the same reader with stop/rediscovery and the bounded alternate descriptor");
         }
         catch(Exception error)when(error is IOException or TimeoutException or OperationCanceledException)
         {
@@ -232,6 +262,13 @@ internal static class Pro2NfcRegressionTests
             if(failure=="removed")check(error is IOException&&chunks==0,"tag removal while pending aborts before buffer reads");
             if(failure=="amiibo_bad_bcc")check(error is IOException&&error.Message.Contains("BCC0")&&
                 diagnostics.Any(line=>line.Contains("bcc0_valid=False")),"failed native tag names and records the exact check before cleanup");
+            if(failure=="terminal_all")check(readAttempts==3&&terminalReplies==3&&chunks==0&&
+                readModes.SequenceEqual(new[]{Pro2NfcReadDescriptorMode.ConsoleZeroUid,Pro2NfcReadDescriptorMode.UidBound,Pro2NfcReadDescriptorMode.ConsoleZeroUid}),
+                "terminal errors are not busy-polled, and stop after two recoveries without exporting stale data");
+            if(failure=="changed_after_error")check(readAttempts==1&&chunks==0&&error.Message.Contains("另一张标签"),
+                "recovery cannot switch tags or mix their data");
+            if(failure is "timeout_on_read" or "cancel_on_read" or "busy_timeout" or "chunk_short" or "amiibo_bad_bcc")
+                check(readAttempts==1,"ambiguous timeout, cancellation or corrupt data never triggers a descriptor retry: "+failure);
         }
         check(stops>=2&&seen[^1]==4,"success, failure and cancellation always attempt stop: "+failure);
         check(!seen.Contains(8)&&!seen.Contains(0x14),"reader never emits tag-write commands: "+failure);

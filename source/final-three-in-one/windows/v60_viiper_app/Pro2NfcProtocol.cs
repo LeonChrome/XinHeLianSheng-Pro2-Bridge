@@ -13,6 +13,12 @@ namespace Y700Switch2V60Viiper;
 // This codec exposes no arbitrary command, tag write or firmware operation.
 public sealed record Pro2NfcStatus(byte State, byte Detail, byte[] Uid);
 public sealed record Pro2NfcReadResult(byte[] Uid, byte[] Data, byte[] Signature);
+public enum Pro2NfcReadDescriptorMode { ConsoleZeroUid, UidBound }
+public sealed class Pro2NfcCommandRejectedException(byte subcommand,byte ack)
+    : IOException("Pro2 拒绝 NFC 命令 01/"+subcommand.ToString("X2")+"（状态 0x"+ack.ToString("X2")+"）；未返回标签文件。")
+{
+    public byte Subcommand {get;}=subcommand;
+}
 public sealed record Pro2NfcTagValidation(int BufferBytes,int ExpectedUidBytes,bool MetadataUidMatches,
     bool DataUidMatches,bool Bcc0Valid,bool Bcc1Valid,string Page3,string Format,int MetadataTagType)
 {
@@ -37,10 +43,13 @@ public static class Pro2NfcProtocol
     public static byte[] BuildScanCommand() => Command(3,0,0,0,0x2c,1);
     public static byte[] BuildStatusCommand() => Command(5);
     public static byte[] BuildStopCommand() => Command(4);
-    public static byte[] BuildReadCommand(ReadOnlySpan<byte> uid)
+    public static byte[] BuildReadCommand(ReadOnlySpan<byte> uid,Pro2NfcReadDescriptorMode mode=Pro2NfcReadDescriptorMode.ConsoleZeroUid)
     {
         if(uid.Length!=7||uid[0]!=4)throw new ArgumentException("需要有效的七字节 NTAG UID。",nameof(uid));
-        byte[] payload=new byte[19];payload[0]=0xd0;payload[1]=7;uid.CopyTo(payload.AsSpan(2));
+        if(mode is not (Pro2NfcReadDescriptorMode.ConsoleZeroUid or Pro2NfcReadDescriptorMode.UidBound))
+            throw new ArgumentOutOfRangeException(nameof(mode));
+        byte[] payload=new byte[19];payload[0]=0xd0;payload[1]=7;
+        if(mode==Pro2NfcReadDescriptorMode.UidBound)uid.CopyTo(payload.AsSpan(2));
         payload[9]=1;payload[10]=3;
         new byte[]{0,0x3b,0x3c,0x77,0x78,0x86,0,0}.CopyTo(payload,11);
         return Command(6,payload);
@@ -58,10 +67,17 @@ public static class Pro2NfcProtocol
         {
             3=>command.SequenceEqual(BuildScanCommand()),
             4 or 5=>command.Length==8,
-            6=>command.Length==27&&command[10]==4&&command.SequenceEqual(BuildReadCommand(command.Slice(10,7))),
+            6=>IsKnownReadDescriptor(command),
             0x15=>command.Length==10&&BinaryPrimitives.ReadUInt16LittleEndian(command[8..])<BufferLength,
             _=>false
         };
+    }
+    private static bool IsKnownReadDescriptor(ReadOnlySpan<byte> command)
+    {
+        if(command.Length!=27||command[8]!=0xd0||command[9]!=7||
+            !command[17..].SequenceEqual(new byte[]{1,3,0,0x3b,0x3c,0x77,0x78,0x86,0,0}))return false;
+        bool zeroUid=true;foreach(byte value in command.Slice(10,7))zeroUid&=value==0;
+        return zeroUid||command[10]==4;
     }
     public static byte[] BuildExtendedPacket(ReadOnlySpan<byte> command)
     {
@@ -80,7 +96,7 @@ public static class Pro2NfcProtocol
         if(!MatchesResponse(request,response))
             throw new IOException("Pro2 NFC 应答格式或命令不匹配；未返回标签文件。");
         if(response[5] is not (0x78 or 0xf8))
-            throw new IOException("Pro2 拒绝 NFC 命令 01/"+request[3].ToString("X2")+"（状态 0x"+response[5].ToString("X2")+"）；未返回标签文件。");
+            throw new Pro2NfcCommandRejectedException(request[3],response[5]);
     }
     public static bool TryParseStatus(ReadOnlySpan<byte> response,out Pro2NfcStatus status)
     {
@@ -140,6 +156,8 @@ public static class Pro2NfcProtocol
 public sealed class Pro2NfcReader(
     Func<byte[],CancellationToken,Task<byte[]>> exchange,Action<string>? progress=null,Action<string>? diagnostic=null)
 {
+    private sealed class ReaderStateException(Pro2NfcStatus status):IOException(
+        "手柄 NFC 返回状态 0x"+status.State.ToString("X2")+"，详情 0x"+status.Detail.ToString("X2")+"；具体底层原因未确认。") { }
     public async Task<Pro2NfcReadResult> ReadAsync(CancellationToken token)
     {
         using var bounded=CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -158,29 +176,35 @@ public sealed class Pro2NfcReader(
             if(!Pro2NfcProtocol.TryParseStatus(reply,out var status))throw new IOException("NFC 状态应答长度或格式错误。");
             return status;
         }
-        try
+        async Task<byte[]> DiscoverStableUid(int offMilliseconds,int recovery)
         {
-            progress?.Invoke("等待标签 · 请贴近手柄顶部 NFC 区");
-            byte[] uid=[];
-            // Re-arm a bounded discovery cycle instead of polling an expired scan.
-            for(int cycle=0;cycle<15&&uid.Length==0;cycle++)
+            progress?.Invoke(recovery==0?"等待标签 · 请贴近手柄顶部 NFC 区":"自动恢复读卡 · "+recovery+" / 2 · 重新识别当前标签");
+            for(int cycle=0;cycle<15;cycle++)
             {
                 await Send(Pro2NfcProtocol.BuildStopCommand(),ct).ConfigureAwait(false);
+                await Task.Delay(offMilliseconds,ct).ConfigureAwait(false);
                 await Send(Pro2NfcProtocol.BuildScanCommand(),ct).ConfigureAwait(false);
-                for(int poll=0;poll<9;poll++)
+                byte[] candidate=[];int stable=0;
+                for(int poll=0;poll<10;poll++)
                 {
                     var status=await Status().ConfigureAwait(false);
                     if(status.State==9)
                     {
-                        if(status.Uid.Length!=7)throw new NotSupportedException("已检测到标签，本版只支持七字节 UID 的 NTAG215。");
-                        uid=status.Uid;break;
+                        if(status.Uid.Length!=7||status.Uid[0]!=4)
+                            throw new NotSupportedException("已检测到标签，本版只支持七字节 NTAG UID。");
+                        stable=candidate.SequenceEqual(status.Uid)?stable+1:1;candidate=status.Uid;
+                        if(stable>=2)return candidate;
                     }
+                    else{candidate=[];stable=0;if(status.State==7)break;}
                     await Task.Delay(100,ct).ConfigureAwait(false);
                 }
             }
-            if(uid.Length==0)throw new TimeoutException("未检测到标签，请贴近 NFC 区后重试。");
+            throw new TimeoutException("未能连续确认同一张标签，请贴近 NFC 区后重试。");
+        }
+        async Task<Pro2NfcReadResult> ReadOperation(byte[] uid,Pro2NfcReadDescriptorMode mode)
+        {
             progress?.Invoke("已发现标签 · 正在读取 NTAG215");
-            await Send(Pro2NfcProtocol.BuildReadCommand(uid),ct).ConfigureAwait(false);
+            await Send(Pro2NfcProtocol.BuildReadCommand(uid,mode),ct).ConfigureAwait(false);
             bool ready=false;Pro2NfcStatus? lastState=null;
             long operationStarted=Stopwatch.GetTimestamp();
             // The descriptor itself permits 2000ms. The old ten 100ms polls
@@ -191,11 +215,13 @@ public sealed class Pro2NfcReader(
                 lastState=status;
                 if(status.Uid.Length==7&&!status.Uid.SequenceEqual(uid))throw new IOException("等待读取时标签 UID 改变。");
                 if(status.State==4){ready=true;break;}
-                if(status.State==7&&status.Detail==0x41)throw new IOException("读取时标签已移开。");
+                // A repeated 07/3E is an explicit error response, not a busy
+                // operation. Leave it immediately and reacquire the same tag.
+                if(status.State==7)throw new ReaderStateException(status);
                 await Task.Delay(100,ct).ConfigureAwait(false);
             }
             if(!ready)throw new IOException("NFC 读取未在等待窗口内完成（状态 0x"+
-                (lastState?.State.ToString("X2")??"--")+"，详情 0x"+(lastState?.Detail.ToString("X2")??"--")+"），请保持标签贴稳后重试。");
+                (lastState?.State.ToString("X2")??"--")+"，详情 0x"+(lastState?.Detail.ToString("X2")??"--")+"）。");
             byte[] buffer=new byte[Pro2NfcProtocol.BufferLength];
             for(int offset=0;offset<buffer.Length;)
             {
@@ -209,7 +235,36 @@ public sealed class Pro2NfcReader(
             if(finalStatus.State!=4||(finalStatus.Uid.Length==7&&!finalStatus.Uid.SequenceEqual(uid)))
                 throw new IOException("读取完成前标签状态或 UID 改变，未保存文件。");
             diagnostic?.Invoke("[PRO2_NFC_VALIDATE] "+Pro2NfcProtocol.InspectTag(buffer,uid).Telemetry);
-            var result=Pro2NfcProtocol.ParseTag(buffer,uid);completed=true;return result;
+            return Pro2NfcProtocol.ParseTag(buffer,uid);
+        }
+        try
+        {
+            Pro2NfcReadDescriptorMode[] modes=[Pro2NfcReadDescriptorMode.ConsoleZeroUid,
+                Pro2NfcReadDescriptorMode.UidBound,Pro2NfcReadDescriptorMode.ConsoleZeroUid];
+            byte[]? lockedUid=null;
+            for(int attempt=0;attempt<modes.Length;attempt++)
+            {
+                string descriptor=modes[attempt]==Pro2NfcReadDescriptorMode.ConsoleZeroUid?"console_zero_uid":"uid_bound";
+                diagnostic?.Invoke("[PRO2_NFC_ATTEMPT] attempt="+(attempt+1)+"/3 descriptor="+descriptor+
+                    " phase=discover stable_uid_observations=2 scan_off_ms="+(attempt==0?80:300)+" ble_reconnect=false tag_writes=0");
+                byte[] uid=await DiscoverStableUid(attempt==0?80:300,attempt).ConfigureAwait(false);
+                if(lockedUid==null)lockedUid=(byte[])uid.Clone();
+                else if(!lockedUid.SequenceEqual(uid))throw new IOException("恢复读卡时发现另一张标签，已停止；不会混合不同标签的数据。");
+                try
+                {
+                    var result=await ReadOperation(uid,modes[attempt]).ConfigureAwait(false);
+                    diagnostic?.Invoke("[PRO2_NFC_ATTEMPT] attempt="+(attempt+1)+"/3 descriptor="+descriptor+" result=validated");
+                    completed=true;return result;
+                }
+                catch(Exception error)when(error is ReaderStateException or Pro2NfcCommandRejectedException{Subcommand:6})
+                {
+                    diagnostic?.Invoke("[PRO2_NFC_RECOVERY] attempt="+(attempt+1)+"/3 descriptor="+descriptor+
+                        " error="+error.Message+" retry_allowed="+(attempt<2)+" state_meaning=unconfirmed");
+                    if(attempt==2)throw new IOException("NFC 自动恢复两次后仍未完成："+error.Message,error);
+                    progress?.Invoke("读卡恢复中 · "+(attempt+1)+" / 2 · 保持当前标签");
+                }
+            }
+            throw new IOException("NFC 读取未完成。");
         }
         catch(OperationCanceledException)when(!token.IsCancellationRequested)
         {throw new TimeoutException("NFC 读取达到 25 秒上限，已停止本次读取。");}

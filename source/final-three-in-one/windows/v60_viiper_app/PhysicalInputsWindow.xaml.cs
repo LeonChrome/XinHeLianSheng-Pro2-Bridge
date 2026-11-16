@@ -27,9 +27,10 @@ public partial class PhysicalInputsWindow : Window
         var slot=vm.Pro2Slots[SlotIndex-1];
         Evidence.Text=slot.Name+" · "+slot.RateSummary+"\n\n"+
             (slot.PhysicalInput is {} source ? source.CapabilitySummary+"\n\n"+source.MetricsSummary :
-                "Pro2 BLE · NFC 只读实验 · NTAG215\n"+slot.InputSource.NfcStatus+
-                "\n读取结果可保存为 540 字节原始文件；当前未完成本机实卡验收。")+
-            (tag!=null?"\n\n标签 UID："+Convert.ToHexString(tag.Uid)+"\n已读取 "+tag.Data.Length+" 字节。":"");
+                "Pro2 BLE · NFC 只读实验 · NTAG215 / amiibo\n"+slot.InputSource.NfcStatus+
+                "\n完整性校验通过后，可保存 540 字节原始文件。")+
+            (tag!=null?"\n\n标签 UID："+Convert.ToHexString(tag.Uid)+"\n已读取 "+tag.Data.Length+
+                " 字节 · 长度与 UID/BCC 检查通过；未验证真实性。":"");
         SlotChoice.IsEnabled=!working;
         NfcButton.IsEnabled=!working&&!vm.Busy&&(slot.PhysicalInput is {} physical?physical.CanReadNfc:slot.InputSource.CanReadNfc);
         CancelNfcButton.IsEnabled=readCts!=null;

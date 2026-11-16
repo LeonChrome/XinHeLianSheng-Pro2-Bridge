@@ -160,7 +160,7 @@ public sealed partial class Pro2BleInputSource
                 " write_handle=0x"+writer.AttributeHandle.ToString("X4")+
                 " ack_uuid="+ack.Uuid+" ack_handle=0x"+ack.AttributeHandle.ToString("X4")+
                 " auxiliary_present="+(secondary!=null)+" auxiliary_cccd_reads=0 auxiliary_cccd_writes=0 input_subscriptions_changed=false");
-            var result=await new Pro2NfcReader(Exchange,Report).ReadAsync(operation.Token).ConfigureAwait(false);
+            var result=await new Pro2NfcReader(Exchange,Report,NfcTrace).ReadAsync(operation.Token).ConfigureAwait(false);
             readSucceeded=true;Report("已读取 NTAG215 · 540 字节");
             return new(result.Uid,result.Data,FormatAddress(owner.BluetoothAddress),"Pro2Ble",DateTimeOffset.Now){Signature=result.Signature};
         }

@@ -13,6 +13,16 @@ namespace Y700Switch2V60Viiper;
 // This codec exposes no arbitrary command, tag write or firmware operation.
 public sealed record Pro2NfcStatus(byte State, byte Detail, byte[] Uid);
 public sealed record Pro2NfcReadResult(byte[] Uid, byte[] Data, byte[] Signature);
+public sealed record Pro2NfcTagValidation(int BufferBytes,int ExpectedUidBytes,bool MetadataUidMatches,
+    bool DataUidMatches,bool Bcc0Valid,bool Bcc1Valid,string Page3,string Format,int MetadataTagType)
+{
+    public bool IsValid=>BufferBytes==600&&ExpectedUidBytes==7&&MetadataUidMatches&&DataUidMatches&&
+        Bcc0Valid&&Bcc1Valid&&MetadataTagType!=6&&(Format is "amiibo_ntag215" or "ndef_ntag215");
+    public string Telemetry=>"buffer_bytes="+BufferBytes+" expected_uid_bytes="+ExpectedUidBytes+
+        " metadata_uid_match="+MetadataUidMatches+" data_uid_match="+DataUidMatches+
+        " bcc0_valid="+Bcc0Valid+" bcc1_valid="+Bcc1Valid+" page3="+Page3+" format="+Format+
+        " metadata_tag_type="+MetadataTagType+" valid="+IsValid+" uid_logged=false raw_payload_logged=false authenticity_verified=false";
+}
 public static class Pro2NfcProtocol
 {
     public const int TagLength = 540, BufferLength = 600;
@@ -93,20 +103,42 @@ public static class Pro2NfcProtocol
             last!=(offset+length==BufferLength))return false;
         data=response.Slice(11,length).ToArray();return true;
     }
+    public static Pro2NfcTagValidation InspectTag(ReadOnlySpan<byte> buffer,ReadOnlySpan<byte> expectedUid)
+    {
+        if(buffer.Length!=BufferLength||expectedUid.Length!=7)
+            return new(buffer.Length,expectedUid.Length,false,false,false,false,"unavailable","invalid_length",-1);
+        ReadOnlySpan<byte> data=buffer[60..];
+        string page3=Convert.ToHexString(data.Slice(12,4));
+        // An amiibo uses F1 10 FF EE, not a blank NDEF tag's E1 10 3E 00.
+        // Recognize the format without changing the bytes or authenticating it.
+        string format=page3 switch
+        {
+            "F110FFEE"=>"amiibo_ntag215",
+            "E1103E00" or "E1103E0F"=>"ndef_ntag215",
+            _=>"unknown"
+        };
+        return new(buffer.Length,expectedUid.Length,buffer.Slice(8,7).SequenceEqual(expectedUid),
+            data[0]==4&&data[..3].SequenceEqual(expectedUid[..3])&&data.Slice(4,4).SequenceEqual(expectedUid[3..]),
+            data[3]==(byte)(0x88^data[0]^data[1]^data[2]),
+            data[8]==(byte)(data[4]^data[5]^data[6]^data[7]),page3,format,buffer[18]);
+    }
     public static Pro2NfcReadResult ParseTag(ReadOnlySpan<byte> buffer,ReadOnlySpan<byte> expectedUid)
     {
-        if(buffer.Length!=BufferLength||expectedUid.Length!=7||!buffer.Slice(8,7).SequenceEqual(expectedUid))
+        var validation=InspectTag(buffer,expectedUid);
+        if(buffer.Length!=BufferLength||expectedUid.Length!=7||!validation.MetadataUidMatches)
             throw new IOException("标签长度或 UID 不一致，未导出不完整数据。");
-        if(buffer[18]==6)throw new NotSupportedException("当前只支持 NTAG215；2KB 标签的完整读取尚未接入。");
+        if(validation.MetadataTagType==6)throw new NotSupportedException("当前只支持 NTAG215；2KB 标签的完整读取尚未接入。");
+        if(!validation.DataUidMatches)throw new IOException("标签内容中的 UID 与发现的标签不符；未导出文件。");
+        if(!validation.Bcc0Valid)throw new IOException("标签 UID 的 BCC0 校验失败；未导出文件。");
+        if(!validation.Bcc1Valid)throw new IOException("标签 UID 的 BCC1 校验失败；未导出文件。");
+        if(validation.Format=="unknown")throw new IOException("标签格式尚未识别（页 3："+validation.Page3+"）；未导出文件。");
         ReadOnlySpan<byte> data=buffer[60..];
-        if(!Pro1NfcProtocol.IsNtag215(data,expectedUid)||data[14]!=0x3e)
-            throw new IOException("标签不符合 NTAG215 容量或 UID/BCC 校验，未作为完整文件导出。");
         return new(expectedUid.ToArray(),data.ToArray(),buffer.Slice(19,32).ToArray());
     }
 }
 
 public sealed class Pro2NfcReader(
-    Func<byte[],CancellationToken,Task<byte[]>> exchange,Action<string>? progress=null)
+    Func<byte[],CancellationToken,Task<byte[]>> exchange,Action<string>? progress=null,Action<string>? diagnostic=null)
 {
     public async Task<Pro2NfcReadResult> ReadAsync(CancellationToken token)
     {
@@ -176,6 +208,7 @@ public sealed class Pro2NfcReader(
             var finalStatus=await Status().ConfigureAwait(false);
             if(finalStatus.State!=4||(finalStatus.Uid.Length==7&&!finalStatus.Uid.SequenceEqual(uid)))
                 throw new IOException("读取完成前标签状态或 UID 改变，未保存文件。");
+            diagnostic?.Invoke("[PRO2_NFC_VALIDATE] "+Pro2NfcProtocol.InspectTag(buffer,uid).Telemetry);
             var result=Pro2NfcProtocol.ParseTag(buffer,uid);completed=true;return result;
         }
         catch(OperationCanceledException)when(!token.IsCancellationRequested)

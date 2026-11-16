@@ -6,13 +6,15 @@ using Y700Switch2V60Viiper;
 internal static class Pro2NfcRegressionTests
 {
     private static readonly byte[] Uid=[4,0x12,0x34,0x56,0x78,0x90,0xab];
-    private static byte[] Buffer()
+    private static byte[] Buffer(bool amiibo=false)
     {
         byte[] buffer=new byte[600];buffer[0]=4;Uid.CopyTo(buffer,8);
         for(int i=19;i<51;i++)buffer[i]=(byte)i;
         var tag=buffer.AsSpan(60);Uid.AsSpan(0,3).CopyTo(tag);Uid.AsSpan(3).CopyTo(tag[4..]);
         tag[3]=(byte)(0x88^Uid[0]^Uid[1]^Uid[2]);tag[8]=(byte)(Uid[3]^Uid[4]^Uid[5]^Uid[6]);
-        tag[12]=0xe1;tag[13]=0x10;tag[14]=0x3e;return buffer;
+        if(amiibo)new byte[]{0xf1,0x10,0xff,0xee}.CopyTo(buffer,72);
+        else{tag[12]=0xe1;tag[13]=0x10;tag[14]=0x3e;}
+        return buffer;
     }
     private static byte[] Reply(byte sub,byte[]? body=null)
     {
@@ -68,6 +70,30 @@ internal static class Pro2NfcRegressionTests
             "only active NFC transactions own complete NFC response frames");
         byte[] buffer=Buffer();var tag=Pro2NfcProtocol.ParseTag(buffer,Uid);
         check(tag.Data.Length==540&&tag.Signature.SequenceEqual(buffer[19..51])&&tag.Uid.SequenceEqual(Uid),"600-byte buffer splits into tag/signature/identity without inventing data");
+        byte[] native=Buffer(true);var nativeCheck=Pro2NfcProtocol.InspectTag(native,Uid);
+        check(nativeCheck.IsValid&&nativeCheck.Format=="amiibo_ntag215"&&nativeCheck.Page3=="F110FFEE",
+            "native amiibo page 3 is recognized independently of blank NDEF capacity marker");
+        check(Pro2NfcProtocol.ParseTag(native,Uid).Data.SequenceEqual(native[60..]),"amiibo header and tag bytes are exported unchanged");
+        check(Pro2NfcProtocol.InspectTag(buffer,Uid).Format=="ndef_ntag215","plain NTAG215 remains supported");
+        byte[] locked=(byte[])buffer.Clone();locked[75]=0x0f;
+        check(Pro2NfcProtocol.InspectTag(locked,Uid).IsValid,"read-only NDEF NTAG215 access byte remains readable");
+        byte[] badBcc0=(byte[])native.Clone();badBcc0[63]^=1;
+        var bcc0Check=Pro2NfcProtocol.InspectTag(badBcc0,Uid);
+        check(!bcc0Check.IsValid&&!bcc0Check.Bcc0Valid&&bcc0Check.Bcc1Valid&&bcc0Check.DataUidMatches,
+            "amiibo recognition does not bypass BCC0");
+        byte[] badBcc1=(byte[])native.Clone();badBcc1[68]^=1;
+        check(!Pro2NfcProtocol.InspectTag(badBcc1,Uid).Bcc1Valid,"amiibo recognition does not bypass BCC1");
+        byte[] otherUid=(byte[])native.Clone();otherUid[61]^=1;
+        otherUid[63]=(byte)(0x88^otherUid[60]^otherUid[61]^otherUid[62]);
+        var otherUidCheck=Pro2NfcProtocol.InspectTag(otherUid,Uid);
+        check(!otherUidCheck.IsValid&&!otherUidCheck.DataUidMatches&&otherUidCheck.Bcc0Valid,
+            "a self-consistent but different UID cannot be exported for the detected tag");
+        foreach(var invalid in new[]{badBcc0,badBcc1,otherUid})
+        {try{Pro2NfcProtocol.ParseTag(invalid,Uid);check(false,"invalid native tag");}catch(IOException){check(true,"native tag integrity failures still block export");}}
+        check(!Pro2NfcProtocol.InspectTag(native[..^1],Uid).IsValid&&!Pro2NfcProtocol.InspectTag(native,Uid[..6]).IsValid,
+            "incomplete buffer or UID cannot pass format validation");
+        check(!nativeCheck.Telemetry.Contains(Convert.ToHexString(Uid))&&nativeCheck.Telemetry.Contains("page3=F110FFEE"),
+            "validation diagnostics distinguish the format without disclosing UID or tag payload");
         for(int offset=0;offset<600;offset+=70)
         {
             var reply=Chunk(offset,buffer);
@@ -105,6 +131,7 @@ internal static class Pro2NfcRegressionTests
         await Replay(check,"nack");await Replay(check,"timeout");await Replay(check,"stop_failure");await Replay(check,"cancel");
         await Replay(check,"chunk_84");await Replay(check,"padded_95");await Replay(check,"busy_delayed");
         await Replay(check,"busy_timeout");await Replay(check,"removed");
+        await Replay(check,"amiibo");await Replay(check,"amiibo_84");await Replay(check,"amiibo_bad_bcc");
         using(var cancelled=new CancellationTokenSource())
         {
             cancelled.Cancel();int sent=0;
@@ -127,6 +154,7 @@ internal static class Pro2NfcRegressionTests
             "[14:17:50.280] [PRO2_NFC_ACK] response_bytes=8 header=0101010410780000 matched=True",
             "[14:17:50.281] [PRO2_NFC_STATUS] state=0x09 detail=0x00 uid_length=7",
             "[14:17:50.281] [PRO2_NFC_CHUNK] buffer_offset=0 frame_bytes=95 declared_bytes=84",
+            "[14:17:50.281] [PRO2_NFC_VALIDATE] data_uid_match=True bcc0_valid=True bcc1_valid=True page3=F110FFEE format=amiibo_ntag215",
             "[14:17:50.282] [PRO2_NFC] 读取未完成：无法确认 NFC 应答订阅状态。",
             "[14:17:51.788] [PRO2_NFC_RATE] phase=after fd2_hz=132.72 parsed_hz=132.72",
             "[14:17:51.789] [PRO2_NFC_RESULT] success=False commands=0 tag_writes=0"];
@@ -135,9 +163,12 @@ internal static class Pro2NfcRegressionTests
     }
     private static async Task Replay(Action<bool,string> check,string failure)
     {
-        bool reading=false;int chunks=0,stops=0,readStatusPolls=0;var seen=new List<byte>();var buffer=Buffer();object primaryOwner=new();
-        bool succeeds=failure is "success" or "primary_ack" or "chunk_84" or "padded_95" or "busy_delayed";
-        int expectedChunks=failure=="chunk_84"?8:9;
+        bool reading=false;int chunks=0,stops=0,readStatusPolls=0;var seen=new List<byte>();
+        var buffer=Buffer(failure.StartsWith("amiibo"));object primaryOwner=new();
+        if(failure=="amiibo_bad_bcc")buffer[63]^=1;
+        bool succeeds=failure is "success" or "primary_ack" or "chunk_84" or "padded_95" or "busy_delayed" or "amiibo" or "amiibo_84";
+        bool wide=failure is "chunk_84" or "amiibo_84";
+        int expectedChunks=wide?8:9;var diagnostics=new List<string>();
         var offsets=new List<int>();
         using var cts=new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Task<byte[]> Exchange(byte[] command,CancellationToken ct)
@@ -179,24 +210,28 @@ internal static class Pro2NfcRegressionTests
             if(command[3]==0x15)
             {
                 chunks++;int offset=BinaryPrimitives.ReadUInt16LittleEndian(command.AsSpan(8));offsets.Add(offset);
-                var reply=Chunk(offset,buffer,failure=="chunk_84"?84:70,failure=="padded_95"?95:0);
+                var reply=Chunk(offset,buffer,wide?84:70,failure=="padded_95"?95:0);
                 return Respond(failure=="chunk_short"&&chunks==3?reply[..^1]:reply);
             }
             return Respond(Reply(command[3]));
         }
         try
         {
-            var result=await new Pro2NfcReader(Exchange).ReadAsync(cts.Token);
+            var result=await new Pro2NfcReader(Exchange,diagnostic:diagnostics.Add).ReadAsync(cts.Token);
             check(succeeds&&result.Data.SequenceEqual(buffer[60..])&&chunks==expectedChunks,"physical-read replay returns exactly 540 bytes "+failure);
-            if(failure=="chunk_84")check(offsets.SequenceEqual(new[]{0,84,168,252,336,420,504,588}),"reader advances by 84 bytes, not assumed 70 or 95");
+            if(wide)check(offsets.SequenceEqual(new[]{0,84,168,252,336,420,504,588}),"reader advances by 84 bytes, not assumed 70 or 95");
             if(failure=="padded_95")check(offsets.SequenceEqual(new[]{0,70,140,210,280,350,420,490,560}),"transport padding is excluded from read offsets");
             if(failure=="busy_delayed")check(readStatusPolls==23,"pending state beyond descriptor 2s is allowed to complete");
+            if(failure.StartsWith("amiibo"))check(diagnostics.Any(line=>line.Contains("format=amiibo_ntag215")&&line.Contains("valid=True")),
+                "native amiibo format is logged after complete assembly");
         }
         catch(Exception error)when(error is IOException or TimeoutException or OperationCanceledException)
         {
             check(!succeeds,"failing replay cannot return a tag: "+failure);
             if(failure=="busy_timeout")check(error is IOException&&error.Message.Contains("0x02")&&chunks==0,"pending timeout reports actual state and never reads an unready buffer");
             if(failure=="removed")check(error is IOException&&chunks==0,"tag removal while pending aborts before buffer reads");
+            if(failure=="amiibo_bad_bcc")check(error is IOException&&error.Message.Contains("BCC0")&&
+                diagnostics.Any(line=>line.Contains("bcc0_valid=False")),"failed native tag names and records the exact check before cleanup");
         }
         check(stops>=2&&seen[^1]==4,"success, failure and cancellation always attempt stop: "+failure);
         check(!seen.Contains(8)&&!seen.Contains(0x14),"reader never emits tag-write commands: "+failure);

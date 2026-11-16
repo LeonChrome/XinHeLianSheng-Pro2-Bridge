@@ -21,6 +21,8 @@ public sealed class ExperimentSession:IAsyncDisposable
     private readonly Channel<string> journal=Channel.CreateBounded<string>(new BoundedChannelOptions(8192){SingleReader=true,SingleWriter=false,FullMode=BoundedChannelFullMode.Wait});
     private readonly Task journalTask;
     private readonly TaskCompletionSource disposeComplete=new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource backendReady=new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private long ipcPortUnreachable;
     private long logDropped;
     private string journalFailure="";
     private readonly CancellationTokenSource lifetime=new();
@@ -52,14 +54,14 @@ public sealed class ExperimentSession:IAsyncDisposable
     public int RadioExitCode {get;private set;}=-1;
     public bool CanReadNfc=>source?.CanReadUsbNfc==true&&captureTask is not{IsCompleted:false};
     public string Summary=>source==null?"未连接 USB 手柄":source.MetricsSummary;
-    public string State=>radioEnded?radioEndReason:receiverConnected?"无线 Pro1 已连接 · 接收端频率待验证":relayStarted?"等待接收设备配对 Pro Controller":UsbConnected?"USB 已连接 · 无线发射尚未启动":"未连接";
+    public string State=>radioEnded?radioEndReason:receiverConnected?"无线 Pro1 已连接 · 接收端频率待验证":relayStarted?protocol==null?"发射器正在初始化，请稍候…":"可在接收设备配对 Pro Controller":UsbConnected?"USB 已连接 · 无线发射尚未启动":"未连接";
     public ExperimentSession(string directory,Action<string>? display=null,string? runtimeDirectory=null,bool integrated=false)
     {
         this.runtimeDirectory=Path.GetFullPath(runtimeDirectory??AppContext.BaseDirectory);this.integrated=integrated;
         DirectoryPath=Path.GetFullPath(directory);CreatePrivateDirectory(DirectoryPath);
         show=display??(_=>{});
         journalTask=Task.Run(WriteJournalAsync);
-        Log("[EXPERIMENT_BEGIN] version=0.3 windows="+Environment.OSVersion.Version+" x64="+Environment.Is64BitOperatingSystem+" source=existing_assistant physical_usb_only=true startup_driver_changes=0");
+        Log("[EXPERIMENT_BEGIN] version=0.3 assistant_version="+SystemBluetoothDiagnostics.CurrentAppVersion+" integrated="+integrated+" windows="+Environment.OSVersion.Version+" x64="+Environment.Is64BitOperatingSystem+" source=existing_assistant physical_usb_only=true startup_driver_changes=0");
     }
     private static void CreatePrivateDirectory(string path)
     {
@@ -150,11 +152,12 @@ public sealed class ExperimentSession:IAsyncDisposable
             throw new IOException("此 Realtek 实验需要匹配的 rtl8852cu_fw 运行固件目录；未开始接管蓝牙。");
         if(selected.Realtek&&Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(firmwareFolder!,"rtl8852cu_fw"),token)))!="9B8B27741A914C1CECC1AB9837194236890522101A57BA1898EB55F8D538DAE0")
             throw new IOException("Realtek 运行固件与已验证版本的 SHA256 不符，未接管蓝牙。");
-        ipc=new(new IPEndPoint(IPAddress.Loopback,0));
+        ipc=WirelessRelayLocalIpc.Create();
+        Log("[RELAY_IPC] transport=loopback_udp port_unreachable_reporting=disabled startup=authenticated_backend_ready_before_heartbeat");
         int managedPort=((IPEndPoint)ipc.Client.LocalEndPoint!).Port;
         using(var reserve=new UdpClient(new IPEndPoint(IPAddress.Loopback,0)))radioEndpoint=(IPEndPoint)reserve.Client.LocalEndPoint!;
         string sessionPath=Path.Combine(DirectoryPath,"private-session.bin");await File.WriteAllBytesAsync(sessionPath,session,token);
-        var start=new ProcessStartInfo(Path.GetFullPath(executable)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,WorkingDirectory=Path.GetDirectoryName(Path.GetFullPath(executable))!};
+        var start=new ProcessStartInfo(Path.GetFullPath(executable)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=new UTF8Encoding(false),StandardErrorEncoding=new UTF8Encoding(false),WorkingDirectory=Path.GetDirectoryName(Path.GetFullPath(executable))!};
         void Arg(string flag,string value){start.ArgumentList.Add(flag);start.ArgumentList.Add(value);}
         Arg("--instance",selected.InstanceId);Arg("--session-file",sessionPath);Arg("--output",Path.Combine(DirectoryPath,"radio-result.json"));
         Arg("--port",radioEndpoint.Port.ToString());Arg("--managed-port",managedPort.ToString());Arg("--seconds",(seconds==0?0:Math.Clamp(seconds,15,600)).ToString());Arg("--wait-seconds","180");
@@ -164,6 +167,14 @@ public sealed class ExperimentSession:IAsyncDisposable
         radio=Process.Start(start)??throw new IOException("原生发射端未启动。");relayStarted=true;
         radioLease?.RecordRadio(radio);
         stdoutTask=Task.Run(()=>PumpLogAsync(radio.StandardOutput,"RADIO"));stderrTask=Task.Run(()=>PumpLogAsync(radio.StandardError,"RADIO_ERROR"));
+        var readyWait=Stopwatch.StartNew();
+        while(!backendReady.Task.IsCompletedSuccessfully)
+        {
+            token.ThrowIfCancellationRequested();
+            if(radio.HasExited)throw new IOException("发射后端在本机通信就绪前退出，代码 "+radio.ExitCode+"；查看本轮日志。");
+            if(readyWait.Elapsed.TotalSeconds>=15)throw new IOException("发射后端未在 15 秒内确认本机通信就绪；查看本轮日志，尚未进入外部配对。");
+            await Task.Delay(50,token).ConfigureAwait(false);
+        }
         heartbeatTask=Task.Run(()=>HeartbeatAsync(lifetime.Token));
         Log(FormattableString.Invariant($"[RELAY_START] identity=Pro_Controller target_vid_pid=057E:2009 physical_input=source_only target_report_hz={targetHz:F3} imu=real_history_hold newest_wire_index=0 output_superseding=recorded receiver_rate_verified=false nfc=read_only_snapshot"));
     }
@@ -242,10 +253,19 @@ public sealed class ExperimentSession:IAsyncDisposable
         {
             while(!token.IsCancellationRequested)
             {
-                var packet=await ipc!.ReceiveAsync(token).ConfigureAwait(false);
+                UdpReceiveResult packet;
+                try{packet=await ipc!.ReceiveAsync(token).ConfigureAwait(false);}
+                catch(SocketException error)when(error.SocketErrorCode==SocketError.ConnectionReset&&!token.IsCancellationRequested)
+                {
+                    long count=Interlocked.Increment(ref ipcPortUnreachable);
+                    if(count<=3)Log("[RELAY_IPC_PORT_UNREACHABLE] socket_error=10054 count="+count+" action=continue_local_receive physical_bluetooth_error=false");
+                    await Task.Delay(20,token).ConfigureAwait(false);continue;
+                }
                 if(!packet.RemoteEndPoint.Equals(radioEndpoint)||!WirelessRelayDatagram.TryDecode(packet.Buffer,session,out var frame)||frame!.Sequence<=(ulong)receivedSequence)
                 {Interlocked.Increment(ref invalidIpc);continue;}
                 receivedSequence=(long)frame.Sequence;
+                if(frame.Kind==WirelessRelayMessage.BackendReady&&frame.Payload.Length==0)
+                {if(backendReady.TrySetResult())Log("[RELAY_IPC_READY] authenticated=true native_udp_bound=true");continue;}
                 if(frame.Kind==WirelessRelayMessage.LinkState&&frame.Payload.Length==8)
                 {
                     lock(protocolGate)
@@ -333,7 +353,7 @@ public sealed class ExperimentSession:IAsyncDisposable
             if(captureTask!=null)try{await captureTask.ConfigureAwait(false);}catch(Exception e){Log("[NFC_STOP] "+e.GetType().Name);}
             var physical=source?.Snapshot();if(source!=null)await source.DisposeAsync().ConfigureAwait(false);
             await RestoreRadioAsync();
-            object result=new{version="0.3",windows=Environment.OSVersion.Version.ToString(),physical,selectedInputs,usbBaselineConsumed,rumblePackets,rumbleFailures,invalidIpc,
+            object result=new{version="0.3",assistantVersion=SystemBluetoothDiagnostics.CurrentAppVersion,integrated,windows=Environment.OSVersion.Version.ToString(),physical,selectedInputs,usbBaselineConsumed,rumblePackets,rumbleFailures,invalidIpc,ipcPortUnreachable,backendIpcReady=backendReady.Task.IsCompletedSuccessfully,
                 hostCommands=protocol?.HostCommands,nfcCommands=protocol?.NfcCommands,rejectedCommands=protocol?.RejectedCommands,
                 targetHz,cadenceSkipped=cadence?.Skipped,staleTransitions=cadence?.StaleTransitions,
                 receiverRateVerified=false,tagWrites=0,radioDriverPrepared=radioLease?.Prepared??false,radioDriverRestored=radioLease?.Restored??false,radioBackup=radioLease?.StateDirectory,radioExit=radio?.ExitCode,logDropped,journalFailure};
@@ -359,7 +379,16 @@ public sealed class ExperimentSession:IAsyncDisposable
         using var stop=new CancellationTokenSource(TimeSpan.FromSeconds(1));
         try{if(radio is{HasExited:false})await SendAsync(WirelessRelayMessage.Stop,[],Stopwatch.GetTimestamp(),stop.Token).ConfigureAwait(false);}
         catch(Exception e){Log("[FAILURE_STOP_REQUEST] "+e.GetType().Name);}
-        lifetime.Cancel();receiverConnected=false;
+        // Keep the USB baseline consumer alive until explicit Stop/Dispose.
+        // A failed radio must not leave an unconsumed queue and a misleading
+        // connected screen while the window remains open.
+        receiverConnected=false;radioEnded=true;radioEndReason="发射已停止，正在恢复所选蓝牙；查看本轮错误记录。";
+        if(radio is{HasExited:false})
+        {
+            using var grace=new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            try{await radio.WaitForExitAsync(grace.Token).ConfigureAwait(false);}
+            catch(OperationCanceledException){Log("[RADIO_FAILURE_STOP_TIMEOUT] graceful_wait_ms=8000 action=guarded_exact_child_cleanup");}
+        }
         await RestoreRadioAsync();
     }
     private async Task RestoreRadioAsync(){if(radioLease!=null&&!radioLease.Restored)await radioLease.RestoreAsync();}

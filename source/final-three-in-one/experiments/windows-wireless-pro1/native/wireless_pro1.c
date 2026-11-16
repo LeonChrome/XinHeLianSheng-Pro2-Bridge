@@ -317,6 +317,9 @@ static int relay_main(int argc,char**argv){
     struct sockaddr_in bind_address={0};bind_address.sin_family=AF_INET;bind_address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);bind_address.sin_port=htons((u_short)listen_port);
     if(bind(sock,(struct sockaddr*)&bind_address,sizeof(bind_address))){puts("{\"event\":\"LOCAL_PORT_BUSY\"}");closesocket(sock);WSACleanup();ReleaseMutex(mutex);CloseHandle(mutex);return 5;}
     managed=bind_address;managed.sin_port=htons((u_short)managed_port);
+    // Sent only after bind() succeeded. The owner waits for this authenticated
+    // datagram before transmitting its first heartbeat.
+    emit_ipc(7,NULL,0);
     socket_event=WSACreateEvent();WSAEventSelect(sock,socket_event,FD_READ);
     btstack_memory_init();btstack_run_loop_init(btstack_run_loop_windows_get_instance());
     btstack_run_loop_set_data_source_handle(&ipc_source,socket_event);btstack_run_loop_set_data_source_handler(&ipc_source,ipc_ready);

@@ -65,7 +65,7 @@ public sealed class RadioDriverLease:IAsyncDisposable
             {
                 bounded.Token.ThrowIfCancellationRequested();
                 if(await ReadResultAsync(Path.Combine(state,"error.json")) is {} error)
-                {using(error)throw new IOException("发射器准备失败："+error.RootElement.GetProperty("error").GetString()+"。备份保留："+state);}
+                {using(error)throw new IOException("发射器准备失败："+error.RootElement.GetProperty("error").GetString()+"。诊断与恢复文件："+state);}
                 if(await ReadResultAsync(Path.Combine(state,"ready.json")) is {} ready)
                 {
                     using(ready)

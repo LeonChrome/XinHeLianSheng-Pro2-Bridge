@@ -38,6 +38,8 @@ public sealed class ExperimentWindow:Window
     private readonly ConcurrentQueue<string> displayLog=new();
     private ExperimentSession? session;
     private string? lastRadioChoice;
+    private string? lastLogDirectory;
+    private string? actionError;
     private bool busy,closing,closed;
     private TaskCompletionSource? actionComplete;
     public ExperimentWindow(string? runtimeDirectory=null,bool integrated=false)
@@ -77,11 +79,11 @@ public sealed class ExperimentWindow:Window
         });
         folder.Click+=(_,_)=>
         {
-            string path=session?.DirectoryPath??Root();Directory.CreateDirectory(path);
+            string path=session?.DirectoryPath??lastLogDirectory??Root();Directory.CreateDirectory(path);
             Process.Start(new ProcessStartInfo("explorer.exe"){UseShellExecute=true,ArgumentList={path}});
         };
         Loaded+=async(_,_)=>await ActAsync(ProbeAsync);
-        timer.Tick+=(_,_)=>{if(session!=null){metrics.Text=session.Summary;if(!busy)status.Text=session.State;}UpdateButtons();};timer.Start();
+        timer.Tick+=(_,_)=>{if(session!=null){metrics.Text=session.Summary;if(!busy&&actionError==null)status.Text=session.State;}UpdateButtons();};timer.Start();
         logTimer.Tick+=(_,_)=>
         {
             var lines=new System.Text.StringBuilder();for(int i=0;i<300&&displayLog.TryDequeue(out var line);i++)lines.AppendLine(line);
@@ -107,8 +109,8 @@ public sealed class ExperimentWindow:Window
     {displayLog.Enqueue(line);while(displayLog.Count>1500)displayLog.TryDequeue(out _);}
     private async Task ActAsync(Func<Task> action)
     {
-        if(busy||closing)return;busy=true;var completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);actionComplete=completion;UpdateButtons();
-        try{await action();}catch(OperationCanceledException){status.Text="已取消";}catch(Exception e){status.Text=e.Message;session?.Log("[UI_ACTION_FAILED] "+e);Append(e.ToString());}
+        if(busy||closing)return;busy=true;actionError=null;var completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);actionComplete=completion;UpdateButtons();
+        try{await action();}catch(OperationCanceledException){actionError="已取消";status.Text=actionError;}catch(Exception e){actionError=e.Message;status.Text=actionError;session?.Log("[UI_ACTION_FAILED] "+e);Append(e.ToString());}
         finally{busy=false;actionComplete=null;completion.TrySetResult();UpdateButtons();}
     }
     private async Task ProbeAsync()
@@ -124,6 +126,7 @@ public sealed class ExperimentWindow:Window
     {
         if(devices.SelectedItem is not NintendoHidDevice selected)throw new InvalidOperationException("请选择实体 USB 手柄。");
         session??=new ExperimentSession(Path.Combine(Root(),DateTime.Now.ToString("yyyyMMdd-HHmmss-fff")),Append,runtimeDirectory,integrated);
+        lastLogDirectory=session.DirectoryPath;
         status.Text="初始化实体 USB 输入…";await session.ConnectUsbAsync(selected,lifetime.Token);status.Text=session.State;
     }
     private async Task StartAsync()
@@ -139,7 +142,14 @@ public sealed class ExperimentWindow:Window
             selected=await session!.PrepareRadioAsync(selected,lifetime.Token,continuous:integrated);
             await session.StartRadioAsync(selected,radioPath,firmware,integrated?0:180,lifetime.Token,hz);status.Text=session.State;
         }
-        catch{await StopAsync();throw;}
+        catch(Exception error)
+        {
+            // Save the startup exception before Dispose closes the journal and
+            // clears session. Previously these failures existed only on screen.
+            session?.Log("[RELAY_START_FAILED] "+error);
+            try{await StopAsync();}catch(Exception cleanup){throw new IOException(error.Message+"；恢复仍需处理："+cleanup.Message,error);}
+            throw;
+        }
     }
     private async Task StopAsync(){if(session!=null){await session.DisposeAsync();session=null;}status.Text="已停止 · 本工具临时切换的蓝牙已请求恢复；备份和日志保留";}
     private void UpdateButtons()
@@ -153,7 +163,7 @@ public sealed class ExperimentWindow:Window
         radioHint.Text=radios.SelectedItem switch
         {
             WirelessRelayRadio{Ready:true}=>"发射器已准备。USB 连接后可启动无线 Pro1。",
-            WirelessRelayRadio{CanPrepare:true} selected=>"将临时使用 "+selected.Name+" 发射；它原有的 Windows 蓝牙功能会暂停，停止后恢复。需要一次管理员授权。",
+            WirelessRelayRadio{CanPrepare:true} selected=>"仅接管 "+selected.Name+"；先备份，异常时尝试重启所选适配器，停止后恢复原驱动。需要管理员授权。",
             WirelessRelayRadio=>"所选蓝牙当前尚无可用外发后端，未修改驱动；可换选已支持的 Realtek / Actions。",
             _=>"请选择一个蓝牙适配器；多个适配器时不会自动替你决定。USB 输入和 Pro2 读卡可单独测试。"
         };

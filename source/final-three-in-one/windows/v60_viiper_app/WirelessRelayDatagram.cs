@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 
 namespace Y700Switch2V60Viiper;
 
-public enum WirelessRelayMessage : byte { FreshInput=1, ProtocolReply=2, HostOutput=3, LinkState=4, Heartbeat=5, Stop=6 }
+public enum WirelessRelayMessage : byte { FreshInput=1, ProtocolReply=2, HostOutput=3, LinkState=4, Heartbeat=5, Stop=6, BackendReady=7 }
 public sealed record WirelessRelayFrame(WirelessRelayMessage Kind,ulong Sequence,long Timestamp,byte[] Payload);
 
 // Authenticated loopback IPC for the optional, independently launched radio

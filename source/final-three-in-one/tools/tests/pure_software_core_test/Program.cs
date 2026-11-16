@@ -28,6 +28,7 @@ internal static class Program
             if(args.Contains("--relay-integration-only"))
             {
                 WirelessPro1RegressionTests.Run(Check);
+                WirelessRelayStartupRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
                 WirelessRelayIntegrationRegressionTests.RunAsync(Check,output).GetAwaiter().GetResult();
                 Console.WriteLine("PASS: "+checks+" relay integration assertions; radio_opened=false driver_changes=0.");return 0;
             }
@@ -245,9 +246,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.4.0.0", "v3.4.0 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.4.1.0", "v3.4.1 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.StartsWith(
-            "3.4.0-wireless-relay",StringComparison.Ordinal)==true, "v3.4.0 release metadata");
+            "3.4.1-wireless-startup-fix",StringComparison.Ordinal)==true, "v3.4.1 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

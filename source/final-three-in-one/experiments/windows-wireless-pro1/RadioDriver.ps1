@@ -17,13 +17,35 @@ $ErrorActionPreference='Stop'
 $env:PSModulePath=(Join-Path $PSHOME 'Modules')+[IO.Path]::PathSeparator+(Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules')
 Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
 $stateRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'PRO2WirelessReceiverControlBoard\radio'
+$script:restartStages=@{}
 $hardware=if($InstanceId -match '^USB\\VID_0BDA&PID_0852\\[A-Z0-9&_.-]+$'){'USB\VID_0BDA&PID_0852'}elseif($InstanceId -match '^USB\\VID_10D7&PID_B012\\[A-Z0-9&_.-]+$'){'USB\VID_10D7&PID_B012'}else{throw 'Unsupported exact radio instance.'}
 function Read-Radio {
     $entry=Get-PnpDevice -InstanceId $InstanceId -PresentOnly -ErrorAction Stop
     $key=Get-ItemProperty -LiteralPath ('Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\'+$InstanceId)
     if(-not @($key.HardwareID|Where-Object{$_ -ieq $hardware}).Count){throw 'Selected instance hardware IDs changed.'}
     $driver=Get-ItemProperty -LiteralPath ('Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Class\'+$key.Driver)
-    [pscustomobject][ordered]@{instance=$InstanceId;hardware=$hardware;status=$entry.Status;service=$key.Service;inf=$driver.InfPath;version=$driver.DriverVersion;provider=$driver.ProviderName;date=$driver.DriverDate;windows=[Environment]::OSVersion.Version.ToString()}
+    $problem=Get-PnpDeviceProperty -InstanceId $InstanceId -KeyName 'DEVPKEY_Device_ProblemCode' -ErrorAction Stop
+    [pscustomobject][ordered]@{instance=$InstanceId;hardware=$hardware;status=$entry.Status;problem_code=[int]$problem.Data;problem_name=[string]$entry.Problem;service=$key.Service;inf=$driver.InfPath;version=$driver.DriverVersion;provider=$driver.ProviderName;date=$driver.DriverDate;windows=[Environment]::OSVersion.Version.ToString()}
+}
+function Test-RadioHealthy($radio){$radio.status -eq 'OK' -and $radio.problem_code -eq 0 -and (-not $radio.PSObject.Properties['health_stable'] -or $radio.health_stable)}
+function Wait-RadioHealthy([int]$Seconds=15){
+    $watch=[Diagnostics.Stopwatch]::StartNew();$stableSince=-1.0;$last=$null
+    while($watch.Elapsed.TotalSeconds -lt $Seconds){
+        try{$last=Read-Radio;if(Test-RadioHealthy $last){if($stableSince -lt 0){$stableSince=$watch.Elapsed.TotalSeconds};if($watch.Elapsed.TotalSeconds-$stableSince -ge 3){return $last}}else{$stableSince=-1}}catch{$stableSince=-1}
+        Start-Sleep -Milliseconds 300
+    }
+    if($last){$last|Add-Member -NotePropertyName health_stable -NotePropertyValue $false -Force;return $last};throw 'Selected radio did not reappear after the bounded wait.'
+}
+function Restart-SelectedRadio([string]$Stage){
+    if($script:restartStages.ContainsKey($Stage)){throw 'The one selected-radio restart for this stage has already been used.'}
+    $current=Read-Radio
+    if($current.service -ine 'BTHUSB' -or $current.problem_code -notin @(10,43)){throw ('Radio restart not applicable: service='+$current.service+' status='+$current.status+' problem_code='+$current.problem_code)}
+    $script:restartStages[$Stage]=$true
+    Save-Json ($Stage+'-restart-before.json') $current
+    Log ('Restarting selected instance only; stage='+$Stage+' instance='+$InstanceId+' problem_code='+$current.problem_code)
+    $result=& (Join-Path $env:windir 'System32\pnputil.exe') /restart-device $InstanceId 2>&1
+    $exitCode=$LASTEXITCODE;Log ($result -join [Environment]::NewLine)
+    if($exitCode -ne 0){throw ('Selected-radio restart did not complete; exit='+$exitCode+'. No automatic Windows reboot.')}
 }
 function Require-Admin {
     $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
@@ -122,7 +144,7 @@ function Restore-Radio {
     $baseline=Read-Baseline
     Stop-OwnedRadio
     $before=Read-Radio
-    if($before.service -ieq $baseline.adapter.service -and $before.inf -ieq $baseline.adapter.inf -and $before.version -eq $baseline.adapter.version -and $before.status -eq 'OK'){
+    if($before.service -ieq $baseline.adapter.service -and $before.inf -ieq $baseline.adapter.inf -and $before.version -eq $baseline.adapter.version -and (Test-RadioHealthy $before)){
         Save-Json 'restore-result.json' ([ordered]@{success=$true;status='ALREADY_RESTORED';after=$before;reboot_required=$false});return
     }
     if($before.service -ine 'WinUSB' -and $before.inf -ine $baseline.adapter.inf){throw 'Unexpected driver changed by another application; restore refused.'}
@@ -130,9 +152,11 @@ function Restore-Radio {
     if(-not(Test-Path -LiteralPath $inf) -or (Get-FileHash -LiteralPath $inf).Hash -ne $baseline.original_inf_sha256){throw 'Original staged INF changed; backup retained, manual review required.'}
     Log ('Restoring original driver on exact instance: '+$baseline.adapter.inf)
     $reboot=Install-Exact $inf
-    Start-Sleep -Seconds 2
-    $after=Read-Radio
-    $ok=$after.service -ieq $baseline.adapter.service -and $after.inf -ieq $baseline.adapter.inf -and $after.version -eq $baseline.adapter.version -and $after.status -eq 'OK'
+    $after=Wait-RadioHealthy
+    if(-not(Test-RadioHealthy $after) -and $after.service -ieq 'BTHUSB' -and $after.inf -ieq $baseline.adapter.inf -and $after.problem_code -in @(10,43) -and -not $script:restartStages.ContainsKey('restore')){
+        Restart-SelectedRadio 'restore';$after=Wait-RadioHealthy
+    }
+    $ok=$after.service -ieq $baseline.adapter.service -and $after.inf -ieq $baseline.adapter.inf -and $after.version -eq $baseline.adapter.version -and (Test-RadioHealthy $after)
     Save-Json 'restore-result.json' ([ordered]@{success=$ok;status=if($ok){'ORIGINAL_DRIVER_RESTORED'}else{'RESTORE_NEEDS_ATTENTION'};after=$after;reboot_required=$reboot})
     Log ('Restore completed: '+$ok+' reboot_required='+$reboot)
     if(-not $ok){throw 'Original driver not active yet. See restore result; no automatic reboot.'}
@@ -157,7 +181,10 @@ try{
     if(-not $owned){throw 'Selected radio is already managed by another driver session.'}
     if($Operation -eq 'Restore'){Restore-Radio;exit 0}
     $before=Read-Radio
-    if($before.service -ine 'BTHUSB' -or $before.status -ne 'OK' -or $before.inf -notmatch '^oem\d+\.inf$'){throw 'Expected current healthy system Bluetooth driver; no binding attempted.'}
+    Save-Json 'prepare-before.json' $before
+    Log ('Prepare before: service='+$before.service+' inf='+$before.inf+' status='+$before.status+' problem_code='+$before.problem_code)
+    if($before.service -ine 'BTHUSB' -or $before.inf -notmatch '^oem\d+\.inf$'){throw ('Selected system Bluetooth driver is not eligible: service='+$before.service+' inf='+$before.inf+' status='+$before.status+' problem_code='+$before.problem_code+'. No binding attempted.')}
+    if(-not(Test-RadioHealthy $before) -and $before.problem_code -notin @(10,43)){throw ('Selected radio is not ready: status='+$before.status+' problem_code='+$before.problem_code+'. No binding attempted.')}
     if(Test-Path -LiteralPath (Join-Path $StateDirectory 'baseline.json')){throw 'Never overwrite an existing driver baseline.'}
     if($OwnerPid -le 0 -or $OwnerStartTicks -le 0){throw 'Owner process identity required.'}
     $owner=Get-Process -Id $OwnerPid
@@ -179,6 +206,12 @@ try{
     Save-Json 'baseline.json' ([ordered]@{adapter=$before;original_inf_sha256=$originalHash;files=$files;created=(Get-Date).ToString('o');owner_pid=$OwnerPid;owner_start_ticks=$OwnerStartTicks;owner_exe=$owner.Path;native_executable=$nativeExecutable;native_sha256=(Get-FileHash -LiteralPath $nativeExecutable).Hash;binding_inf=$package.inf;binding_inf_sha256=(Get-FileHash -LiteralPath $package.inf).Hash;binding_catalog_sha256=(Get-FileHash -LiteralPath $package.catalog).Hash})
     Log ('Fresh current-Windows baseline saved; original='+$before.inf+' version='+$before.version)
     $null=Read-Baseline
+    if(-not(Test-RadioHealthy $before)){
+        Restart-SelectedRadio 'prepare';$recovered=Wait-RadioHealthy
+        Save-Json 'prepare-recovery-result.json' $recovered
+        if(-not(Test-RadioHealthy $recovered) -or $recovered.service -ine $before.service -or $recovered.inf -ine $before.inf -or $recovered.version -ne $before.version){throw ('Selected radio recovery failed: service='+$recovered.service+' inf='+$recovered.inf+' status='+$recovered.status+' problem_code='+$recovered.problem_code+'. Original driver retained; no WinUSB binding attempted.')}
+        Log 'Selected radio recovered; original driver identity unchanged.'
+    }
     $changed=$true
     $reboot=Install-Exact $package.inf
     Start-Sleep -Seconds 2

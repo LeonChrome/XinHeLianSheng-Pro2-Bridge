@@ -34,6 +34,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     private readonly Queue<(long Tick,double Gap)> stamps = new();
     private readonly InputFrameSignal inputSignal = new();
     private readonly SemaphoreSlim commandGate = new(1,1), nfcGate = new(1,1);
+    private readonly SemaphoreSlim physicalOutputGate = new(1,1);
     private readonly CancellationTokenSource lifetime = new();
     private readonly Channel<Pro2OutputPacket> outputs = Channel.CreateBounded<Pro2OutputPacket>(new BoundedChannelOptions(8)
         { SingleReader=false, SingleWriter=false, FullMode=BoundedChannelFullMode.DropOldest });
@@ -63,7 +64,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     public NintendoPhysicalInputSource(NintendoHidDevice device, Action<string>? log = null)
     { this.device=device; parser=new(device.Kind); this.log=log ?? (_=>{}); }
     public NintendoHidDevice Device => device;
-    public bool IsRunning => running && !nfcBusy;
+    public bool IsRunning => running && (!nfcBusy || !device.IsPro1);
     public string Status => status;
     public bool IsOutputReady => running && initialized && !nfcBusy;
     public bool CanReadNfc => running && device.Kind==NintendoInputKind.Pro1Bluetooth && device.InputLength>=362;
@@ -188,7 +189,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
                 if(length==0) throw new IOException("实体 HID 输入已关闭");
                 byte[] report=buffer.AsSpan(0,length).ToArray();
                 lock(replyGate) if(replyMatcher?.Invoke(report)==true) reply?.TrySetResult(report);
-                if(nfcBusy)
+                if(nfcBusy && device.IsPro1)
                 {
                     if(report[0]==0x31) mcu.Writer.TryWrite(report);
                     // NFC command replies may contain repeated button state.
@@ -283,6 +284,10 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
             await foreach(var packet in outputs.Reader.ReadAllAsync(token).ConfigureAwait(false))
             {
                 if(nfcBusy) continue;
+                await physicalOutputGate.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                if(nfcBusy) continue;
                 if(device.IsPro1)
                 {
                     double gain=Volatile.Read(ref rumbleGain);
@@ -306,6 +311,8 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
                     await transport!.WriteAsync(report,token).ConfigureAwait(false);
                 }
                 Interlocked.Increment(ref outputWrites);
+                }
+                finally { physicalOutputGate.Release(); }
             }
         }
         catch(OperationCanceledException) when(token.IsCancellationRequested) { }

@@ -25,6 +25,13 @@ internal static class Program
         Directory.CreateDirectory(output);
         try
         {
+            if(args.Contains("--wireless-only"))
+            {
+                WirelessPro1RegressionTests.Run(Check);
+                UsbNfcRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
+                WirelessPro1RegressionTests.WriteIpcFixtures(Path.Combine(output,"中文-ipc-fixtures"));
+                Console.WriteLine("PASS: "+checks+" wireless Pro1/USB NFC assertions; offline only, radio_opened=false.");return 0;
+            }
             if (args.Contains("--capture-usb-input"))
             {
                 var devices=NintendoHidDevice.Enumerate().Where(d=>d.Kind==NintendoInputKind.Pro2Usb).ToArray();
@@ -74,6 +81,8 @@ internal static class Program
             V327RegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             Pro2NfcRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             NfcExportRegressionTests.Run(Check,output);
+            WirelessPro1RegressionTests.Run(Check);
+            UsbNfcRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             if (args.Contains("--physical-only"))
             {
                 Console.WriteLine("PASS: " + checks + " physical-input assertions; offline protocol replay only.");

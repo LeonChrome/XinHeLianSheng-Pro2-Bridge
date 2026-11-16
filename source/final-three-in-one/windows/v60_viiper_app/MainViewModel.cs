@@ -1819,6 +1819,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                     RaiseConnectionStateChanged();
                 }
 
+                if(inputSource.IsReadingNfc&&inputSource.IsTransportConnected)
+                {inputSource.RecheckLiveRate();await WaitForReconnectCheckAsync(1,cancellationToken);continue;}
                 bool live = inputSource.IsRunning &&
                             inputSource.TryGetLatest(out _, out TimeSpan age) &&
                             age <= TimeSpan.FromMilliseconds(LostInputTimeoutMilliseconds);
@@ -2091,6 +2093,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
                     UpdateMultiSlotInputStatus();
                 }
 
+                if(slot.InputSource.IsReadingNfc&&slot.InputSource.IsTransportConnected)
+                {slot.InputSource.RecheckLiveRate();await WaitForReconnectCheckAsync(slot.Index,cancellationToken);continue;}
                 bool live = slot.InputSource.IsRunning &&
                             slot.InputSource.TryGetLatest(out _, out TimeSpan age) &&
                             age <= TimeSpan.FromMilliseconds(LostInputTimeoutMilliseconds);

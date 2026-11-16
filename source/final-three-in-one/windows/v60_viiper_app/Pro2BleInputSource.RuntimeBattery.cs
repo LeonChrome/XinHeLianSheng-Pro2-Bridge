@@ -100,7 +100,7 @@ public sealed partial class Pro2BleInputSource
                 runtimeBatteryRefreshStatus = runtimeBatteryRefreshEnabled ? "waiting" : "disabled";
                 double wait = Math.Max(0, Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), due).TotalSeconds - 10);
                 await Task.Delay(TimeSpan.FromSeconds(wait), token);
-                if (!runtimeBatteryRefreshEnabled)
+                if (!runtimeBatteryRefreshEnabled || IsReadingNfc)
                 { due = Stopwatch.GetTimestamp() + 30 * Stopwatch.Frequency; continue; }
                 if (!SameSession()) return;
                 bool diagnosticActive;
@@ -116,7 +116,11 @@ public sealed partial class Pro2BleInputSource
                     continue;
                 }
                 lock (gate) diagnosticActive = activeBleDiagnosticCapture != null;
-                if (!runtimeBatteryRefreshEnabled || diagnosticActive) continue;
+                if (!runtimeBatteryRefreshEnabled || diagnosticActive || IsReadingNfc) continue;
+                // Acquire ownership before starting a measurement task. An NFC
+                // transaction may have claimed the channel during the baseline.
+                await wakeCommandGate.WaitAsync(token);
+                if(IsReadingNfc){wakeCommandGate.Release();continue;}
                 runtimeBatteryRefreshStatus = "refreshing";
                 long operationStart = Stopwatch.GetTimestamp();
                 due = operationStart + (long)(Pro2RuntimeBatteryPolicy.IntervalSeconds * Stopwatch.Frequency);
@@ -128,9 +132,11 @@ public sealed partial class Pro2BleInputSource
                 {
                     // Pairing/sleep and the battery command share a physical command channel.
                     // Never inject a battery command into the wake handshake of this slot.
-                    await wakeCommandGate.WaitAsync(token);
                     (Pro2InitialBatterySnapshotResult Report, long ReceivedTicks) captured;
-                    try { captured = await TapRuntimeBatteryAsync(primary, SameSession, progress, token); }
+                    try
+                    {
+                        captured = await TapRuntimeBatteryAsync(primary, SameSession, progress, token);
+                    }
                     finally { wakeCommandGate.Release(); }
                     report = captured.Report;
                     receivedTicks = captured.ReceivedTicks;

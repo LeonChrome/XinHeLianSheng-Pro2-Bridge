@@ -371,7 +371,7 @@ public sealed partial class Pro2BleInputSource :
 
     public bool IsRunning { get; private set; }
     public bool IsOutputReady =>
-        IsRunning &&
+        IsRunning && !IsReadingNfc &&
         rumbleCharacteristic != null &&
         rumbleWriterTask is { IsCompleted: false };
     public bool IsPerformanceDegraded
@@ -1223,7 +1223,7 @@ public sealed partial class Pro2BleInputSource :
         {
             lock (writeGate)
             {
-                if (rumbleWriterTask is not { IsCompleted: false } ||
+                if (IsReadingNfc || rumbleWriterTask is not { IsCompleted: false } ||
                     rumbleSignal == null)
                 {
                     error = "BLE rumble writer is not running";
@@ -1772,6 +1772,8 @@ public sealed partial class Pro2BleInputSource :
                     rumbleCharacteristic = characteristic;
                     exactMatch = true;
                 }
+                else if(characteristic.Uuid==Pro2NfcProtocol.ExtendedWriteUuid) nfcWriteCharacteristic=characteristic;
+                else if(characteristic.Uuid==Pro2NfcProtocol.SecondaryReplyUuid) nfcSecondaryCharacteristic=characteristic;
             }
 
             bool hasInput = characteristics.Any(c =>
@@ -2571,6 +2573,8 @@ public sealed partial class Pro2BleInputSource :
             " direction=" + (data.Length >= 8 ? "0x" + data[1].ToString("X2") : "short") +
             " ack=" + (data.Length >= 8 ? "0x" + data[5].ToString("X2") : "short") + " payload_logged=false");
         if (!ReferenceEquals(sender, ackCharacteristic)) return;
+        if(Pro2NfcProtocol.IsReaderResponse(IsReadingNfc,data))
+        {Volatile.Read(ref pendingNfcAck)?.TryComplete(sender,data);return;}
         if (Pro2FirmwareInfo.TryDecode(data, out var firmware))
         {
             lock (gate) firmwareInfo = firmware;
@@ -3793,6 +3797,10 @@ public sealed partial class Pro2BleInputSource :
                 }
             }
 
+            await nfcOutputGate.WaitAsync(cancellationToken);
+            try
+            {
+            if(IsReadingNfc) continue;
             Pro2QueuedRumble? queued;
             lock (writeGate)
             {
@@ -3911,6 +3919,8 @@ public sealed partial class Pro2BleInputSource :
                     catch (SemaphoreFullException) { }
                 }
             }
+            }
+            finally { nfcOutputGate.Release(); }
         }
     }
 
@@ -4059,6 +4069,7 @@ public sealed partial class Pro2BleInputSource :
         inputSignal.Notify();
         // Release Windows' reconnect intent before waiting on any background worker.
         SetMaintainConnectionForLifecycle(false);
+        await StopNfcReadAsync();
         await StopRuntimeBatteryRefreshAsync();
         await StopRumbleWriterAsync(allowFinalNeutral: connectedAtStop);
         watcher?.Stop();
@@ -4082,6 +4093,8 @@ public sealed partial class Pro2BleInputSource :
         legacyCharacteristic = null;
         commandCharacteristic = null;
         rumbleCharacteristic = null;
+        nfcWriteCharacteristic=null;nfcSecondaryCharacteristic=null;
+        Volatile.Write(ref pendingNfcAck,null);
         System.Threading.Volatile.Write(ref pendingCommandAck, null);
         connectedLabel = "";
         lock (gate)
@@ -4139,6 +4152,7 @@ public sealed partial class Pro2BleInputSource :
             compatibilityOptimizationSummary = "";
             adaptiveOptimizationRunAttempted = false;
             adaptiveRetryGate.Reset();
+            nfcNeedsReconnect=false;nfcStatus="未读取 · Pro2 BLE 只读实验";
             fastConnectionDiagnostics = null;
             fastConnectionEnvironment = null;
             fastConnectionPreference = null;

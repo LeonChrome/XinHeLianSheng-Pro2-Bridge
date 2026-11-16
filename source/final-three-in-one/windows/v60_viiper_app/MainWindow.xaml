@@ -268,7 +268,7 @@
                             <Button Content="{Binding CompactConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding CompactCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
                             <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}" Visibility="{Binding PrimaryBleControlsVisible, Converter={StaticResource BoolVisibility}}"/>
                             <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding CompactCanStop}"/>
-                            <Button Content="NFC 读卡…" Click="PhysicalInputs_Click" ToolTip="读取已连接的 Pro1 蓝牙手柄上的 NFC 标签"/>
+                            <Button Content="NFC 读卡…" Click="PhysicalInputs_Click" ToolTip="Pro2 / Pro1 蓝牙只读 NTAG215；可保存原始数据"/>
                             <Button x:Name="MultiControllerButton" Content="管理手柄…" Click="MultiController_Click" ToolTip="四个槽位统一选择有线／无线、实体手柄和游戏输出模式"/>
                             <Button x:Name="Win10OneClickButton" Content="一键优化到 133Hz · Win10" Click="OneClickWin10Optimize_Click" Style="{StaticResource Primary}"
                                     IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10OneClick, Converter={StaticResource BoolVisibility}}"

@@ -10,7 +10,7 @@ public sealed partial class NintendoPhysicalInputSource
 {
     public async Task<NintendoNfcTag> ReadNfcAsync(CancellationToken token)
     {
-        if(!CanReadNfc) throw new NotSupportedException("当前提供 Pro1 传统蓝牙 NFC 读取。Pro1 USB 与 Pro2 的 NFC 尚未完成实机验证；不会发送猜测命令。");
+        if(!CanReadNfc) throw new NotSupportedException("此入口仅提供 Pro1 蓝牙读卡；Pro2 请选择蓝牙连接，USB NFC 尚未接入。");
         if(!await nfcGate.WaitAsync(0,token)) throw new IOException("NFC 读取已在运行");
         double before=CurrentParsedRateHz; nfcBusy=true; nfcStatus="读取中";
         lock(gate) states.Clear();

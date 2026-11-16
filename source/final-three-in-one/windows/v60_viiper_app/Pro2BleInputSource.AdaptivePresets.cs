@@ -25,6 +25,7 @@ public sealed partial class Pro2BleInputSource
     {
         get
         {
+            if(IsReadingNfc) return false;
             Pro2RateEvidence rate = GetRateEvidence();
             return rate.RecentWindow && rate.LastInputAgeMs is >= 0 and < 500 &&
                 rate.ParsedHz >= rate.Fd2Hz * .95 && BleAdaptivePresetPolicy.CanOptimizeInApp(
@@ -52,7 +53,7 @@ public sealed partial class Pro2BleInputSource
         deadline.CancelAfter(TimeSpan.FromSeconds(150));
         lock (gate)
         {
-            if (device == null || !transportConnected || compatibilityTrialCts != null ||
+            if (device == null || !transportConnected || IsReadingNfc || compatibilityTrialCts != null ||
                 activeBleDiagnosticCapture != null || win11CompatibilityTrialAttempted)
                 return new(false, "busy_or_disconnected", "当前已有测量或连接已改变，未追加参数请求。");
             owner = device; sequence = connectionSequence;

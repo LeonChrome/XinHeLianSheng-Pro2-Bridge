@@ -26,12 +26,15 @@ public partial class PhysicalInputsWindow : Window
     {
         var slot=vm.Pro2Slots[SlotIndex-1];
         Evidence.Text=slot.Name+" · "+slot.RateSummary+"\n\n"+
-            (slot.PhysicalInput is {} source ? source.CapabilitySummary+"\n\n"+source.MetricsSummary : "Pro2 无线：当前尚无已验证的 NFC 读取通路。")+
+            (slot.PhysicalInput is {} source ? source.CapabilitySummary+"\n\n"+source.MetricsSummary :
+                "Pro2 BLE · NFC 只读实验 · NTAG215\n"+slot.InputSource.NfcStatus+
+                "\n读取结果可保存为 540 字节原始文件；当前未完成本机实卡验收。")+
             (tag!=null?"\n\n标签 UID："+Convert.ToHexString(tag.Uid)+"\n已读取 "+tag.Data.Length+" 字节。":"");
         SlotChoice.IsEnabled=!working;
-        NfcButton.IsEnabled=!working&&!vm.Busy&&slot.PhysicalInput?.CanReadNfc==true;
+        NfcButton.IsEnabled=!working&&!vm.Busy&&(slot.PhysicalInput is {} physical?physical.CanReadNfc:slot.InputSource.CanReadNfc);
         CancelNfcButton.IsEnabled=readCts!=null;
         SaveNfcButton.IsEnabled=!working&&tag!=null;
+        if(working)StatusText.Text=slot.PhysicalInput?.NfcStatus??slot.InputSource.NfcStatus;
     }
     private async void ReadNfc_Click(object sender,RoutedEventArgs e)
     {
@@ -46,12 +49,15 @@ public partial class PhysicalInputsWindow : Window
     private void SaveNfc_Click(object sender,RoutedEventArgs e)
     {
         if(tag==null)return;
-        var dialog=new Microsoft.Win32.SaveFileDialog{Title="保存 NFC 原始数据",Filter="原始 NTAG215 文件|*.bin",FileName="ntag215-"+Convert.ToHexString(tag.Uid)+".bin"};
+        var dialog=new Microsoft.Win32.SaveFileDialog{Title="保存 NFC 原始数据",Filter=tag.Signature.Length==32?
+            "原始 NTAG215（540 字节）|*.bin|含签名字段（572 字节，未校验）|*.bin":"原始 NTAG215（540 字节）|*.bin",FileName="ntag215-"+Convert.ToHexString(tag.Uid)+".bin"};
         if(dialog.ShowDialog(this)!=true)return;
         try
         {
-            File.WriteAllBytes(dialog.FileName,tag.Data);
-            File.WriteAllText(dialog.FileName+".json",JsonSerializer.Serialize(new{uid=Convert.ToHexString(tag.Uid),length=tag.Data.Length,
+            byte[] data=tag.Data;
+            if(dialog.FilterIndex==2&&tag.Signature.Length==32){data=new byte[572];tag.Data.CopyTo(data,0);tag.Signature.CopyTo(data,540);}
+            File.WriteAllBytes(dialog.FileName,data);
+            File.WriteAllText(dialog.FileName+".json",JsonSerializer.Serialize(new{uid=Convert.ToHexString(tag.Uid),length=data.Length,
                 tag.Controller,tag.Transport,tag.ReadAt,authenticationVerified=false},new JsonSerializerOptions{WriteIndented=true}));
             StatusText.Text="已保存："+dialog.FileName;
         }

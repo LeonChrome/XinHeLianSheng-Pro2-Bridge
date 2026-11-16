@@ -95,10 +95,24 @@ public sealed partial class MainViewModel
         slot.PhysicalInput=null; slot.Enabled=true; slot.SelectedInputKind=ControllerInputKind.Pro2Ble;
         if(slot.Index==1) await EnterGameAsync(token); else await StartPro2SlotAutoReconnectAsync(slot,token);
     });
-    public Task<NintendoNfcTag> ReadPhysicalNfcAsync(int slotIndex,CancellationToken token)
+    public async Task<NintendoNfcTag> ReadPhysicalNfcAsync(int slotIndex,CancellationToken token)
     {
-        var source=pro2Slots[Math.Clamp(slotIndex-1,0,3)].PhysicalInput;
-        return source!=null ? source.ReadNfcAsync(token) : throw new NotSupportedException("请先接入 Pro1 蓝牙实体手柄；当前 BLE 输入没有已验证的 NFC 读取协议。");
+        if(previewOnly)throw new InvalidOperationException("界面预览不执行真实 NFC 读取。");
+        if(slotIndex<1||slotIndex>pro2Slots.Length)throw new ArgumentOutOfRangeException(nameof(slotIndex));
+        if(!await operationGate.WaitAsync(0,token))throw new InvalidOperationException("已有操作正在进行，请完成后再读卡。");
+        Busy=true;
+        try
+        {
+            var slot=pro2Slots[Math.Clamp(slotIndex-1,0,3)];
+            using var bounded=CancellationTokenSource.CreateLinkedTokenSource(token,lifetimeCts.Token);
+            AppendLog("[NFC_UI] slot="+slot.Index+" action=read tag_writes=0");
+            var result=slot.PhysicalInput is {} source
+                ? await source.ReadNfcAsync(bounded.Token)
+                : await slot.InputSource.ReadNfcAsync(bounded.Token);
+            AppendLog("[NFC_UI] slot="+slot.Index+" transport="+result.Transport+" bytes="+result.Data.Length+" authentication_verified=false");
+            return result;
+        }
+        finally{Busy=false;operationGate.Release();}
     }
     private async Task EnterPhysicalGameAsync(CancellationToken token)
     {

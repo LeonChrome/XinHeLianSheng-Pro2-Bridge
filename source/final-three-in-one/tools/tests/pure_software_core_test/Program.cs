@@ -72,6 +72,7 @@ internal static class Program
             BleFastConnectionRegressionTests.Run(Check);
             BleFastConnectionHintRegressionTests.Run(Check);
             V327RegressionTests.RunAsync(Check).GetAwaiter().GetResult();
+            Pro2NfcRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             if (args.Contains("--physical-only"))
             {
                 Console.WriteLine("PASS: " + checks + " physical-input assertions; offline protocol replay only.");
@@ -228,9 +229,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.2.7.0", "v3.2.7 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.2.8.0", "v3.2.8 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.2.7-hid-compatibility-input-fixes", "v3.2.7 release metadata");
+            "3.2.8-pro2-nfc-readonly", "v3.2.8 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1490,6 +1491,7 @@ internal static class Program
         cSelector.Command.Execute(cSelector.CommandParameter); Pump(window); Save(window, "ui-min-c-key.png");
         Check(vm.SelectedRearIndex == 2 && vm.SelectedRearEditor.Title == "C 键", "C editor works at minimum dimensions");
         TestManualDialogUi(window);
+        TestPro2NfcDialogUi(window,vm);
         LongSessionRegressionTests.RunUi(window, vm, Check, () => Pump(window));
         listener.Flush();
         File.WriteAllText(Path.Combine(output, "binding-trace.txt"), bindingText.ToString());
@@ -1498,6 +1500,21 @@ internal static class Program
         Pump(window);
         app.Shutdown();
         PresentationTraceSources.DataBindingSource.Listeners.Remove(listener);
+    }
+
+    private static void TestPro2NfcDialogUi(Window owner,MainViewModel vm)
+    {
+        var dialog=new PhysicalInputsWindow(vm){Owner=owner};dialog.Show();Pump(dialog);
+        Check(!((Button)dialog.FindName("NfcButton")).IsEnabled,"NFC UI never enables a read without a verified live transport");
+        Check(((TextBox)dialog.FindName("Evidence")).Text.Contains("Pro2 BLE"),"NFC UI describes selected Pro2 BLE input");
+        Save(dialog,"ui-pro2-nfc.png");
+        ((ComboBox)dialog.FindName("SlotChoice")).SelectedIndex=3;Pump(dialog);
+        Check(((TextBox)dialog.FindName("Evidence")).Text.StartsWith("手柄 4"),"NFC slot selection does not reuse slot 1 evidence");
+        dialog.Width=540;dialog.Height=440;Pump(dialog);Save(dialog,"ui-pro2-nfc-min.png");
+        var read=(Button)dialog.FindName("NfcButton");
+        Rect bounds=read.TransformToAncestor(dialog).TransformBounds(new Rect(read.RenderSize));
+        Check(bounds.Bottom<=dialog.ActualHeight&&bounds.Left>=0,"NFC actions remain reachable at minimum window dimensions");
+        dialog.Close();Pump(owner);
     }
 
     private static void TestCompatibleHome(Window window, MainViewModel vm, Pro2BleInputSource source)

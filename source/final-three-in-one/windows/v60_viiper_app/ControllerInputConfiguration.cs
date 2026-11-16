@@ -81,7 +81,7 @@ public sealed partial class Pro2ControllerSlot
     public bool IsPro1WirelessSelected => selectedInputKind==ControllerInputKind.Pro1Bluetooth;
     public bool IsBleInputSelected => !IsPhysicalInputSelected;
     public bool CanOptimizeBleInput => IsBleInputSelected && PhysicalInput==null;
-    public bool CanChangeConnection => PhysicalInput?.IsReadingNfc != true;
+    public bool CanChangeConnection => PhysicalInput?.IsReadingNfc != true && !InputSource.IsReadingNfc;
     public string InputChoiceLabel => InputOptions.Single(x=>x.Kind==selectedInputKind).Label;
     public bool InputChoicePending => (PhysicalInput is { } physical ? ControllerInputConfiguration.FromPhysical(physical.Device.Kind) : ControllerInputKind.Pro2Ble)!=selectedInputKind ||
         PhysicalInput!=null && IsPhysicalInputSelected && selectedPhysicalId.Length>0 && !string.Equals(PhysicalInput.Device.PhysicalId,selectedPhysicalId,StringComparison.OrdinalIgnoreCase);

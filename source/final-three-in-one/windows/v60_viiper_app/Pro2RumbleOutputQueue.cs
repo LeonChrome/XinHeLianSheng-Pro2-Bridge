@@ -246,6 +246,11 @@ public sealed class Pro2RumbleOutputQueue
         }
     }
 
+    public int DiscardForNfc()
+    {
+        lock(gate){int count=pending.Count;pending.Clear();SafetyDiscarded+=count;return count;}
+    }
+
     public bool StopForGainChange(long now)
     {
         lock (gate)

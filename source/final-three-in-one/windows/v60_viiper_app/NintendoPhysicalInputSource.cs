@@ -13,7 +13,8 @@ namespace Y700Switch2V60Viiper;
 public sealed record PhysicalInputSnapshot(bool Running, string Status, double Hz, double AgeMs,
     long Reports, long RejectedReports, long QueueDrops, double GapP50, double GapP95, double GapMax,
     string Calibration, string Identity, string NfcStatus);
-public sealed record NintendoNfcTag(byte[] Uid, byte[] Data, string Controller, string Transport, DateTimeOffset ReadAt);
+public sealed record NintendoNfcTag(byte[] Uid, byte[] Data, string Controller, string Transport, DateTimeOffset ReadAt)
+{public byte[] Signature { get; init; }=[];}
 public interface INintendoHidTransport : IAsyncDisposable
 {
     ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token);
@@ -69,7 +70,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     public string CapabilitySummary => device.IsPro1
         ? "Pro1：按键、摇杆、陀螺仪、震动；实体没有背键和 C 键。NFC："+
             (device.Kind==NintendoInputKind.Pro1Bluetooth ? device.InputLength>=362 ? "只读实验，需实卡验证。" : "此 HID 接口未暴露完整 NFC 报告。" : "USB 路线尚未接入，请改用 Pro1 蓝牙读取。")
-        : "Pro2 USB：按键、摇杆、背键、C 键、陀螺仪、震动。NFC：协议不同，尚未接入。";
+        : "Pro2 USB：按键、摇杆、背键、C 键、陀螺仪、震动。NFC 请使用 Pro2 蓝牙只读实验；USB NFC 尚未接入。";
     public string NfcStatus => nfcStatus;
     public bool IsReadingNfc => nfcBusy;
     public double CurrentParsedRateHz

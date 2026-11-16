@@ -15,10 +15,10 @@
             <ComboBox x:Name="SlotChoice" Width="130" HorizontalAlignment="Left" SelectedIndex="0" SelectionChanged="Slot_Changed" Margin="0,0,0,12">
                 <ComboBoxItem Content="手柄 1"/><ComboBoxItem Content="手柄 2"/><ComboBoxItem Content="手柄 3"/><ComboBoxItem Content="手柄 4"/>
             </ComboBox>
-            <TextBlock Text="Pro2 / Pro1 蓝牙只读实验，支持 NTAG215。标签贴近手柄顶部 NFC 区；读卡时暂停该手柄震动。Pro1 还会暂时暂停输入，结束后恢复。USB NFC 尚未接入。" Foreground="#667870"/>
+            <TextBlock Text="Pro2 无线支持 NTAG215 / amiibo 只读，读卡时暂停震动。Pro1 蓝牙为试验支持，读卡时暂停输入和震动。标签贴近手柄顶部 NFC 区；USB 暂不支持。" Foreground="#667870"/>
         </StackPanel>
         <WrapPanel Grid.Row="1" Margin="0,14,0,4">
-            <Button x:Name="NfcButton" Content="读取标签（约30秒）" Click="ReadNfc_Click" IsEnabled="False"/>
+            <Button x:Name="NfcButton" Content="读取标签" ToolTip="一次读取最长约30秒；出现明确错误时会有限恢复" Click="ReadNfc_Click" IsEnabled="False"/>
             <Button x:Name="CancelNfcButton" Content="取消" Click="CancelNfc_Click" IsEnabled="False"/>
             <Button x:Name="SaveNfcButton" Content="保存 .bin…" Click="SaveNfc_Click" IsEnabled="False"/>
         </WrapPanel>

@@ -16,7 +16,7 @@ public sealed partial class Pro2BleInputSource
     private TaskCompletionSource? nfcReadComplete;
     private Pro2CommandAckWaiter? pendingNfcAck;
     private volatile bool nfcReading, nfcNeedsReconnect;
-    private volatile string nfcStatus="未读取 · Pro2 BLE 只读实验";
+    private volatile string nfcStatus="未读取 · Pro2 NFC 只读";
     public bool IsReadingNfc=>nfcReading;
     public string NfcStatus=>IsReadingNfc?nfcStatus:
         !IsRunning||!transportConnected?"请先连接 Pro2 无线手柄":

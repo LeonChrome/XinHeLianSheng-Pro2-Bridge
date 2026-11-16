@@ -73,6 +73,7 @@ internal static class Program
             BleFastConnectionHintRegressionTests.Run(Check);
             V327RegressionTests.RunAsync(Check).GetAwaiter().GetResult();
             Pro2NfcRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
+            NfcExportRegressionTests.Run(Check,output);
             if (args.Contains("--physical-only"))
             {
                 Console.WriteLine("PASS: " + checks + " physical-input assertions; offline protocol replay only.");
@@ -229,9 +230,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.2.12.0", "v3.2.12 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.3.0.0", "v3.3.0 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
-            "3.2.12-pro2-nfc-readonly", "v3.2.12 release metadata");
+            "3.3.0-nfc-reader", "v3.3.0 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1506,7 +1507,7 @@ internal static class Program
     {
         var dialog=new PhysicalInputsWindow(vm){Owner=owner};dialog.Show();Pump(dialog);
         Check(!((Button)dialog.FindName("NfcButton")).IsEnabled,"NFC UI never enables a read without a verified live transport");
-        Check(((TextBox)dialog.FindName("Evidence")).Text.Contains("Pro2 BLE"),"NFC UI describes selected Pro2 BLE input");
+        Check(((TextBox)dialog.FindName("Evidence")).Text.Contains("Pro2 无线"),"NFC UI describes selected Pro2 wireless input");
         Save(dialog,"ui-pro2-nfc.png");
         ((ComboBox)dialog.FindName("SlotChoice")).SelectedIndex=3;Pump(dialog);
         Check(((TextBox)dialog.FindName("Evidence")).Text.StartsWith("手柄 4"),"NFC slot selection does not reuse slot 1 evidence");

@@ -114,6 +114,12 @@ public sealed partial class MainViewModel
         }
         finally{Busy=false;operationGate.Release();}
     }
+    public void RecordNfcExport(int slot,string transport,NintendoNfcExportResult result)=>
+        AppendLog("[NFC_EXPORT] slot="+slot+" transport="+transport+" bytes="+result.Bytes+" sha256="+result.Sha256+
+            " verified=true signature_included="+result.SignatureIncluded+" metadata_saved="+result.MetadataSaved+
+            " metadata_error="+result.MetadataError+" uid_logged=false authentication_verified=false");
+    public void RecordNfcExportFailure(int slot,Exception error)=>
+        AppendLog("[NFC_EXPORT] slot="+slot+" verified=false error="+error.GetType().Name+" hresult=0x"+error.HResult.ToString("X8"));
     private async Task EnterPhysicalGameAsync(CancellationToken token)
     {
         foreach(var slot in pro2Slots.Where(s=>s.Enabled))

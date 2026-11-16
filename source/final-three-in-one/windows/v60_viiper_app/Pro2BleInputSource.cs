@@ -4157,7 +4157,7 @@ public sealed partial class Pro2BleInputSource :
             compatibilityOptimizationSummary = "";
             adaptiveOptimizationRunAttempted = false;
             adaptiveRetryGate.Reset();
-            nfcNeedsReconnect=false;nfcStatus="未读取 · Pro2 BLE 只读实验";
+            nfcNeedsReconnect=false;nfcStatus="未读取 · Pro2 NFC 只读";
             fastConnectionDiagnostics = null;
             fastConnectionEnvironment = null;
             fastConnectionPreference = null;

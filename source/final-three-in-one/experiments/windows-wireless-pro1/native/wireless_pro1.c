@@ -1,4 +1,4 @@
-/* Pro2/Pro1 USB -> Windows -> Nintendo Pro Controller Classic HID.
+/* Nintendo input -> Windows -> Pro1 / Xbox One S / DualSense Classic HID.
  * Optional BTstack backend for local personal experiments. Protocol/USB input
  * live in the existing .NET assistant. No driver/registry/system pairing edits.
  * HCI completion is explicitly NOT certified receiver input or game latency.
@@ -18,6 +18,7 @@
 #include "classic/device_id_server.h"
 #include "btstack_chipset_realtek.h"
 #include "pro1_descriptor.h"
+#include "wireless_descriptors.h"
 #include "utf8_files.h"
 
 #define HEADER 48
@@ -33,6 +34,12 @@ static frame_t edges[EDGE_QUEUE];
 static unsigned edge_head,edge_tail,edge_count;
 static unsigned control_head,control_tail,control_count;
 static int have_latest,send_requested,connected,ever_connected,stopping,failed,completed,realtek,ats,stack_working;
+static int profile; /* 0=Pro1, 1=Xbox One S Classic HID, 2=DualSense Classic HID */
+static int xbox_battery=-1;
+static const char *profile_names[]={"pro1","xbox","ps5"};
+static const char *device_names[]={"Pro Controller","Xbox Wireless Controller","Wireless Controller"};
+static const uint8_t *profile_descriptor(void){return profile==2?ps5_descriptor:profile==1?xbox_descriptor:pro1_descriptor;}
+static unsigned profile_descriptor_size(void){return profile==2?sizeof(ps5_descriptor):profile==1?sizeof(xbox_descriptor):sizeof(pro1_descriptor);}
 static uint16_t cid;static hci_con_handle_t acl=HCI_CON_HANDLE_INVALID;
 static bd_addr_t local,peer;static int have_peer;
 static uint8_t session[16],last_report[MAX_PAYLOAD];static int last_report_len;
@@ -67,9 +74,13 @@ static void emit_ipc(int kind,const uint8_t*payload,int len){
 }
 static void emit_link(int state,int reason){uint8_t payload[8];memcpy(payload,local,6);payload[6]=(uint8_t)state;payload[7]=(uint8_t)reason;emit_ipc(4,payload,8);}
 static int valid_input(const uint8_t*report,int len){
+    if(profile==2)return len==78&&report[0]==0x31;
+    if(profile==1)return (len==17&&report[0]==1)||(len==2&&(report[0]==2||report[0]==4));
     return (len==49&&(report[0]==0x30||report[0]==0x21))||(len==362&&report[0]==0x31)||(len==12&&report[0]==0x3f);
 }
 static int same_digital_state(const frame_t*previous,const uint8_t*report,int len){
+    if(profile==2)return previous->len==len&&len==78&&!memcmp(previous->data+9,report+9,4)&&((previous->data[34]^report[34])&0x80)==0;
+    if(profile==1)return previous->len==len&&len==17&&!memcmp(previous->data+13,report+13,4);
     if(previous->len!=len||previous->data[0]!=report[0])return 0;
     int offset=report[0]==0x3f?1:3;return !memcmp(previous->data+offset,report+offset,3);
 }
@@ -97,6 +108,7 @@ static void ipc_ready(btstack_data_source_t*ds,btstack_data_source_callback_type
         if(kind==6&&len==0){completed=1;stop_backend();continue;}
         if(kind!=1&&kind!=2){malformed++;continue;}
         if(!valid_input(p+HEADER,len)||(kind==1&&p[HEADER]==0x21)){malformed++;continue;}
+        if(profile==1&&len==2&&p[HEADER]==4)xbox_battery=p[HEADER+1];
         if(kind==1){
             source_received++;
             double age=(ticks()-(int64_t)read64(p+32))/qpc_frequency;
@@ -127,7 +139,8 @@ static void series(FILE*out,double*times,unsigned count){
 }
 static void write_result(void){
     FILE*out=fopen(result_path,"w");if(!out){failed=1;return;}
-    fprintf(out,"{\"backend\":\"btstack_winusb_pro1\",\"completed\":%s,\"failed\":%s,\"ever_connected\":%s,\"disconnect_reason\":%d,\"connected_seconds\":%.3f,\"source_received\":%"PRIu64",\"source_superseded\":%"PRIu64",\"source_stale\":%"PRIu64",\"source_not_ready\":%"PRIu64",\"invalid_ipc\":%"PRIu64",\"host_output_commands\":%"PRIu64",\"protocol_replies\":%"PRIu64",\"fresh_submissions\":%"PRIu64",\"fresh_hci_completions\":%"PRIu64",\"ledger_overflow\":%"PRIu64",\"submitted\":",completed?"true":"false",failed?"true":"false",ever_connected?"true":"false",disconnect_reason,ready?(stop_time?stop_time:now())-ready:0,source_received,source_superseded,source_stale,source_not_ready,malformed,host_commands,protocol_replies,submitted,completions,ledger_overflow);
+    fprintf(out,"{\"profile\":\"%s\",\"transport\":\"bluetooth_classic_hid\",",profile_names[profile]);
+    fprintf(out,"\"backend\":\"btstack_winusb_multimode\",\"completed\":%s,\"failed\":%s,\"ever_connected\":%s,\"disconnect_reason\":%d,\"connected_seconds\":%.3f,\"source_received\":%"PRIu64",\"source_superseded\":%"PRIu64",\"source_stale\":%"PRIu64",\"source_not_ready\":%"PRIu64",\"invalid_ipc\":%"PRIu64",\"host_output_commands\":%"PRIu64",\"protocol_replies\":%"PRIu64",\"fresh_submissions\":%"PRIu64",\"fresh_hci_completions\":%"PRIu64",\"ledger_overflow\":%"PRIu64",\"submitted\":",completed?"true":"false",failed?"true":"false",ever_connected?"true":"false",disconnect_reason,ready?(stop_time?stop_time:now())-ready:0,source_received,source_superseded,source_stale,source_not_ready,malformed,host_commands,protocol_replies,submitted,completions,ledger_overflow);
     series(out,submitted_times,submitted_count);fputs(",\"hci_completed\":",out);series(out,completed_times,completed_count);
     fprintf(out,",\"digital_transitions_queued\":%"PRIu64",\"l2cap_send_failures\":%"PRIu64",\"realtek_firmware_runtime_verified\":%s,\"receiver_rate_verified\":false,\"driver_changes\":0,\"registry_changes\":0,\"windows_pairing_imported\":false,\"keys_logged\":false,\"tag_writes\":0}\n",digital_transitions_queued,send_failures,firmware_verified?"true":"false");fclose(out);
 }
@@ -177,14 +190,37 @@ static int send_packet(uint8_t type,uint8_t*p,int size){
 static void host_output(uint16_t id,const uint8_t*body,int len){
     if(!connected||stopping||len<0||len+1>MAX_PAYLOAD)return;
     uint8_t output[MAX_PAYLOAD];output[0]=(uint8_t)id;if(len)memcpy(output+1,body,len);
-    if(id!=1&&id!=0x10&&id!=0x11)return;
+    if(profile==0&&id!=1&&id!=0x10&&id!=0x11)return;
+    if(profile==1&&id!=3)return;
+    if(profile==2&&id!=0x31){printf("{\"event\":\"UNSUPPORTED_PS5_BT_OUTPUT\",\"report_id\":%u,\"bytes\":%d,\"audio_transcoding_available\":false}\n",id,len+1);return;}
     host_commands++;emit_ipc(3,output,len+1);
     printf("{\"event\":\"HOST_OUTPUT\",\"report_id\":%u,\"bytes\":%d,\"command\":%d,\"tag_data_logged\":false}\n",id,len+1,len>=10?body[9]:-1);
 }
 static void report_data(uint16_t channel,hid_report_type_t type,uint16_t id,int len,uint8_t*data){if(channel==cid&&type==HID_REPORT_TYPE_OUTPUT)host_output(id,data,len);}
 static void set_report(uint16_t channel,hid_report_type_t type,int len,uint8_t*data){if(channel==cid&&type==HID_REPORT_TYPE_OUTPUT&&len>0)host_output(data[0],data+1,len-1);}
+static uint32_t ps_crc(const uint8_t*bytes,int length,uint8_t seed){
+    uint32_t c=0xffffffffu;for(int i=-1;i<length;i++){c^=i<0?seed:bytes[i];for(int j=0;j<8;j++)c=(c>>1)^((c&1)?0xedb88320u:0);}return ~c;
+}
+static int ps5_feature(uint16_t id,uint8_t*out){
+    int size=id==5?41:id==9?20:id==0x20?64:0;if(!size)return 0;
+    memset(out,0,(size_t)size);out[0]=(uint8_t)id;
+    if(id==5){int16_t values[]={0,0,0,8192,-8192,8192,-8192,8192,-8192,500,500,8192,-8192,8192,-8192,8192,-8192};for(int i=0;i<17;i++)little_endian_store_16(out,1+2*i,(uint16_t)values[i]);out[35]=0x0b;}
+    if(id==9){reverse_bd_addr(local,out+1);out[7]=8;}
+    if(id==0x20){memcpy(out+1,"Nov 16 2026",11);little_endian_store_32(out,24,0x01000000);little_endian_store_32(out,44,0x00000350);}
+    little_endian_store_32(out,size-4,ps_crc(out,size-4,0xa3));return size;
+}
 static int get_report(uint16_t channel,hid_report_type_t type,uint16_t id,int*len,uint8_t*data){
-    if(channel!=cid||type!=HID_REPORT_TYPE_INPUT||!last_report_len||last_report[0]!=id)return 0;
+    if(channel!=cid)return 0;
+    if(profile==2&&type==HID_REPORT_TYPE_FEATURE){uint8_t report[64];int size=ps5_feature(id,report);if(!size)return 0;*len=size-1;memcpy(data,report+1,(size_t)*len);printf("{\"event\":\"PS5_BT_FEATURE\",\"report_id\":%u,\"bytes\":%d,\"crc\":true}\n",id,size);return 1;}
+    if(profile==2&&type==HID_REPORT_TYPE_INPUT&&id==1){
+        memset(data,0,9);memset(data,128,4);data[4]=8;
+        if(last_report_len==78&&last_report[0]==0x31){memcpy(data,last_report+2,4);memcpy(data+4,last_report+9,3);data[7]=last_report[6];data[8]=last_report[7];}
+        *len=9;return 1;
+    }
+    if(profile==1&&type==HID_REPORT_TYPE_INPUT&&id==2){*len=1;data[0]=0;return 1;}
+    if(profile==1&&type==HID_REPORT_TYPE_INPUT&&id==4&&xbox_battery>=0){*len=1;data[0]=(uint8_t)xbox_battery;return 1;}
+    if(profile==1&&type==HID_REPORT_TYPE_INPUT&&id==1&&!last_report_len){memset(data,0,16);for(int i=0;i<8;i+=2)little_endian_store_16(data,i,32768);*len=16;return 1;}
+    if(type!=HID_REPORT_TYPE_INPUT||!last_report_len||last_report[0]!=id)return 0;
     *len=last_report_len-1;memcpy(data,last_report+1,*len);return 1;
 }
 static void events(uint8_t type,uint16_t channel,uint8_t*p,uint16_t size){
@@ -194,7 +230,7 @@ static void events(uint8_t type,uint16_t channel,uint8_t*p,uint16_t size){
             if(btstack_event_state_get_state(p)==HCI_STATE_WORKING){
                 stack_working=1;
                 gap_local_bd_addr(local);
-                printf("{\"event\":\"STACK_WORKING\",\"address\":\"%s\",\"identity\":\"Pro Controller\"}\n",bd_addr_to_str(local));
+                printf("{\"event\":\"STACK_WORKING\",\"address\":\"%s\",\"identity\":\"%s\",\"profile\":\"%s\"}\n",bd_addr_to_str(local),device_names[profile],profile_names[profile]);
                 emit_link(0,0);
                 if(realtek)version_readback=1;
             }else if(btstack_event_state_get_state(p)==HCI_STATE_OFF&&stopping)btstack_run_loop_trigger_exit();
@@ -222,7 +258,7 @@ static void events(uint8_t type,uint16_t channel,uint8_t*p,uint16_t size){
                     memcpy(peer,who,6);have_peer=1;acl=hid_subevent_connection_opened_get_con_handle(p);
                     if(gap_security_level(acl)<LEVEL_2){failed=1;puts("{\"event\":\"ENCRYPTION_REQUIRED_ABORT\"}");stop_backend();break;}
                     connected=ever_connected=1;ready=now();gap_discoverable_control(0);
-                    puts("{\"event\":\"PRO1_HID_READY\",\"receiver_rate_verified\":false}");emit_link(1,0);request_send();break;
+                    printf("{\"event\":\"CONTROLLER_HID_READY\",\"profile\":\"%s\",\"receiver_rate_verified\":false}\n",profile_names[profile]);emit_link(1,0);request_send();break;
                 }
                 case HID_SUBEVENT_CONNECTION_CLOSED:
                     if(hid_subevent_connection_closed_get_hid_cid(p)!=cid)break;
@@ -276,7 +312,23 @@ static int self_test(void){
     failures+=!decode_ipc(p,HEADER,&sequence,&kind,&len);p[8]=1;failures+=decode_ipc(p,HEADER,&sequence,&kind,&len);p[8]=0;p[40]=1;failures+=decode_ipc(p,HEADER,&sequence,&kind,&len);
     acl=0x42;failures+=!owns_acl(0x42);failures+=owns_acl(0x43);acl=HCI_CON_HANDLE_INVALID;failures+=owns_acl(0xffff);
     frame_t sample={0};sample.len=49;sample.data[0]=0x30;uint8_t unchanged[49]={0x30};failures+=!same_digital_state(&sample,unchanged,49);unchanged[3]=1;failures+=same_digital_state(&sample,unchanged,49);unchanged[3]=0;unchanged[6]=0x80;failures+=!same_digital_state(&sample,unchanged,49);
-    printf("{\"event\":\"NATIVE_SELF_TEST\",\"cases\":16,\"failures\":%d,\"radio_opened\":false}\n",failures);return failures?1:0;
+    int cases=16;
+#define VERIFY(test) do { cases++; failures+=!(test); } while(0)
+    VERIFY(sizeof(ps5_descriptor)==279);VERIFY(sizeof(xbox_descriptor)==334);
+    VERIFY(btstack_hid_get_report_size_for_id(0x31,HID_REPORT_TYPE_INPUT,ps5_descriptor,sizeof(ps5_descriptor))==77);
+    VERIFY(btstack_hid_get_report_size_for_id(0x31,HID_REPORT_TYPE_OUTPUT,ps5_descriptor,sizeof(ps5_descriptor))==77);
+    VERIFY(btstack_hid_get_report_size_for_id(5,HID_REPORT_TYPE_FEATURE,ps5_descriptor,sizeof(ps5_descriptor))==40);
+    VERIFY(btstack_hid_get_report_size_for_id(1,HID_REPORT_TYPE_INPUT,xbox_descriptor,sizeof(xbox_descriptor))==16);
+    VERIFY(btstack_hid_get_report_size_for_id(2,HID_REPORT_TYPE_INPUT,xbox_descriptor,sizeof(xbox_descriptor))==1);
+    VERIFY(btstack_hid_get_report_size_for_id(3,HID_REPORT_TYPE_OUTPUT,xbox_descriptor,sizeof(xbox_descriptor))==8);
+    uint8_t feature[64];VERIFY(ps5_feature(5,feature)==41);VERIFY(little_endian_read_32(feature,37)==ps_crc(feature,37,0xa3));
+    VERIFY(ps5_feature(9,feature)==20);VERIFY(ps5_feature(0x20,feature)==64);VERIFY(ps5_feature(0xf0,feature)==0);
+    profile=2;uint8_t ps[78]={0x31};VERIFY(valid_input(ps,78));VERIFY(!valid_input(ps,77));
+    sample.len=78;memcpy(sample.data,ps,78);VERIFY(same_digital_state(&sample,ps,78));ps[17]=1;VERIFY(same_digital_state(&sample,ps,78));ps[9]=1;VERIFY(!same_digital_state(&sample,ps,78));
+    profile=1;uint8_t xb[17]={1};uint8_t guide[2]={2};VERIFY(valid_input(xb,17));VERIFY(valid_input(guide,2));VERIFY(!valid_input(ps,78));
+    sample.len=17;memcpy(sample.data,xb,17);VERIFY(same_digital_state(&sample,xb,17));xb[14]=1;VERIFY(!same_digital_state(&sample,xb,17));profile=0;
+#undef VERIFY
+    printf("{\"event\":\"NATIVE_SELF_TEST\",\"cases\":%d,\"failures\":%d,\"radio_opened\":false}\n",cases,failures);return failures?1:0;
 }
 static int fixture_test(const char*path){
     FILE*file=fopen(path,"rb");if(!file)return 3;
@@ -291,6 +343,10 @@ static int fixture_test(const char*path){
 static int relay_main(int argc,char**argv){
     if(argc==2&&!strcmp(argv[1],"--self-test"))return self_test();
     if(argc==3&&!strcmp(argv[1],"--verify-ipc-fixture"))return fixture_test(argv[2]);
+    if(argc==5&&!strcmp(argv[1],"--verify-ipc-fixture")&&!strcmp(argv[3],"--profile")){
+        if(!strcmp(argv[4],"ps5"))profile=2;else if(!strcmp(argv[4],"xbox"))profile=1;else if(strcmp(argv[4],"pro1"))return 2;
+        return fixture_test(argv[2]);
+    }
     const char*instance=NULL,*session_file=NULL;int listen_port=0,managed_port=0;
     for(int i=1;i<argc;i++){
         if(i+1>=argc)return 2;const char*arg=argv[i++],*value=argv[i];
@@ -302,6 +358,7 @@ static int relay_main(int argc,char**argv){
         else if(!strcmp(arg,"--seconds"))seconds=atoi(value);
         else if(!strcmp(arg,"--wait-seconds"))wait_seconds=atoi(value);
         else if(!strcmp(arg,"--firmware-folder"))firmware_folder=value;
+        else if(!strcmp(arg,"--profile")){if(!strcmp(value,"pro1"))profile=0;else if(!strcmp(value,"xbox"))profile=1;else if(!strcmp(value,"ps5"))profile=2;else return 2;}
         else if(!strcmp(arg,"--peer")){if(!sscanf_bd_addr(value,peer))return 2;have_peer=1;}
         else return 2;
     }
@@ -328,16 +385,16 @@ static int relay_main(int argc,char**argv){
     base_transport=hci_transport_usb_instance();transport=*base_transport;transport.register_packet_handler=register_receive;transport.send_packet=send_packet;hci_init(&transport,NULL);
     if(realtek&&firmware_folder){btstack_chipset_realtek_set_product_id(0x0852);btstack_chipset_realtek_set_firmware_folder_path(firmware_folder);btstack_chipset_realtek_set_config_folder_path(firmware_folder);hci_set_chipset(btstack_chipset_realtek_instance());hci_enable_custom_pre_init();}
     hci_set_link_key_db(btstack_link_key_db_memory_instance());
-    gap_set_local_name("Pro Controller");gap_set_class_of_device(0x2508);gap_set_bondable_mode(1);gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);gap_set_security_level(LEVEL_2);
+    gap_set_local_name(device_names[profile]);gap_set_class_of_device(0x2508);gap_set_bondable_mode(1);gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);gap_set_security_level(LEVEL_2);
     gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_ROLE_SWITCH);gap_set_allow_role_switch(true);gap_discoverable_control(1);gap_connectable_control(1);
     l2cap_init();sdp_init();
-    hid_sdp_record_t params={8,0,1,1,1,true,false,24,24,3200,pro1_descriptor,sizeof(pro1_descriptor),"Pro Controller"};
+    hid_sdp_record_t params={8,0,1,1,1,true,false,24,24,3200,profile_descriptor(),profile_descriptor_size(),device_names[profile]};
     hid_create_sdp_record(hid_record,0x10002,&params);sdp_register_service(hid_record);
-    device_id_create_sdp_record(did_record,0x10003,DEVICE_ID_VENDOR_ID_SOURCE_USB,0x057e,0x2009,0x0300);sdp_register_service(did_record);
-    hid_device_init(false,sizeof(pro1_descriptor),pro1_descriptor);hid_device_register_packet_handler(events);hid_device_register_report_request_callback(get_report);hid_device_register_set_report_callback(set_report);hid_device_register_report_data_callback(report_data);hid_device_accept_truncated_hid_reports(true);
+    device_id_create_sdp_record(did_record,0x10003,DEVICE_ID_VENDOR_ID_SOURCE_USB,profile==2?0x054c:profile==1?0x045e:0x057e,profile==2?0x0ce6:profile==1?0x02fd:0x2009,profile==1?0x0903:0x0300);sdp_register_service(did_record);
+    hid_device_init(false,profile_descriptor_size(),profile_descriptor());hid_device_register_packet_handler(events);hid_device_register_report_request_callback(get_report);hid_device_register_set_report_callback(set_report);hid_device_register_report_data_callback(report_data);hid_device_accept_truncated_hid_reports(profile==0);
     event_registration.callback=events;hci_add_event_handler(&event_registration);
     btstack_run_loop_set_timer_handler(&timer,watchdog);btstack_run_loop_set_timer(&timer,50);btstack_run_loop_add_timer(&timer);
-    puts("{\"event\":\"PRO1_RADIO_START\",\"input\":\"physical_usb_only\",\"driver_changes\":0,\"pairing_keys_logged\":false,\"receiver_rate_verified\":false}");
+    printf("{\"event\":\"CONTROLLER_RADIO_START\",\"profile\":\"%s\",\"transport\":\"bluetooth_classic_hid\",\"driver_changes\":0,\"pairing_keys_logged\":false,\"receiver_rate_verified\":false}\n",profile_names[profile]);
     hci_power_control(HCI_POWER_ON);btstack_run_loop_execute();
     write_result();btstack_run_loop_remove_data_source(&ipc_source);closesocket(sock);WSACloseEvent(socket_event);WSACleanup();ReleaseMutex(mutex);CloseHandle(mutex);SecureZeroMemory(session,sizeof(session));
     return failed||!completed?1:0;

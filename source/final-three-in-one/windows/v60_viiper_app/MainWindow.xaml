@@ -122,7 +122,7 @@
                 <TextBlock Text="PRO2 手柄助手" FontWeight="SemiBold" FontSize="19" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Grid.Column="1" CornerRadius="16" Background="#E7EDE8" Padding="13,7" VerticalAlignment="Center">
-                <TextBlock Text="{Binding CompactStateText}" FontSize="12" Foreground="#315847"/>
+                <TextBlock Text="{Binding UnifiedStateText}" FontSize="12" Foreground="#315847"/>
             </Border>
         </Grid>
         <TabControl x:Name="MainTabs" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="0,18,0,0">
@@ -131,6 +131,14 @@
                     <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <ScrollViewer x:Name="HomeScrollViewer" Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" ScrollChanged="HomeScrollViewer_ScrollChanged">
                     <StackPanel Margin="0,0,4,0">
+                        <WrapPanel Margin="0,0,0,8" IsEnabled="{Binding CanOperate}">
+                            <Button Content="本机游玩" Command="{Binding SelectOutputDestinationCommand}" CommandParameter="local">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Style.Triggers><DataTrigger Binding="{Binding IsLocalOutput}" Value="True"><Setter Property="Background" Value="#DDEBE2"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                            </Button>
+                            <Button x:Name="BluetoothOutputButton" Content="蓝牙转发至其他设备" Command="{Binding SelectOutputDestinationCommand}" CommandParameter="bluetooth">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Style.Triggers><DataTrigger Binding="{Binding IsBluetoothOutput}" Value="True"><Setter Property="Background" Value="#DDEBE2"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                            </Button>
+                        </WrapPanel>
                         <Border>
                             <Border.Style><Style TargetType="Border" BasedOn="{StaticResource Card}">
                                 <Setter Property="Padding" Value="18"/><Setter Property="Margin" Value="0,0,0,14"/>
@@ -141,8 +149,8 @@
                                 </Style.Triggers>
                             </Style></Border.Style>
                             <StackPanel>
-                                <TextBlock x:Name="BleConnectionTitleText" Text="{Binding BleConnectionTitle}" FontSize="23" FontWeight="SemiBold"/>
-                                <TextBlock x:Name="BleConnectionHintText" Text="{Binding BleConnectionHint}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" LineHeight="18">
+                                <TextBlock x:Name="BleConnectionTitleText" Text="{Binding UnifiedConnectionTitle}" FontSize="23" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="BleConnectionHintText" Text="{Binding UnifiedConnectionHint}" TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" LineHeight="18">
                                     <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
                                         <DataTrigger Binding="{Binding HasLowRateWarning}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
                                         <DataTrigger Binding="{Binding ShowWin10BleHomePanel}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
@@ -152,12 +160,61 @@
                                 <local:ControllerConnectionView x:Name="PrimaryConnectionView" DataContext="{Binding Pro2Slots[0]}" ShowHint="False" ShowHeading="False" Margin="0,8,0,0">
                                     <local:ControllerConnectionView.Style><Style TargetType="local:ControllerConnectionView">
                                         <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DataContext.IsBluetoothOutput, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
                                             <DataTrigger Binding="{Binding DataContext.HasLowRateWarning, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
                                             <DataTrigger Binding="{Binding DataContext.ShowWin10BleHomePanel, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
                                             <DataTrigger Binding="{Binding DataContext.HasVirtualOutputWarning, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Compact" Value="True"/></DataTrigger>
                                         </Style.Triggers>
                                     </Style></local:ControllerConnectionView.Style>
                                 </local:ControllerConnectionView>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="以哪种手柄身份游玩？" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <Grid IsEnabled="{Binding CanOperate}">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <Button Command="{Binding SelectCompactModeCommand}" CommandParameter="Pro2" AutomationProperties.Name="Steam / Pro2 模式" IsEnabled="{Binding CanUseNativePro2Output}" ToolTip="原生 Pro2 身份供本机使用；蓝牙外发请选择 Pro1、Xbox 或 PS5">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsPro2Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                <StackPanel><TextBlock Text="Steam / Pro2" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="Steam Input · 陀螺仪" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
+                            </Button>
+                            <Button Grid.Column="1" Command="{Binding SelectCompactModeCommand}" CommandParameter="Pro1" AutomationProperties.Name="Pro1 模式">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsPro1Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                <StackPanel><TextBlock Text="Pro1" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="经典兼容 · 软件背键" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
+                            </Button>
+                            <Button Grid.Column="2" Command="{Binding SelectCompactModeCommand}" CommandParameter="Xbox" AutomationProperties.Name="Xbox 模式">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsXboxSelected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                <StackPanel><TextBlock Text="Xbox" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="广泛兼容 · 普通震动" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
+                            </Button>
+                            <Button Grid.Column="3" Command="{Binding SelectCompactModeCommand}" CommandParameter="PS5" Margin="0,0,0,8" AutomationProperties.Name="PS5 模式">
+                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding CompactPs5Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                <StackPanel><TextBlock Text="PS5" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="{Binding Ps5ModeHint}" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
+                            </Button>
+                        </Grid>
+                        <Border Style="{StaticResource Card}" Padding="14" Margin="0,4,0,4" Visibility="{Binding IsBluetoothOutput, Converter={StaticResource BoolVisibility}}">
+                            <StackPanel>
+                                                                <DockPanel IsEnabled="{Binding CanOperate}">
+                                    <TextBlock DockPanel.Dock="Left" Text="蓝牙发射器" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,8"/>
+                                    <Button DockPanel.Dock="Right" Content="刷新" Command="{Binding RefreshWirelessRadiosCommand}"/>
+                                    <ComboBox ItemsSource="{Binding WirelessRadios}" SelectedItem="{Binding SelectedWirelessRadio}" DisplayMemberPath="Label" MinWidth="280" HorizontalAlignment="Stretch" ToolTip="多个适配器时请手动选择；仅接管这一只设备"/>
+                                </DockPanel>
+                                <Expander Header="外发设置、反馈与 NFC" Margin="0,0,0,0">
+                                    <StackPanel>
+                                <WrapPanel Margin="0,7,0,0" IsEnabled="{Binding CanOperate}">
+                                    <TextBlock Text="外发上限 (Hz)" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <ComboBox ItemsSource="{Binding WirelessRates}" SelectedItem="{Binding SelectedWirelessRate}" ItemStringFormat="{}{0:0.#}" Width="96"/>
+                                    <TextBlock Text="实际发送受真实输入与接收端限制" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                </WrapPanel>
+
+                                        <TextBlock Text="{Binding WirelessOutputHint}" TextWrapping="Wrap" Style="{StaticResource MutedText}" Margin="0,0,0,6"/>
+                                        <TextBlock Text="{Binding WirelessInputSummary}" TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}"/>
+                                        <WrapPanel Margin="0,6,0,0">
+                                            <Button Content="读取实体 NFC" Command="{Binding ReadWirelessNfcCommand}" IsEnabled="{Binding CanReadWirelessNfc}"/>
+                                            <Button Content="载入标签文件" Click="LoadWirelessTag_Click" IsEnabled="{Binding CanUseWirelessNfc}"/>
+                                            <Button Content="移除快照" Command="{Binding RemoveWirelessTagCommand}"/>
+                                            <Button Content="查看日志" Click="OpenWirelessLog_Click"/>
+                                        </WrapPanel>
+                                        <TextBlock Text="{Binding WirelessNfcStatus}" TextWrapping="Wrap" Style="{StaticResource MutedText}"/>
+                                    </StackPanel>
+                                </Expander>
                             </StackPanel>
                         </Border>
                         <Grid Margin="0,0,0,10">
@@ -241,37 +298,15 @@
                                 </Expander>
                             </StackPanel>
                         </Border>
-                        <TextBlock Text="以哪种手柄身份游玩？" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                        <Grid IsEnabled="{Binding CanOperate}">
-                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-                            <Button Command="{Binding SelectCompactModeCommand}" CommandParameter="Pro2" AutomationProperties.Name="Steam / Pro2 模式">
-                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsPro2Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
-                                <StackPanel><TextBlock Text="Steam / Pro2" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="Steam Input · 陀螺仪" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
-                            </Button>
-                            <Button Grid.Column="1" Command="{Binding SelectCompactModeCommand}" CommandParameter="Pro1" AutomationProperties.Name="Pro1 模式">
-                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsPro1Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
-                                <StackPanel><TextBlock Text="Pro1" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="经典兼容 · 软件背键" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
-                            </Button>
-                            <Button Grid.Column="2" Command="{Binding SelectCompactModeCommand}" CommandParameter="Xbox" AutomationProperties.Name="Xbox 模式">
-                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding IsXboxSelected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
-                                <StackPanel><TextBlock Text="Xbox" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="广泛兼容 · 普通震动" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
-                            </Button>
-                            <Button Grid.Column="3" Command="{Binding SelectCompactModeCommand}" CommandParameter="PS5" Margin="0,0,0,8" AutomationProperties.Name="PS5 模式">
-                                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource ModeCard}"><Style.Triggers><DataTrigger Binding="{Binding CompactPs5Selected}" Value="True"><Setter Property="Background" Value="#EAF2EC"/><Setter Property="BorderBrush" Value="#699980"/></DataTrigger></Style.Triggers></Style></Button.Style>
-                                <StackPanel><TextBlock Text="PS5" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="触觉转换 · 陀螺仪" Style="{StaticResource MutedText}" Margin="0,7,0,0"/></StackPanel>
-                            </Button>
-                        </Grid>
                     </StackPanel>
                 </ScrollViewer>
                         <StackPanel Grid.Row="1" Margin="0,12,0,0">
                         <WrapPanel>
-                            <Button Content="{Binding CompactConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding CompactCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
-                            <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanOperate}" Visibility="{Binding PrimaryBleControlsVisible, Converter={StaticResource BoolVisibility}}"/>
-                            <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding CompactCanStop}"/>
-                            <Button Content="NFC 读卡…" Click="PhysicalInputs_Click" ToolTip="Pro2 无线读取 NTAG215 / amiibo，保存原始文件；Pro1 蓝牙为试验支持"/>
-                            <Button x:Name="MultiControllerButton" Content="管理手柄…" Click="MultiController_Click" ToolTip="四个槽位统一选择有线／无线、实体手柄和游戏输出模式"/>
-                            <Button x:Name="WirelessRelayButton" Content="蓝牙转发…" Click="WirelessRelay_Click" IsEnabled="{Binding CanOperate}" Visibility="Collapsed"
-                                    ToolTip="USB 连接 Pro2 / Pro1，选择蓝牙适配器，向其他设备转发为 Pro1 手柄；会先暂停本机输出"/>
+                            <Button Content="{Binding UnifiedConnectText}" Command="{Binding ConnectPro2InputCommand}" Style="{StaticResource Primary}" IsEnabled="{Binding UnifiedCanConnect}" HorizontalAlignment="Left" MinWidth="150"/>
+                            <Button Content="手动模式（不推荐）" Click="ManualConnect_Click" IsEnabled="{Binding CanUseLocalTools}" Visibility="{Binding PrimaryBleControlsVisible, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="停止 / 暂停重连" Command="{Binding CompactStopCommand}" IsEnabled="{Binding UnifiedCanStop}"/>
+                            <Button Content="NFC 读卡…" Click="PhysicalInputs_Click" Visibility="{Binding IsLocalOutput, Converter={StaticResource BoolVisibility}}" ToolTip="Pro2 无线读取 NTAG215 / amiibo，保存原始文件；Pro1 蓝牙为试验支持"/>
+                            <Button x:Name="MultiControllerButton" Content="管理手柄…" Click="MultiController_Click" Visibility="{Binding IsLocalOutput, Converter={StaticResource BoolVisibility}}" ToolTip="四个槽位统一选择有线／无线、实体手柄和游戏输出模式"/>
                             <Button x:Name="Win10OneClickButton" Content="一键优化到 133Hz · Win10" Click="OneClickWin10Optimize_Click" Style="{StaticResource Primary}"
                                     IsEnabled="{Binding CanOperate}" Visibility="{Binding ShowWin10OneClick, Converter={StaticResource BoolVisibility}}"
                                     ToolTip="{Binding Win10OneClickHint}"/>
@@ -495,7 +530,7 @@
                     ToolTip="点击查看系统版本、蓝牙适配器、驱动和当前输入状态">
                 <TextBlock Text="{Binding CompactSystemText}"/>
             </Button>
-            <TextBlock Text="纯软件 · 无需外置接收器" Style="{StaticResource MutedText}"/>
+            <TextBlock Text="{Binding UnifiedFooterText}" Style="{StaticResource MutedText}"/>
         </DockPanel>
     </Grid>
 </Window>

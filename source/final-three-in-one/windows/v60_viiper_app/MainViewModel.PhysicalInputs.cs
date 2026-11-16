@@ -11,7 +11,7 @@ public sealed partial class MainViewModel
 {
     private NintendoPhysicalInputSource? PrimaryPhysical => pro2Slots[0].PhysicalInput;
     public bool CanProbePhysicalInputs => !previewOnly;
-    public string PrimaryInputLabel => PrimaryPhysical == null ? "真实 FD2 输入" : "真实 HID 输入 · " + PrimaryPhysical.Device.Kind;
+    public string PrimaryInputLabel => IsBluetoothOutput ? "实体输入 · "+ControllerInputConfiguration.Options.First(option=>option.Kind==pro2Slots[0].SelectedInputKind).Label : PrimaryPhysical == null ? "真实 FD2 输入" : "真实 HID 输入 · " + PrimaryPhysical.Device.Kind;
     public string PhysicalInputsReport => string.Join("\n\n",pro2Slots.Where(s=>s.PhysicalInput!=null)
         .Select(s=>s.Name+" · "+s.PhysicalInput!.Device.Label+"\n"+s.PhysicalInput.MetricsSummary));
 

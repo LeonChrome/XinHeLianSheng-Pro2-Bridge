@@ -117,7 +117,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        WirelessRelayButton.Visibility=WirelessRelayRuntime.IsAvailable?Visibility.Visible:Visibility.Collapsed;
+        BluetoothOutputButton.Visibility=WirelessRelayRuntime.IsAvailable?Visibility.Visible:Visibility.Collapsed;
         DataContext = new MainViewModel(IsUiSmokeRun());
         presentationTimer.Tick += (_, _) =>
         {
@@ -595,7 +595,6 @@ public partial class MainWindow : Window
         shutdownInProgress = true;
         try
         {
-            if(wirelessRelayWindow!=null)await wirelessRelayWindow.StopAndCloseAsync();
             if (DataContext is MainViewModel viewModel)
             {
                 await viewModel.ShutdownAsync();

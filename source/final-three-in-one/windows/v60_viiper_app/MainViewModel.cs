@@ -120,9 +120,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         ScanPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("扫描 Pro2 BLE", ScanPro2InputAsync));
         ConnectPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("进入游戏", token =>
         {
+            if (IsBluetoothOutput) return StartWirelessOutputCoreAsync(token);
             manualReconnectTarget = null;
             return ConnectConfiguredSlotAsync(pro2Slots[0],token);
-        }));
+        }, allowWirelessOperation: IsBluetoothOutput));
         DisconnectPro2InputCommand = new RelayCommand(_ => RunExclusiveAsync("断开 Pro2 BLE", DisconnectPro2InputAsync));
         CalibrateSourceGyroCommand = new RelayCommand(_ => RunExclusiveAsync("校准真实 Pro2 陀螺仪", CalibrateSourceGyroAsync));
         FixAudioDefaultsCommand = new RelayCommand(_ => RunExclusiveAsync("修复音频默认设备", FixAudioDefaultsAsync));
@@ -326,12 +327,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             (ApplyRearButtonsCommand as RelayCommand)?.RefreshCanExecute();
             OnPropertyChanged(nameof(CompactCanConnect));
             OnPropertyChanged(nameof(CanCalibrateSelectedInput));
+            RefreshWirelessPresentation();
         }
     }
 
     public bool CanStart => !Busy && !WirelessRelayModeActive;
     public bool CanStop => Running && !Busy && !WirelessRelayModeActive;
-    public bool CanOperate => !Busy && !WirelessRelayModeActive;
+    public bool CanOperate => !Busy && (!WirelessRelayModeActive || IsBluetoothOutput);
     public bool CanManageRuntime => !Running && !Busy && !WirelessRelayModeActive;
     public bool CanManualBleControl =>
         !Busy &&
@@ -3610,6 +3612,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     public async Task StopAsync()
     {
+        await StopWirelessOutputCoreAsync();
         enterGamePending = false;
         await StopAutoReconnectAsync();
         await StopSessionAsync(updateStatus: true);
@@ -3924,11 +3927,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
     private async Task RunExclusiveAsync(
         string operation,
         Func<CancellationToken, Task> action,
-        bool isStartupAutomationOperation = false)
+        bool isStartupAutomationOperation = false,
+        bool allowWirelessOperation = false)
     {
-        if (WirelessRelayModeActive)
+        if (WirelessRelayModeActive && !allowWirelessOperation)
         {
-            Status="请先停止蓝牙转发并关闭转发窗口，再操作本机手柄。";
+            Status="请先停止蓝牙转发，再操作本机手柄。";
             AppendLog("[WIRELESS_RELAY_MODE] blocked_local_operation="+operation);
             return;
         }

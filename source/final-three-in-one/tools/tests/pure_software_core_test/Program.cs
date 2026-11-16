@@ -25,8 +25,13 @@ internal static class Program
         Directory.CreateDirectory(output);
         try
         {
+            if(args.Contains("--relay-ui-only"))
+            {
+                TestUnifiedRelayUi();Console.WriteLine("PASS: "+checks+" unified relay UI assertions; preview only, radio_opened=false.");return 0;
+            }
             if(args.Contains("--relay-integration-only"))
             {
+                WirelessControllerRegressionTests.Run(Check);
                 WirelessPro1RegressionTests.Run(Check);
                 WirelessRelayStartupRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
                 WirelessRelayIntegrationRegressionTests.RunAsync(Check,output).GetAwaiter().GetResult();
@@ -34,9 +39,11 @@ internal static class Program
             }
             if(args.Contains("--wireless-only"))
             {
+                WirelessControllerRegressionTests.Run(Check);
                 WirelessPro1RegressionTests.Run(Check);
                 UsbNfcRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
                 WirelessPro1RegressionTests.WriteIpcFixtures(Path.Combine(output,"中文-ipc-fixtures"));
+                WirelessControllerRegressionTests.WriteFixtures(Path.Combine(output,"multimode-ipc-fixtures"));
                 Console.WriteLine("PASS: "+checks+" wireless Pro1/USB NFC assertions; offline only, radio_opened=false.");return 0;
             }
             if (args.Contains("--capture-usb-input"))
@@ -246,9 +253,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.4.1.0", "v3.4.1 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.5.0.0", "v3.5.0 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.StartsWith(
-            "3.4.1-wireless-startup-fix",StringComparison.Ordinal)==true, "v3.4.1 release metadata");
+            "3.5.0-unified-bluetooth",StringComparison.Ordinal)==true, "v3.5.0 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),
@@ -1014,6 +1021,35 @@ internal static class Program
             "persistent log bounded");
         Check(stress.LastError == null, "concurrent producers do not fail writer");
         await LongSessionRegressionTests.RunLogAsync(directory, Check);
+    }
+
+    private static void TestUnifiedRelayUi()
+    {
+        Environment.SetEnvironmentVariable("V60_UI_SMOKE","1");
+        using var bindingText=new StringWriter();var listener=new TextWriterTraceListener(bindingText);
+        PresentationTraceSources.DataBindingSource.Listeners.Add(listener);
+        PresentationTraceSources.DataBindingSource.Switch.Level=SourceLevels.Warning;
+        var app=new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown};
+        var window=new MainWindow{ShowActivated=false,ShowInTaskbar=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-10000,Top=-10000};
+        window.Show();Pump(window);var vm=(MainViewModel)window.DataContext;
+        Check(vm.IsLocalOutput&&vm.CanUseNativePro2Output,"local output remains the default");
+        Save(window,"ui-unified-local.png");
+        vm.SelectOutputDestinationCommand.Execute("bluetooth");Pump(window);
+        Check(vm.IsBluetoothOutput&&!vm.CanUseNativePro2Output&&vm.IsPro1Selected,"inline Bluetooth destination offers supported identities");
+        Check(vm.UnifiedConnectText=="连接并转发"&&!vm.Busy,"inline connection command is available");
+        foreach(string mode in new[]{"Xbox","PS5","Pro1"})
+        {
+            vm.SelectCompactModeCommand.Execute(mode);Pump(window);
+            Check(vm.WirelessOutputHint.Contains(mode=="PS5"?"PS5":mode),"wireless role selection "+mode);
+        }
+        vm.SelectCompactModeCommand.Execute("Pro2");Pump(window);Check(vm.IsPro1Selected,"unsupported native Pro2 Bluetooth choice is blocked");
+        Save(window,"ui-unified-bluetooth.png");
+        Check(Descendants<ScrollViewer>(window).Where(s=>s.IsVisible).All(s=>s.ComputedHorizontalScrollBarVisibility!=Visibility.Visible),"unified home has no horizontal overflow");
+        vm.SelectOutputDestinationCommand.Execute("local");Pump(window);
+        Check(vm.IsLocalOutput&&vm.CanUseNativePro2Output&&!vm.WirelessRelayModeActive,"returning local leaves no relay ownership");
+        Check(!bindingText.ToString().Contains("System.Windows.Data Error"),"unified relay home has no WPF binding errors");
+        File.WriteAllText(Path.Combine(output,"unified-bindings.txt"),bindingText.ToString());
+        window.Close();PresentationTraceSources.DataBindingSource.Listeners.Remove(listener);
     }
 
     private static void TestUi()

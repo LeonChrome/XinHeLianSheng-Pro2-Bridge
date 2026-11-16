@@ -151,7 +151,7 @@ public partial class App : System.Windows.Application
                 "UI_RENDERING=" + StartupRenderingPolicy.Telemetry + "\r\n" +
                 "STARTUP_SAFE=" + Bootstrap.SafeStartup + "\r\n" +
                 "WIRELESS_RELAY_INCLUDED=" + WirelessRelayRuntime.IsAvailable + "\r\n" +
-                "WIRELESS_RELAY_BUTTON_VISIBLE=" + (window.WirelessRelayButton.Visibility==Visibility.Visible) + "\r\n" +
+                "WIRELESS_RELAY_BUTTON_VISIBLE=" + (window.BluetoothOutputButton.Visibility==Visibility.Visible) + "\r\n" +
                 "GYRO_QUALITY=" + Pro2QualityMode.GyroEnabled + "\r\n" +
                 "HAPTICS_QUALITY=" + Pro2QualityMode.HapticsEnabled + "\r\n" +
                 "BATTERY_INIT_SNAPSHOT=" + Pro2InitialBatterySnapshot.IsRequested(Environment.GetCommandLineArgs()) + "\r\n" +

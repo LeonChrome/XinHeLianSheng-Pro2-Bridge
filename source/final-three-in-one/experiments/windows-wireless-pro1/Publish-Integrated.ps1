@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [string]$ArtifactDirectory='D:\CODEX\artifacts\pro2-v3.4.1-integrated',
+    [string]$ArtifactDirectory='D:\CODEX\artifacts\pro2-v3.5.0-integrated',
     [string]$Dotnet='D:\CODEX\.dotnet-sdk\dotnet.exe',
     [string]$FirmwareDirectory='D:\CODEX\.codex-work\realtek-relay-test\firmware',
     [switch]$SkipNativeBuild
@@ -40,5 +40,5 @@ $publish=Join-Path $ArtifactDirectory 'publish'
 & $Dotnet publish (Join-Path $PSScriptRoot '../../windows/v60_viiper_app/Y700Switch2V60Viiper.csproj') -c Release -p:PureSoftwareRelease=true -p:CompatibilityRendering=true -p:EmbedUsbipInstaller=true -p:EmbedWirelessRelay=true ('-p:WirelessRelayBundlePath='+$bundle) -p:NuGetAudit=false -o $publish
 if($LASTEXITCODE -ne 0){throw 'Integrated assistant publish failed.'}
 $exe=Join-Path $publish 'PRO2ControllerAssistant.exe'
-@{version='3.4.1';exe=$exe;sha256=(Get-FileHash -LiteralPath $exe).Hash;wireless_bundle_sha256=(Get-FileHash -LiteralPath $bundle).Hash;purpose='LOCAL_PERSONAL_TEST_BUILD';radio_opened=$false;driver_changes=0}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'build.json') -Encoding utf8
+@{version='3.5.0';exe=$exe;sha256=(Get-FileHash -LiteralPath $exe).Hash;wireless_bundle_sha256=(Get-FileHash -LiteralPath $bundle).Hash;purpose='LOCAL_PERSONAL_TEST_BUILD';radio_opened=$false;driver_changes=0}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'build.json') -Encoding utf8
 Write-Output ('INTEGRATED_EXE='+$exe)

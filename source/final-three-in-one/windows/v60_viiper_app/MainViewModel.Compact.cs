@@ -31,16 +31,18 @@ public sealed partial class MainViewModel
                 "Pro1" => ViiperVirtualMode.Pro1,
                 _ => ViiperVirtualMode.Pro2
             };
+            if (IsBluetoothOutput && mode == ViiperVirtualMode.Pro2) return;
             if (Running)
                 await RunExclusiveAsync("切换兼容模式", token => SwitchModeAsync(ProfileFor(mode), token));
             else SelectMode(mode);
             RefreshCompactPresentation();
+            RefreshWirelessPresentation();
         });
 
     public ICommand CancelConnectionCommand => cancelCommand ??=
         new RelayCommand(_ => currentOperationCts?.Cancel());
     public ICommand CompactStopCommand => compactStopCommand ??=
-        new RelayCommand(_ => RunExclusiveAsync("停止输出与自动重连", _ => StopAsync()));
+        new RelayCommand(_ => RunExclusiveAsync("停止输出与自动重连", _ => StopAsync(), allowWirelessOperation: true));
     public bool CompactCanStop => !Busy &&
         (Running || AutoReconnectEnabled || pro2Slots.Any(slot => slot.AutoReconnectEnabled || slot.PhysicalInput != null));
 
@@ -56,6 +58,7 @@ public sealed partial class MainViewModel
     {
         get
         {
+            if (IsBluetoothOutput) return wirelessOutput?.UsbConnected==true?"实体输入；外发完成率见日志":"连接后测量真实输入";
             if (PrimaryPhysical is { } physical) return physical.IsRunning ? "原生 HID 输入 · 不补帧" : physical.Status;
             Pro2RateEvidence rate = inputSource.GetRateEvidence();
             if (!rate.Connected || !rate.Running) return "连接后持续测量真实输入";
@@ -96,7 +99,7 @@ public sealed partial class MainViewModel
     public string CompactRawRate => compactRawRate;
     public string CompactParsedRate => compactParsedRate;
     public string CompactInputAge => compactInputAge;
-    public string CompactFirmware => PrimaryPhysical != null ? "未读取" : Pro2DevicePresentation.Firmware(inputSource.FirmwareInfo, inputSource.IsTransportConnected);
+    public string CompactFirmware => IsBluetoothOutput ? WirelessFirmware : PrimaryPhysical != null ? "未读取" : Pro2DevicePresentation.Firmware(inputSource.FirmwareInfo, inputSource.IsTransportConnected);
     public string CompactFirmwareHint => PrimaryPhysical != null ? "当前输入：" + PrimaryPhysical.Device.Kind : inputSource.FirmwareInfo is { } info
         ? "蓝牙补丁 " + info.BluetoothPatchVersion + " · DSP " + (info.DspVersion ?? "未报告")
         : "连接时读取手柄的实际固件版本";
@@ -104,6 +107,7 @@ public sealed partial class MainViewModel
     {
         get
         {
+            if (IsBluetoothOutput) return WirelessHeadset;
             if (PrimaryPhysical is { } physical) return physical.Device.IsPro1 ? "无耳机孔" : physical.TryGetLatest(out var physicalState, out var physicalAge) && physicalAge.TotalSeconds < 2 && physicalState.HeadsetPresenceKnown ? physicalState.HeadsetPresent ? "已插入" : "未插入" : "未知";
             bool fresh = inputSource.TryGetLatest(out var state, out var age) && age.TotalMilliseconds < 2000;
             return Pro2DevicePresentation.Headset(state, fresh, inputSource.IsTransportConnected);
@@ -176,6 +180,8 @@ public sealed partial class MainViewModel
 
     public void RefreshCompactTelemetry()
     {
+        RefreshWirelessPresentation();
+        if (IsBluetoothOutput) { RefreshWirelessTelemetry(); FlushCompactLog(); return; }
         if (PrimaryPhysical is { } physical) { RefreshPhysicalCompactTelemetry(physical); return; }
         var counters = inputSource.GetCompactCounters();
         long now = Stopwatch.GetTimestamp();

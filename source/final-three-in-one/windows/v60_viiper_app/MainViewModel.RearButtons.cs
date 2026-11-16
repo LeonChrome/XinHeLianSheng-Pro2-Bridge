@@ -61,6 +61,7 @@ public sealed partial class MainViewModel
         ApplyRearButtonsCommand = new RelayCommand(_ => ApplyRearButtonSettings(), _ => !Busy);
         CancelRearButtonsCommand = new RelayCommand(_ =>
         {
+            CancelWirelessRearButtons();
             session?.CancelRearButtons();
             foreach (var slot in pro2Slots) slot.Session?.CancelRearButtons();
             RearSettingsStatus = "已请求停止背键与 C 键；松开后重新按下可再次使用。";

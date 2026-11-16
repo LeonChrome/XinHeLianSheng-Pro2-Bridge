@@ -1,0 +1,19 @@
+Wireless profile protocol references (2026-11-16)
+
+Functional Bluetooth HID descriptor byte data is transcribed from device captures:
+https://github.com/DJm00n/ControllersInfo/blob/master/dualsense/dualsense_bluetooth_hid_report_descriptor.txt
+https://github.com/DJm00n/ControllersInfo/blob/master/xboxone/xboxone_model_1708_bluetooth_hid_report_descriptor.txt
+
+Protocol field layout cross-checks (reference only; no implementation code copied):
+Sony-maintained Linux HID PlayStation driver:
+https://github.com/torvalds/linux/blob/master/drivers/hid/hid-playstation.c
+SDL Xbox Bluetooth report layout:
+https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_xboxone.c
+Xbox One S Classic HID report field observations:
+https://github.com/felis/USB_Host_Shield_2.0/blob/master/XBOXONESParser.cpp
+
+Packet construction, CRC, feedback handling and integration in this project are
+independently implemented against protocol facts. No Xbox console GIP security,
+PS5 console authentication, or cryptographic authentication emulation included.
+Product names identify compatible protocol formats and do not imply endorsement.
+The existing BTstack license continues to apply to its radio backend unchanged.

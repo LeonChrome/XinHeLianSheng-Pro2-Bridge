@@ -69,6 +69,12 @@ internal static class WirelessControllerRegressionTests
         check(!xbox.TryFeedback(feedback.AsSpan(0,8),out _,out _,out _),"Xbox truncated report rejected");
         bool refused=false;try{WirelessPadModes.FromVirtual(ViiperVirtualMode.Pro2);}catch(NotSupportedException){refused=true;}
         check(refused,"Native Pro2 is never silently aliased to wireless Pro1");
+        var pro1=new WirelessPro1Protocol(new byte[6]);byte[] led=new byte[12];led[0]=1;led[10]=0x30;led[11]=1;
+        check(pro1.HandleOutput(led,neutral,0,1000).PlayerLights==1,"Pro1 accepted player-light request reaches physical bridge");
+        check(pro1.HandleOutput(led.AsSpan(0,11),neutral,0,1000).PlayerLights==null,"Pro1 malformed LED request cannot touch physical lights");
+        byte[] mode=new byte[12];mode[0]=1;mode[10]=3;mode[11]=0x30;pro1.HandleOutput(mode,neutral,1,1000);
+        byte[] release=pro1.BuildSafetyRelease(2,1000);
+        check(release.Length==49&&release[0]==0x30&&release.AsSpan(3,3).ToArray().All(b=>b==0),"Pro1 pause safety release carries no pressed buttons");
     }
     public static void WriteFixtures(string directory)
     {

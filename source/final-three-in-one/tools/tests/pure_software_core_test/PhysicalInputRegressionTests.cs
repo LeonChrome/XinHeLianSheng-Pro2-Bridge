@@ -75,6 +75,7 @@ internal static class PhysicalInputRegressionTests
             check(Pro1NfcProtocol.TryGetMcu(response,out byte type,out var data)&&Pro1NfcProtocol.TryGetTag(type,data,out var uid)&&uid.Length==7,"NFC handles native and padded transport lengths "+length);
         }
         await SourceLifecycleAsync(check);
+        await PlayerLightsAsync(check);
         await MixedSlotsAsync(check);
         await NfcAsync(check,false);
         await NfcAsync(check,true);
@@ -391,10 +392,31 @@ internal static class PhysicalInputRegressionTests
         }
         public ValueTask DisposeAsync(){incoming.Writer.TryComplete();return ValueTask.CompletedTask;}
     }
+    private static async Task PlayerLightsAsync(Action<bool,string> check)
+    {
+        var io=new FakeHid(NintendoInputKind.Pro2Usb);var commands=new FakeUsb(io);
+        await using var source=new NintendoPhysicalInputSource(Device(NintendoInputKind.Pro2Usb,"player-lights"));
+        using var deadline=new CancellationTokenSource(5000);await source.ConnectAsync(deadline.Token,io,commands);
+        check(await source.SetPlayerLightsAsync(1,deadline.Token),"Pro2 USB player light ACK accepted");
+        check(commands.Writes.Any(w=>w.Command==9&&w.Sub==7&&w.Data.SequenceEqual(new byte[]{1,0,0,0,0,0,0,0})),"Pro2 USB steady-player LED uses dedicated 09/07 command");
+        check(source.IsRunning,"player light does not close or reconfigure physical input");
+        string testLog=Path.Combine(Path.GetTempPath(),"PRO2-relay-continuity-"+Guid.NewGuid().ToString("N"));
+        await using var engine=new Pro2WirelessExperiment.ExperimentSession(testLog,integrated:true);
+        var engineType=engine.GetType();
+        engineType.GetField("source",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(engine,source);
+        var engineLife=(CancellationTokenSource)engineType.GetField("lifetime",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(engine)!;
+        var producer=(Task)engineType.GetMethod("ProduceAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(engine,[engineLife.Token])!;
+        engineType.GetField("producerTask",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(engine,producer);
+        await Task.Delay(750);
+        check(engine.State.Contains("停顿")&&!producer.IsCompleted,"750ms input pause preserves relay consumer instead of terminating it");
+        io.Feed(Input(NintendoInputKind.Pro2Usb));await Task.Delay(50);
+        check(!engine.State.Contains("停顿")&&!producer.IsCompleted,"same relay consumer resumes after new physical input");
+    }
     private sealed class FakeUsb(FakeHid io):INintendoUsbCommandChannel
     {
+        public List<(byte Command,byte Sub,byte[] Data)> Writes {get;}=[];
         public byte[] Send(byte command,byte sub,byte[] data)
-        {if(command==1)throw new IOException("This firmware has no ACK for optional NFC initialization");if(command==3&&sub==13)for(int i=0;i<3;i++)io.Feed(Input(NintendoInputKind.Pro2Usb));return [command,1,0,sub,0,0xf8,0,0];}
+        {Writes.Add((command,sub,(byte[])data.Clone()));if(command==1)throw new IOException("This firmware has no ACK for optional NFC initialization");if(command==3&&sub==13)for(int i=0;i<3;i++)io.Feed(Input(NintendoInputKind.Pro2Usb));return [command,1,0,sub,0,0xf8,0,0];}
         public void Dispose(){}
     }
 }

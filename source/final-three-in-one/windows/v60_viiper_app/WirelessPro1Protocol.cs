@@ -5,7 +5,8 @@ using System.Linq;
 
 namespace Y700Switch2V60Viiper;
 
-public sealed record WirelessPro1Output(byte[]? Reply,byte[]? Rumble,bool CaptureRequested,string Operation);
+public sealed record WirelessPro1Output(byte[]? Reply,byte[]? Rumble,bool CaptureRequested,string Operation)
+{ public byte? PlayerLights {get;init;} }
 
 // Nintendo Classic HID wire format. All offsets are report-ID-relative (there
 // is no A1 HID transaction header here). State/ACKs stay out of input counters.
@@ -71,6 +72,13 @@ public sealed class WirelessPro1Protocol
         if(mode==0x31)mcu.CopyTo(report,49);
         return report;
     }
+    public byte[] BuildSafetyRelease(long ticks,long frequency)
+    {
+        var neutral=GamepadState.Neutral();if(InputMode==0x3f)return Simple(neutral);
+        byte mode=InputMode==0x31?(byte)0x31:(byte)0x30;
+        byte[] report=Standard(neutral,mode==0x31?362:49,mode,ticks,frequency);
+        if(mode==0x31)mcu.CopyTo(report,49);return report;
+    }
     public WirelessPro1Output HandleOutput(ReadOnlySpan<byte> report,GamepadState state,long ticks,long frequency)
     {
         HostCommands++;
@@ -126,7 +134,7 @@ public sealed class WirelessPro1Protocol
         }
         if(!valid){RejectedCommands++;reply[13]=0;}
         log("[WIRELESS_PRO1_SUBCOMMAND] sub="+command.ToString("X2")+" ack="+reply[13].ToString("X2")+" input_mode="+InputMode.ToString("X2")+" accepted="+valid);
-        return new(reply,rumble,false,"subcommand_"+command.ToString("X2"));
+        return new(reply,rumble,false,"subcommand_"+command.ToString("X2")){PlayerLights=valid&&command==0x30?PlayerLights:null};
     }
     private WirelessPro1Output Reject(string reason)
     {

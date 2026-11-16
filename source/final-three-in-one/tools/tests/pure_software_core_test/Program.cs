@@ -253,9 +253,9 @@ internal static class Program
     private static void TestReleasePackaging()
     {
         var assembly = typeof(MainWindow).Assembly;
-        Check(assembly.GetName().Version?.ToString() == "3.5.0.0", "v3.5.0 release assembly version");
+        Check(assembly.GetName().Version?.ToString() == "3.5.1.0", "v3.5.1 release assembly version");
         Check(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.StartsWith(
-            "3.5.0-unified-bluetooth",StringComparison.Ordinal)==true, "v3.5.0 release metadata");
+            "3.5.1-wireless-stability",StringComparison.Ordinal)==true, "v3.5.1 release metadata");
         Check(Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,48,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(64,64,64) &&
             !Ps5NativeHidDiagnostics.MatchesNativeReportSizes(78,48,64),

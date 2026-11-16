@@ -32,6 +32,9 @@ public sealed class ExperimentSession:IAsyncDisposable
     private WirelessPadMode outputMode;
     private WirelessControllerProtocol? alternateProtocol;
     private long feedbackGeneration;
+    private volatile bool inputPaused;
+    private Task? lightsTask;
+    private byte? appliedLights;
     private CancellationTokenSource? feedbackCancellation;
     private Semaphore? inputLease;
     private WirelessPro1Protocol? protocol;
@@ -63,7 +66,7 @@ public sealed class ExperimentSession:IAsyncDisposable
     public int RadioExitCode {get;private set;}=-1;
     public bool CanReadNfc=>(PhysicalSource?.CanReadUsbNfc==true||source is Pro2BleInputSource{IsRunning:true})&&captureTask is not{IsCompleted:false};
     public bool HasTag=>snapshot!=null;
-    public double InputHz=>(source as IGamepadInputRateSource)?.CurrentParsedRateHz??0;
+    public double InputHz=>inputPaused?0:(source as IGamepadInputRateSource)?.CurrentParsedRateHz??0;
     public GamepadState? LatestState {get{if(source!=null&&source.TryGetLatest(out var state,out var age)&&age.TotalMilliseconds<500)return state;return null;}}
     public string Firmware=>source is Pro2BleInputSource ble?Pro2DevicePresentation.Firmware(ble.FirmwareInfo,ble.IsTransportConnected):"未读取";
     private double rumbleGain=1;
@@ -73,7 +76,7 @@ public sealed class ExperimentSession:IAsyncDisposable
         set{Volatile.Write(ref rumbleGain,double.IsFinite(value)?Math.Clamp(value,0,3):1);PhysicalSource?.SetRumbleGain(rumbleGain);if(source is Pro2BleInputSource ble)ble.SetRumbleGain(rumbleGain);}
     }
     public string Summary=>SourceMetrics;
-    public string State=>radioEnded?radioEndReason:receiverConnected?WirelessPadModes.Label(outputMode)+" 已连接 · 接收端频率待验证":relayStarted?protocol==null&&alternateProtocol==null?"发射器正在初始化，请稍候…":"等待接收设备配对 "+(outputMode==WirelessPadMode.Pro1?"Pro Controller":outputMode==WirelessPadMode.Xbox?"Xbox Wireless Controller":"Wireless Controller"):UsbConnected?"实体输入已连接 · 无线发射尚未启动":"未连接";
+    public string State=>radioEnded?radioEndReason:inputPaused?"实体输入暂时停顿 · 已松开按键，等待恢复":receiverConnected?WirelessPadModes.Label(outputMode)+" 已连接 · 接收端频率待验证":relayStarted?protocol==null&&alternateProtocol==null?"发射器正在初始化，请稍候…":"等待接收设备配对 "+(outputMode==WirelessPadMode.Pro1?"Pro Controller":outputMode==WirelessPadMode.Xbox?"Xbox Wireless Controller":"Wireless Controller"):UsbConnected?"实体输入已连接 · 无线发射尚未启动":"未连接";
     public ExperimentSession(string directory,Action<string>? display=null,string? runtimeDirectory=null,bool integrated=false)
     {
         this.runtimeDirectory=Path.GetFullPath(runtimeDirectory??AppContext.BaseDirectory);this.integrated=integrated;
@@ -250,6 +253,8 @@ public sealed class ExperimentSession:IAsyncDisposable
                 bool radioStopped=radio?.HasExited==true;
                 if(((IGamepadFreshSequentialInputSource)source!).TryGetNextFresh(out var state,out var age))
                 {
+                    if(age.TotalMilliseconds>100)continue;
+                    if(inputPaused){inputPaused=false;Log("[RELAY_INPUT_RESUMED] same_receiver_link=true synthetic_input_count=0");}
                     if(TransformInput!=null)state=TransformInput(state,state.SourceTimestampTicks);
                     byte[]? report=null;long selectedTicks=state.SourceTimestampTicks;
                     lock(protocolGate)
@@ -270,8 +275,19 @@ public sealed class ExperimentSession:IAsyncDisposable
                 }
                 else
                 {
-                    if(!source.IsRunning||!source.TryGetLatest(out _,out var lastAge)||lastAge.TotalMilliseconds>500)
-                    {Log("[RELAY_INPUT_STOPPED] status="+source.Status+" stale_guard_ms=500");await RequestRadioStopAsync();break;}
+                    if(!source.IsRunning)
+                    {Log("[RELAY_INPUT_STOPPED] status="+source.Status+" reason=physical_source_closed");await RequestRadioStopAsync();break;}
+                    if((!source.TryGetLatest(out _,out var lastAge)||lastAge.TotalMilliseconds>500)&&!inputPaused)
+                    {
+                        inputPaused=true;Log("[RELAY_INPUT_PAUSED] release_controls=true keep_bluetooth=true input_count_increment=0");
+                        byte[]? release;long stamp=Stopwatch.GetTimestamp();
+                        lock(protocolGate)release=protocol?.BuildSafetyRelease(stamp,Stopwatch.Frequency)??alternateProtocol?.BuildInput(GamepadState.Neutral(),stamp);
+                        if(receiverConnected&&release!=null)
+                        {
+                            await SendAsync(WirelessRelayMessage.ProtocolReply,release,stamp,token).ConfigureAwait(false);
+                            if(alternateProtocol?.AuxiliaryInput is {} guide)await SendAsync(WirelessRelayMessage.ProtocolReply,guide,stamp,token).ConfigureAwait(false);
+                        }
+                    }
                     await ((IGamepadSignaledInputSource)source).WaitForInputAsync(TimeSpan.FromMilliseconds(100),token).ConfigureAwait(false);
                 }
             }
@@ -306,6 +322,7 @@ public sealed class ExperimentSession:IAsyncDisposable
                         else if(outputMode!=WirelessPadMode.Pro1&&alternateProtocol==null)alternateProtocol=new(outputMode);
                     }
                     receiverConnected=frame.Payload[6]==1;
+                    if(receiverConnected)QueuePlayerLights(1);
                     if(!receiverConnected&&frame.Payload[6]>=2)
                     {
                         feedbackCancellation?.Cancel();Interlocked.Increment(ref feedbackGeneration);
@@ -336,6 +353,7 @@ public sealed class ExperimentSession:IAsyncDisposable
                 {Log("[HOST_COMMAND_REJECTED] physical_input_stale=true");continue;}
                 WirelessPro1Output output;
                 lock(protocolGate)output=protocol!.HandleOutput(frame.Payload,latest,Stopwatch.GetTimestamp(),Stopwatch.Frequency);
+                if(output.PlayerLights is {} mask)QueuePlayerLights(mask);
                 // MCU replies occupy the next real input report, matching the
                 // selected cadence. Extra zero-IMU 0x31 packets would corrupt
                 // sensor timing and inflate the apparent gamepad report rate.
@@ -361,6 +379,19 @@ public sealed class ExperimentSession:IAsyncDisposable
     {
         if(source is IGamepadOutputSink sink&&sink.TryWriteOutputPacket(packet,out string why))Interlocked.Increment(ref rumblePackets);
         else{Interlocked.Increment(ref rumbleFailures);Log("[WIRELESS_RUMBLE_REJECTED] physical_writer_unavailable_or_rejected=true");}
+    }
+    private void QueuePlayerLights(byte mask)
+    {
+        if(PhysicalSource==null||appliedLights==mask||lightsTask is{IsCompleted:false})return;
+        lightsTask=ApplyLightsAsync(mask);
+    }
+    private async Task ApplyLightsAsync(byte mask)
+    {
+        try
+        {
+            if(PhysicalSource is {} physical&&await physical.SetPlayerLightsAsync(mask,lifetime.Token).ConfigureAwait(false)){appliedLights=mask;Log("[RELAY_PLAYER_LIGHTS] mask="+mask+" physical_ack=true");}
+        }
+        catch(Exception error){Log("[RELAY_PLAYER_LIGHTS_FAILED] "+error.GetType().Name+" input_connection_preserved=true");}
     }
     private async Task PlayFeedbackAsync(Pro2OutputPacket packet,int duration,int delay,int cycles,long generation,CancellationToken token)
     {
@@ -429,6 +460,7 @@ public sealed class ExperimentSession:IAsyncDisposable
             }
             foreach(var task in new[]{receiveTask,producerTask,heartbeatTask,stdoutTask,stderrTask})if(task!=null)try{await task.ConfigureAwait(false);}catch(Exception e){Log("[WORKER_STOP] "+e.GetType().Name);}
             if(captureTask!=null)try{await captureTask.ConfigureAwait(false);}catch(Exception e){Log("[NFC_STOP] "+e.GetType().Name);}
+            if(lightsTask!=null)await lightsTask.ConfigureAwait(false);
             object? physical=PhysicalSource?.Snapshot();if(source is Pro2BleInputSource ble)physical=ble.GetRateEvidence();if(source!=null)await source.DisposeAsync().ConfigureAwait(false);
             await RestoreRadioAsync();
             object result=new{version="0.3",assistantVersion=SystemBluetoothDiagnostics.CurrentAppVersion,integrated,windows=Environment.OSVersion.Version.ToString(),physical,selectedInputs,usbBaselineConsumed,rumblePackets,rumbleFailures,invalidIpc,ipcPortUnreachable,backendIpcReady=backendReady.Task.IsCompletedSuccessfully,

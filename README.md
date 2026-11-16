@@ -2,11 +2,11 @@
 
 让 Nintendo Switch 2 Pro（Pro2）手柄在 Windows 上用于 Steam 和其他游戏，也能转换成 Pro1、Xbox 或 PS5 兼容手柄。
 
-**[推荐下载：v3.5.0 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.5.0/PRO2ControllerAssistant-v3.5.0-win-x64.exe)** · [源码与构建依赖包](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.5.0/PRO2ControllerAssistant-v3.5.0-source.zip) · [更新说明](docs/RELEASE-v3.5.0.md)
+**[推荐下载：v3.5.1 Windows EXE](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.5.1/PRO2ControllerAssistant-v3.5.1-win-x64.exe)** · [源码与构建依赖包](https://github.com/LeonChrome/XinHeLianSheng-Pro2-Bridge/releases/download/pro2-v3.5.1/PRO2ControllerAssistant-v3.5.1-source.zip) · [更新说明](docs/RELEASE-v3.5.1.md)
 
 支持 Windows 10 2004 及以上 / Windows 11 x64。EXE 自带 .NET 和运行组件，无需另装 .NET。
 
-![首页预览](docs/images/pro2-v3.5.0-home-local.png)
+![首页预览](docs/images/pro2-v3.5.1-home-local.png)
 
 ## 主要功能
 

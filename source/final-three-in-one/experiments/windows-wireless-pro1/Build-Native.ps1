@@ -2,7 +2,7 @@
 param(
     [string]$BtstackRoot=(Join-Path $PSScriptRoot '../../../../third_party/btstack'),
     [string]$Compiler='clang',
-    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../../../../artifacts/pro2-v3.5.0/native')
+    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../../../../artifacts/pro2-v3.5.1/native')
 )
 $ErrorActionPreference='Stop'
 if(-not(Test-Path -LiteralPath $Compiler)){

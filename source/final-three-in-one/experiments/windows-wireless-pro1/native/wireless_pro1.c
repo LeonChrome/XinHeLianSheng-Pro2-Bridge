@@ -46,6 +46,9 @@ static uint8_t session[16],last_report[MAX_PAYLOAD];static int last_report_len;
 static uint64_t incoming_sequence,backend_sequence,source_received,source_superseded,source_stale,source_not_ready;
 static uint64_t malformed,protocol_replies,host_commands,submitted,completions,ledger_overflow;
 static uint64_t digital_transitions_queued,send_failures;
+static uint64_t digital_transitions_expired,digital_resyncs,protocol_expired,send_rearms;
+static double send_request_time,last_send_event,last_sniff_exit;
+static unsigned sniff_exit_attempts;static int link_in_sniff;
 static ack_t ledger[ACK_QUEUE];static unsigned ack_head,ack_tail,ack_count;
 static double submitted_times[SAMPLE_LIMIT],completed_times[SAMPLE_LIMIT];static unsigned submitted_count,completed_count;
 static int send_is_fresh,sending_len,seconds=180,wait_seconds=180,disconnect_reason=-1;
@@ -93,8 +96,21 @@ static int decode_ipc(const uint8_t*p,int size,uint64_t*sequence,int*kind,int*le
 }
 static void request_send(void){
     if(!stopping&&connected&&!send_requested&&(control_count||edge_count||have_latest)){
-        send_requested=1;hid_device_request_can_send_now_event(cid);
+        send_requested=1;send_request_time=now();hid_device_request_can_send_now_event(cid);
     }
+}
+static void prune_edges(int64_t stamp){
+    while(edge_count&&(stamp-edges[edge_head].ticks)/qpc_frequency>.1){edge_head=(edge_head+1)%EDGE_QUEUE;edge_count--;digital_transitions_expired++;}
+}
+static void preserve_transition(const frame_t*frame,int64_t stamp){
+    prune_edges(stamp);
+    if((stamp-frame->ticks)/qpc_frequency>.1){digital_transitions_expired++;return;}
+    if(edge_count==EDGE_QUEUE){
+        digital_transitions_expired+=edge_count;edge_head=edge_tail=edge_count=0;digital_resyncs++;
+        if(digital_resyncs<=5)printf("{\"event\":\"DIGITAL_BACKPRESSURE_RESYNC\",\"count\":%"PRIu64",\"action\":\"keep_latest_complete_state\",\"disconnect\":false}\n",digital_resyncs);
+        return;
+    }
+    edges[edge_tail]=*frame;edge_tail=(edge_tail+1)%EDGE_QUEUE;edge_count++;digital_transitions_queued++;
 }
 static void ipc_ready(btstack_data_source_t*ds,btstack_data_source_callback_type_t callback){
     (void)ds;(void)callback;WSANETWORKEVENTS events;WSAEnumNetworkEvents(sock,socket_event,&events);
@@ -107,6 +123,7 @@ static void ipc_ready(btstack_data_source_t*ds,btstack_data_source_callback_type
         if(kind==5&&len==0)continue;
         if(kind==6&&len==0){completed=1;stop_backend();continue;}
         if(kind!=1&&kind!=2){malformed++;continue;}
+        if(stopping)continue;
         if(!valid_input(p+HEADER,len)||(kind==1&&p[HEADER]==0x21)){malformed++;continue;}
         if(profile==1&&len==2&&p[HEADER]==4)xbox_battery=p[HEADER+1];
         if(kind==1){
@@ -116,14 +133,13 @@ static void ipc_ready(btstack_data_source_t*ds,btstack_data_source_callback_type
             if(!connected){source_not_ready++;continue;}
             if(have_latest){
                 if(!same_digital_state(&latest,p+HEADER,len)){
-                    if(edge_count==EDGE_QUEUE){failed=1;puts("{\"event\":\"DIGITAL_TRANSITION_OVERFLOW_ABORT\"}");stop_backend();continue;}
-                    edges[edge_tail]=latest;edge_tail=(edge_tail+1)%EDGE_QUEUE;edge_count++;digital_transitions_queued++;
+                    preserve_transition(&latest,ticks());
                 }else source_superseded++;
             }
             memcpy(latest.data,p+HEADER,len);latest.len=len;latest.sequence=sequence;latest.ticks=(int64_t)read64(p+32);have_latest=1;
         }else{
             if(!connected){malformed++;continue;}
-            if(control_count==CONTROL_QUEUE){failed=1;puts("{\"event\":\"PROTOCOL_REPLY_OVERFLOW_ABORT\"}");stop_backend();continue;}
+            if(control_count==CONTROL_QUEUE){control_head=(control_head+1)%CONTROL_QUEUE;control_count--;protocol_expired++;puts("{\"event\":\"CONTROL_BACKPRESSURE\",\"action\":\"discard_oldest_reply\",\"disconnect\":false}");}
             frame_t*f=&controls[control_tail];memcpy(f->data,p+HEADER,len);f->len=len;f->sequence=sequence;f->ticks=(int64_t)read64(p+32);
             control_tail=(control_tail+1)%CONTROL_QUEUE;control_count++;protocol_replies++;
         }
@@ -139,7 +155,7 @@ static void series(FILE*out,double*times,unsigned count){
 }
 static void write_result(void){
     FILE*out=fopen(result_path,"w");if(!out){failed=1;return;}
-    fprintf(out,"{\"profile\":\"%s\",\"transport\":\"bluetooth_classic_hid\",",profile_names[profile]);
+    fprintf(out,"{\"profile\":\"%s\",\"transport\":\"bluetooth_classic_hid\",\"digital_expired\":%"PRIu64",\"digital_resyncs\":%"PRIu64",\"control_expired\":%"PRIu64",\"send_rearms\":%"PRIu64",\"sniff_exit_attempts\":%u,",profile_names[profile],digital_transitions_expired,digital_resyncs,protocol_expired,send_rearms,sniff_exit_attempts);
     fprintf(out,"\"backend\":\"btstack_winusb_multimode\",\"completed\":%s,\"failed\":%s,\"ever_connected\":%s,\"disconnect_reason\":%d,\"connected_seconds\":%.3f,\"source_received\":%"PRIu64",\"source_superseded\":%"PRIu64",\"source_stale\":%"PRIu64",\"source_not_ready\":%"PRIu64",\"invalid_ipc\":%"PRIu64",\"host_output_commands\":%"PRIu64",\"protocol_replies\":%"PRIu64",\"fresh_submissions\":%"PRIu64",\"fresh_hci_completions\":%"PRIu64",\"ledger_overflow\":%"PRIu64",\"submitted\":",completed?"true":"false",failed?"true":"false",ever_connected?"true":"false",disconnect_reason,ready?(stop_time?stop_time:now())-ready:0,source_received,source_superseded,source_stale,source_not_ready,malformed,host_commands,protocol_replies,submitted,completions,ledger_overflow);
     series(out,submitted_times,submitted_count);fputs(",\"hci_completed\":",out);series(out,completed_times,completed_count);
     fprintf(out,",\"digital_transitions_queued\":%"PRIu64",\"l2cap_send_failures\":%"PRIu64",\"realtek_firmware_runtime_verified\":%s,\"receiver_rate_verified\":false,\"driver_changes\":0,\"registry_changes\":0,\"windows_pairing_imported\":false,\"keys_logged\":false,\"tag_writes\":0}\n",digital_transitions_queued,send_failures,firmware_verified?"true":"false");fclose(out);
@@ -244,7 +260,10 @@ static void events(uint8_t type,uint16_t channel,uint8_t*p,uint16_t size){
         case HCI_EVENT_PIN_CODE_REQUEST:{bd_addr_t who;hci_event_pin_code_request_get_bd_addr(p,who);if(!have_peer||!bd_addr_cmp(who,peer))gap_pin_code_response(who,"0000");break;}
         case HCI_EVENT_SIMPLE_PAIRING_COMPLETE:printf("{\"event\":\"PAIRING_COMPLETE\",\"status\":%u}\n",p[2]);break;
         case HCI_EVENT_ENCRYPTION_CHANGE:printf("{\"event\":\"ENCRYPTION\",\"status\":%u,\"enabled\":%u}\n",p[2],p[5]);break;
-        case HCI_EVENT_MODE_CHANGE:printf("{\"event\":\"LINK_MODE\",\"status\":%u,\"mode\":%u,\"interval_slots\":%u}\n",p[2],p[5],little_endian_read_16(p,6));break;
+        case HCI_EVENT_MODE_CHANGE:
+            if(size<8)break;
+            printf("{\"event\":\"LINK_MODE\",\"status\":%u,\"mode\":%u,\"interval_slots\":%u}\n",p[2],p[5],little_endian_read_16(p,6));
+            if(size>=8&&p[2]==0&&owns_acl(little_endian_read_16(p,3))){link_in_sniff=p[5]==2;send_requested=0;request_send();}break;
         case HCI_EVENT_DISCONNECTION_COMPLETE:
             printf("{\"event\":\"ACL_DISCONNECTED\",\"reason\":%u,\"cleanup\":%s}\n",p[5],stopping?"true":"false");
             if(!stopping&&ever_connected&&owns_acl(little_endian_read_16(p,3))){failed=1;emit_link(2,p[5]);stop_backend();}break;
@@ -265,7 +284,8 @@ static void events(uint8_t type,uint16_t channel,uint8_t*p,uint16_t size){
                     connected=0;cid=0;send_requested=0;puts("{\"event\":\"HID_CLOSED\"}");if(ever_connected&&!stopping){failed=1;emit_link(2,disconnect_reason);stop_backend();}break;
                 case HID_SUBEVENT_CAN_SEND_NOW:{
                     if(hid_subevent_can_send_now_get_hid_cid(p)!=cid)break;
-                    send_requested=0;if(!connected||stopping)break;
+                    send_requested=0;last_send_event=now();if(!connected||stopping)break;
+                    prune_edges(ticks());
                     frame_t frame;int fresh=0;
                     if(control_count){frame=controls[control_head];control_head=(control_head+1)%CONTROL_QUEUE;control_count--;}
                     else if(edge_count){frame=edges[edge_head];edge_head=(edge_head+1)%EDGE_QUEUE;edge_count--;fresh=1;}
@@ -273,7 +293,7 @@ static void events(uint8_t type,uint16_t channel,uint8_t*p,uint16_t size){
                     else break;
                     if((ticks()-frame.ticks)/qpc_frequency>.1){
                         if(fresh){source_stale++;request_send();break;}
-                        failed=1;puts("{\"event\":\"PROTOCOL_REPLY_STALE_ABORT\"}");stop_backend();break;
+                        if((ticks()-frame.ticks)/qpc_frequency>2){protocol_expired++;puts("{\"event\":\"PROTOCOL_REPLY_EXPIRED\",\"disconnect\":false}");request_send();break;}
                     }
                     uint8_t message[MAX_PAYLOAD+1];message[0]=0xa1;memcpy(message+1,frame.data,frame.len);
                     memcpy(last_report,frame.data,frame.len);last_report_len=frame.len;
@@ -290,12 +310,20 @@ static void watchdog(btstack_timer_source_t*t){
     double stamp=now();
     if(stopping&&stamp-stop_time>5){puts("{\"event\":\"POWER_OFF_TIMEOUT\"}");failed=1;btstack_run_loop_trigger_exit();return;}
     if(!stopping){
+        if(connected&&(control_count||edge_count||have_latest)&&send_requested&&stamp-send_request_time>.25){
+            send_requested=0;send_rearms++;if(send_rearms<=5)puts("{\"event\":\"SEND_NOW_REARM\",\"pending_real_input\":true,\"disconnect\":false}");request_send();
+        }
+        if(connected&&link_in_sniff&&sniff_exit_attempts<3&&stamp-last_sniff_exit>=5){
+            last_sniff_exit=stamp;sniff_exit_attempts++;uint8_t status=gap_sniff_mode_exit(acl);
+            printf("{\"event\":\"ACTIVE_LINK_REQUEST\",\"attempt\":%u,\"status\":%u,\"reason\":\"receiver_entered_sniff\"}\n",sniff_exit_attempts,status);
+        }
         if(version_readback==1&&hci_can_send_command_packet_now()){version_readback=2;hci_send_cmd(&hci_read_local_version_information);}
         if(!stack_working&&stamp-boot>30){failed=1;puts("{\"event\":\"RADIO_INIT_TIMEOUT\"}");emit_link(3,2);stop_backend();}
         else if(stamp-last_heartbeat>5){failed=1;puts("{\"event\":\"MANAGED_HEARTBEAT_TIMEOUT\"}");stop_backend();}
         else if(!ever_connected&&stamp-boot>wait_seconds){failed=1;puts("{\"event\":\"PAIRING_WINDOW_TIMEOUT\"}");stop_backend();}
         else if(seconds>0&&connected&&stamp-ready>=seconds){completed=1;stop_backend();}
-        if(stamp-last_progress>=5){last_progress=stamp;printf("{\"event\":\"WIRELESS_WINDOW\",\"connected\":%s,\"source\":%"PRIu64",\"submitted\":%"PRIu64",\"hci_completed\":%"PRIu64",\"superseded\":%"PRIu64",\"stale\":%"PRIu64",\"host_commands\":%"PRIu64"}\n",connected?"true":"false",source_received,submitted,completions,source_superseded,source_stale,host_commands);}
+        if(stamp-last_progress>=5){last_progress=stamp;printf("{\"event\":\"WIRELESS_WINDOW\",\"connected\":%s,\"source\":%"PRIu64",\"submitted\":%"PRIu64",\"hci_completed\":%"PRIu64",\"superseded\":%"PRIu64",\"stale\":%"PRIu64",\"host_commands\":%"PRIu64"}\n",connected?"true":"false",source_received,submitted,completions,source_superseded,source_stale,host_commands);
+            printf("{\"event\":\"TX_HEALTH\",\"edge_queue\":%u,\"control_queue\":%u,\"digital_expired\":%"PRIu64",\"digital_resyncs\":%"PRIu64",\"send_rearms\":%"PRIu64",\"last_send_event_age_ms\":%.1f,\"sniff\":%s}\n",edge_count,control_count,digital_transitions_expired,digital_resyncs,send_rearms,last_send_event?1000*(stamp-last_send_event):0,link_in_sniff?"true":"false");}
     }
     btstack_run_loop_set_timer(t,50);btstack_run_loop_add_timer(t);
 }
@@ -327,6 +355,13 @@ static int self_test(void){
     sample.len=78;memcpy(sample.data,ps,78);VERIFY(same_digital_state(&sample,ps,78));ps[17]=1;VERIFY(same_digital_state(&sample,ps,78));ps[9]=1;VERIFY(!same_digital_state(&sample,ps,78));
     profile=1;uint8_t xb[17]={1};uint8_t guide[2]={2};VERIFY(valid_input(xb,17));VERIFY(valid_input(guide,2));VERIFY(!valid_input(ps,78));
     sample.len=17;memcpy(sample.data,xb,17);VERIFY(same_digital_state(&sample,xb,17));xb[14]=1;VERIFY(!same_digital_state(&sample,xb,17));profile=0;
+    qpc_frequency=1000;edge_head=edge_tail=edge_count=0;frame_t pressure={0};pressure.len=49;pressure.data[0]=0x30;
+    for(int i=0;i<1000;i++){pressure.ticks=i*8;preserve_transition(&pressure,i*8);}
+    VERIFY(!failed&&!stopping);VERIFY(edge_count<EDGE_QUEUE);VERIFY(digital_transitions_expired>0);
+    edge_head=edge_tail=edge_count=0;
+    for(int i=0;i<40;i++){pressure.ticks=i;preserve_transition(&pressure,i);}
+    VERIFY(!failed&&!stopping);VERIFY(digital_resyncs>0);VERIFY(edge_count<EDGE_QUEUE);
+    prune_edges(1000);VERIFY(edge_count==0);
 #undef VERIFY
     printf("{\"event\":\"NATIVE_SELF_TEST\",\"cases\":%d,\"failures\":%d,\"radio_opened\":false}\n",cases,failures);return failures?1:0;
 }

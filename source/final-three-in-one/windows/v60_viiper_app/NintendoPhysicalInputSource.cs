@@ -104,6 +104,23 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     public void CancelStickCalibration() { lock(gate) parser.CancelStickCalibration(); }
     public Pro2StickCalibrationResult CompleteStickCalibration(bool range) { lock(gate) return parser.CompleteStickCalibration(range); }
     public void SetRumbleGain(double gain) => Volatile.Write(ref rumbleGain, double.IsFinite(gain) ? Math.Clamp(gain,0,3) : 1);
+    public async Task<bool> SetPlayerLightsAsync(byte mask,CancellationToken token)
+    {
+        if(!running||!initialized||!await nfcGate.WaitAsync(0,token).ConfigureAwait(false))return false;
+        try
+        {
+            await physicalOutputGate.WaitAsync(token).ConfigureAwait(false);
+            try
+            {
+                if(device.IsPro1)await SubcommandAsync(0x30,[mask],token).ConfigureAwait(false);
+                else if(usbCommands!=null)await Task.Run(()=>usbCommands.Send(9,7,[mask,0,0,0,0,0,0,0]),CancellationToken.None).ConfigureAwait(false);
+                else return false;
+                log("[PHYSICAL_PLAYER_LIGHTS] mask=0x"+mask.ToString("X2")+" ack=matched input_mode_changes=0");return true;
+            }
+            finally{physicalOutputGate.Release();}
+        }
+        finally{nfcGate.Release();}
+    }
     public async Task ConnectAsync(CancellationToken token, INintendoHidTransport? suppliedTransport = null,
         INintendoUsbCommandChannel? suppliedCommands = null)
     {

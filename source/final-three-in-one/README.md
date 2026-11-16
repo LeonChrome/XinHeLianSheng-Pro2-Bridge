@@ -1,12 +1,12 @@
-# PRO2 手柄助手 v3.5.0 · 源码与构建
+# PRO2 手柄助手 v3.5.1 · 源码与构建
 
 主程序：`windows/v60_viiper_app`。原生外发后端：`experiments/windows-wireless-pro1/native`。虚拟设备后端及其修改源码：`tools/viiper/haptic-src`。离线检查：`tools/tests/pure_software_core_test`。均沿用现有项目结构。
 
 ## 获取源码
 
-GitHub `pro2-v3.5.0` 标签提供完整仓库快照；Release 的 `PRO2ControllerAssistant-v3.5.0-source.zip` 提供当前 Windows 程序、四模式后端、原生转发代码、测试、界面资源、构建依赖及许可。后者还包含固定版本的 BTstack 编译输入和 Realtek 运行固件，避免依赖作者电脑目录。
+GitHub `pro2-v3.5.1` 标签提供完整仓库快照；Release 的 `PRO2ControllerAssistant-v3.5.1-source.zip` 提供当前 Windows 程序、四模式后端、原生转发代码、测试、界面资源、构建依赖及许可。后者还包含固定版本的 BTstack 编译输入和 Realtek 运行固件，避免依赖作者电脑目录。
 
-二进制 EXE 构建自 `a3b7188`；该版本发布标签随后整理文档、许可和构建入口，未改变已测试的运行逻辑。
+本发布标签包含对应运行源码、构建入口、许可及修复记录；二进制文件指纹见 Release 的 SHA256SUMS。
 
 ## 环境
 
@@ -45,12 +45,12 @@ USBIP 安装器和原许可保留在 `source/final-three-in-one/tools/usbip-win2
 
 ```powershell
 $relay='source/final-three-in-one/experiments/windows-wireless-pro1'
-$out=Join-Path (Get-Location) 'artifacts/pro2-v3.5.0'
+$out=Join-Path (Get-Location) 'artifacts/pro2-v3.5.1'
 & "$relay/Build-Native.ps1" -BuildDirectory "$out/native" -Compiler (Get-Command clang).Source
 & "$relay/Publish-Integrated.ps1" -ArtifactDirectory $out -SkipNativeBuild -Dotnet (Get-Command dotnet).Source
 ```
 
-输出：`artifacts/pro2-v3.5.0/publish/PRO2ControllerAssistant.exe`。脚本嵌入 VIIPER、USBIP 安装器、无线后端、匹配固件、恢复脚本和许可，并校验无线运行包文件哈希。不会运行实机蓝牙测试或自动修改驱动。
+输出：`artifacts/pro2-v3.5.1/publish/PRO2ControllerAssistant.exe`。脚本嵌入 VIIPER、USBIP 安装器、无线后端、匹配固件、恢复脚本和许可，并校验无线运行包文件哈希。不会运行实机蓝牙测试或自动修改驱动。
 
 单独构建本机模式可使用：
 
@@ -62,7 +62,7 @@ dotnet publish source/final-three-in-one/windows/v60_viiper_app/Y700Switch2V60Vi
 
 ```powershell
 $tests='source/final-three-in-one/tools/tests/pure_software_core_test/PureSoftwareCoreTest.csproj'
-$bundle=Join-Path (Get-Location) 'artifacts/pro2-v3.5.0/wireless-runtime.zip'
+$bundle=Join-Path (Get-Location) 'artifacts/pro2-v3.5.1/wireless-runtime.zip'
 dotnet build $tests -c Release -p:PureSoftwareRelease=true -p:CompatibilityRendering=true -p:EmbedWirelessRelay=true "-p:WirelessRelayBundlePath=$bundle" -o artifacts/qa-bin
 ./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/qa-wireless --wireless-only
 ./artifacts/qa-bin/PureSoftwareCoreTest.exe artifacts/qa-relay --relay-integration-only
@@ -78,4 +78,4 @@ dotnet build $tests -c Release -p:PureSoftwareRelease=true -p:CompatibilityRende
 
 BTstack 具有个人、非商业用途限制；完整构建据此按免费个人非商业用途分发。自有源码及所有依赖的具体许可见根目录 [NOTICE](../../NOTICE.md)。
 
-[使用说明](../../README.md) · [v3.5.0 更新](../../docs/RELEASE-v3.5.0.md) · [转发细节](experiments/windows-wireless-pro1/INTEGRATED.md)
+[使用说明](../../README.md) · [v3.5.1 更新](../../docs/RELEASE-v3.5.1.md) · [转发细节](experiments/windows-wireless-pro1/INTEGRATED.md)

@@ -19,7 +19,7 @@ internal sealed class ExperimentWindow:Window
     private readonly TextBlock metrics=new(){Text="未连接",TextWrapping=TextWrapping.Wrap,FontSize=13};
     private readonly TextBlock radioHint=new(){TextWrapping=TextWrapping.Wrap,Margin=new(0,7,0,0),Foreground=Brushes.DarkGoldenrod};
     private readonly TextBox log=new(){IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.NoWrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Auto,FontFamily=new("Consolas"),FontSize=11,Background=new SolidColorBrush(Color.FromRgb(247,249,248))};
-    private readonly Button refresh=new(){Content="刷新设备"},connect=new(){Content="连接 USB"},start=new(){Content="开始无线 Pro1"},capture=new(){Content="读取 amiibo"},load=new(){Content="载入 .bin"},stop=new(){Content="停止"};
+    private readonly Button refresh=new(){Content="刷新设备"},connect=new(){Content="连接 USB"},start=new(){Content="准备并开始无线"},restore=new(){Content="恢复系统蓝牙"},capture=new(){Content="读取 amiibo"},load=new(){Content="载入 .bin"},stop=new(){Content="停止"};
     private readonly CancellationTokenSource lifetime=new();
     private readonly DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(1)};
     private readonly DispatcherTimer logTimer=new(){Interval=TimeSpan.FromMilliseconds(200)};
@@ -28,18 +28,18 @@ internal sealed class ExperimentWindow:Window
     private bool busy,closing,closed;
     public ExperimentWindow()
     {
-        Title="PRO2 / PRO1 · USB 无线转发实验 0.2";Width=1030;Height=770;MinWidth=850;MinHeight=620;Background=Brushes.White;
+        Title="PRO2 / PRO1 · USB 无线转发实验 0.3";Width=1080;Height=790;MinWidth=850;MinHeight=650;Background=Brushes.White;
         var root=new Grid{Margin=new Thickness(24)};
         foreach(var height in new[]{GridLength.Auto,GridLength.Auto,GridLength.Auto,GridLength.Auto,GridLength.Auto,GridLength.Auto,new GridLength(1,GridUnitType.Star)})root.RowDefinitions.Add(new(){Height=height});
         void Row(UIElement item,int row){Grid.SetRow(item,row);root.Children.Add(item);}
         Row(new TextBlock{Text="USB → 无线 Pro1",FontSize=27,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(24,65,52)),Margin=new(0,0,0,10)},0);
-        Row(new TextBlock{Text="复用现有助手输入与震动。接收端搜索 Pro Controller；NFC 使用只读标签快照。\n仅接管已绑定 WinUSB 的实验蓝牙适配器，本工具不会更换驱动。完整 Pro1 / amiibo 兼容性待实机验收。",TextWrapping=TextWrapping.Wrap,Foreground=Brushes.DimGray,Margin=new(0,0,0,18)},1);
+        Row(new TextBlock{Text="选择 USB 手柄和蓝牙发射器，开始后在接收设备搜索 Pro Controller。\n系统蓝牙会先备份，再临时切为发射模式；停止或退出后恢复。NFC 使用只读标签快照。",TextWrapping=TextWrapping.Wrap,Foreground=Brushes.DimGray,Margin=new(0,0,0,18)},1);
         var selections=new Grid{Margin=new(0,0,0,14)};selections.ColumnDefinitions.Add(new(){Width=GridLength.Auto});selections.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
         selections.RowDefinitions.Add(new(){Height=GridLength.Auto});selections.RowDefinitions.Add(new(){Height=GridLength.Auto});selections.RowDefinitions.Add(new(){Height=GridLength.Auto});
         void Selector(string label,ComboBox box,int row){var text=new TextBlock{Text=label,VerticalAlignment=VerticalAlignment.Center,Margin=new(0,5,16,5)};Grid.SetRow(text,row);selections.Children.Add(text);box.Margin=new(0,4,0,4);Grid.SetColumn(box,1);Grid.SetRow(box,row);selections.Children.Add(box);}
         Selector("实体 USB 输入",devices,0);Selector("蓝牙发射器",radios,1);Selector("无线报告节奏",cadence,2);Row(selections,2);
         var actions=new WrapPanel{Margin=new(0,0,0,14)};
-        foreach(var button in new[]{refresh,connect,start,capture,load,stop}){button.Margin=new(0,0,9,8);button.Padding=new(13,8,13,8);actions.Children.Add(button);}
+        foreach(var button in new[]{refresh,connect,start,capture,load,stop,restore}){button.Margin=new(0,0,9,8);button.Padding=new(13,8,13,8);actions.Children.Add(button);}
         var remove=new Button{Content="移除标签快照",Padding=new(13,8,13,8),Margin=new(0,0,9,8)};remove.Click+=(_,_)=>session?.RemoveTag();actions.Children.Add(remove);
         var folder=new Button{Content="打开本轮日志",Padding=new(13,8,13,8),Margin=new(0,0,0,8)};actions.Children.Add(folder);Row(actions,3);
         status.FontSize=15;status.FontWeight=FontWeights.SemiBold;status.Margin=new(0,0,0,10);
@@ -51,6 +51,12 @@ internal sealed class ExperimentWindow:Window
         capture.Click+=async(_,_)=>await ActAsync(async()=>{await session!.CaptureNfcAsync(lifetime.Token);status.Text="读卡完成 · 540 字节已保存到本轮日志目录";});
         load.Click+=async(_,_)=>await ActAsync(async()=>{var picker=new OpenFileDialog{Filter="NTAG215 文件|*.bin|所有文件|*.*"};if(picker.ShowDialog(this)==true)await session!.LoadTagAsync(picker.FileName,lifetime.Token);});
         stop.Click+=async(_,_)=>await ActAsync(StopAsync);
+        restore.Click+=async(_,_)=>await ActAsync(async()=>
+        {
+            if(session!=null){await StopAsync();await ProbeAsync();return;}
+            if(radios.SelectedItem is not WirelessRelayRadio selected)throw new IOException("先选择要恢复的蓝牙设备。");
+            await RadioDriverLease.RestoreLatestAsync(selected.InstanceId,Append,lifetime.Token);await ProbeAsync();status.Text="系统蓝牙已恢复";
+        });
         folder.Click+=(_,_)=>
         {
             string path=session?.DirectoryPath??Root();Directory.CreateDirectory(path);
@@ -82,7 +88,10 @@ internal sealed class ExperimentWindow:Window
     private async Task ProbeAsync()
     {
         var found=await Task.Run(()=> (Devices:NintendoHidDevice.Enumerate().Where(d=>d.Kind!=NintendoInputKind.Pro1Bluetooth).ToArray(),Radios:WirelessRelayEnvironment.EnumerateRadios()));
-        devices.ItemsSource=found.Devices;devices.SelectedIndex=found.Devices.Length>0?0:-1;radios.ItemsSource=found.Radios;radios.SelectedIndex=found.Radios.Count>0?0:-1;
+        string? oldRadio=(radios.SelectedItem as WirelessRelayRadio)?.InstanceId;
+        if(session==null){devices.ItemsSource=found.Devices;devices.SelectedIndex=found.Devices.Length>0?0:-1;}
+        radios.ItemsSource=found.Radios;radios.SelectedItem=found.Radios.FirstOrDefault(r=>r.InstanceId.Equals(oldRadio,StringComparison.OrdinalIgnoreCase))??found.Radios.FirstOrDefault(r=>r.Ready);
+        if(radios.SelectedItem==null&&found.Radios.Count>0)radios.SelectedIndex=0;
         status.Text=found.Devices.Length==0?"未发现实体 USB 手柄 · 请使用数据线连接 Pro2 或 Pro1":found.Radios.Any(r=>r.Ready)?"设备已发现 · 可连接 USB 后开始转发":"可测试 USB 输入 / Pro2 读卡；发射器尚未处于 WinUSB 实验状态";
         Append("[ENVIRONMENT] windows="+Environment.OSVersion.Version+" usb="+found.Devices.Length+" radios="+found.Radios.Count+" winusb_ready="+found.Radios.Count(r=>r.Ready)+" radio_opened=false");
     }
@@ -99,20 +108,28 @@ internal sealed class ExperimentWindow:Window
         string radioPath=Path.Combine(AppContext.BaseDirectory,"pro2-wireless-pro1-radio.exe");
         string? firmware=Path.Combine(AppContext.BaseDirectory,"firmware");
         double hz=cadence.SelectedIndex switch{1=>133,2=>250,_=>1000.0/15};
-        await session!.StartRadioAsync(selected,radioPath,firmware,180,lifetime.Token,hz);status.Text=session.State;
+        try
+        {
+            status.Text="备份所选发射器并准备无线模式；如有管理员弹窗请允许";
+            selected=await session!.PrepareRadioAsync(selected,lifetime.Token);
+            await session.StartRadioAsync(selected,radioPath,firmware,180,lifetime.Token,hz);status.Text=session.State;
+        }
+        catch{await StopAsync();throw;}
     }
-    private async Task StopAsync(){if(session!=null){await session.DisposeAsync();session=null;}status.Text="已停止 · 保留本轮日志，未修改驱动或注册表";}
+    private async Task StopAsync(){if(session!=null){await session.DisposeAsync();session=null;}status.Text="已停止 · 本工具临时切换的蓝牙已请求恢复；备份和日志保留";}
     private void UpdateButtons()
     {
-        refresh.IsEnabled=!busy&&session==null;devices.IsEnabled=!busy&&session==null;radios.IsEnabled=!busy&&session==null;
+        refresh.IsEnabled=!busy&&session?.RadioStarted!=true;devices.IsEnabled=!busy&&session==null;radios.IsEnabled=!busy&&session?.RadioStarted!=true;
         cadence.IsEnabled=!busy&&session?.RadioStarted!=true;
         connect.IsEnabled=!busy&&session?.UsbConnected!=true&&devices.SelectedItem!=null;
-        start.IsEnabled=!busy&&session?.RadioStarted!=true&&radios.SelectedItem is WirelessRelayRadio{Ready:true};
+        start.IsEnabled=!busy&&session?.RadioStarted!=true&&radios.SelectedItem is WirelessRelayRadio{KnownBackend:true};
+        restore.IsEnabled=!busy&&radios.SelectedItem is WirelessRelayRadio;
         capture.IsEnabled=!busy&&session?.CanReadNfc==true;load.IsEnabled=!busy&&session!=null;stop.IsEnabled=!busy&&session!=null;
         radioHint.Text=radios.SelectedItem switch
         {
             WirelessRelayRadio{Ready:true}=>"发射器已准备。USB 连接后可启动无线 Pro1。",
-            WirelessRelayRadio selected=>"无线尚未启动："+selected.Name+" 仍是 Windows 系统蓝牙（"+selected.Service+"）。需要先准备可恢复的 WinUSB 发射模式；USB 输入和读卡可单独测试。",
+            WirelessRelayRadio{CanPrepare:true} selected=>"将临时使用 "+selected.Name+" 发射；它原有的 Windows 蓝牙功能会暂停，停止后恢复。需要一次管理员授权。",
+            WirelessRelayRadio=>"所选蓝牙当前尚无可用外发后端，未修改驱动；可换选已支持的 Realtek / Actions。",
             _=>"未发现本轮支持的发射适配器。USB 输入和 Pro2 读卡可单独测试。"
         };
     }

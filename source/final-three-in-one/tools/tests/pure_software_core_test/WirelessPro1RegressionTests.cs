@@ -27,6 +27,14 @@ internal static class WirelessPro1RegressionTests
     private static byte[] Mcu(byte command,byte[]? payload=null)=>[0x11,0,0,1,0x40,0x40,0,1,0x40,0x40,command,..payload??[]];
     public static void Run(Action<bool,string> check)
     {
+        var systemRadio=new WirelessRelayRadio(@"USB\VID_0BDA&PID_0852\RADIO_A","Realtek","BTHUSB",true,true);
+        check(systemRadio.CanPrepare&&!systemRadio.Ready,"system Bluetooth requires reversible preparation before the native backend can open it");
+        var preparedRadio=systemRadio with{Service="WinUSB"};
+        check(preparedRadio.Ready&&!preparedRadio.CanPrepare,"an already prepared radio is not rebound by the application");
+        var unsupportedRadio=new WirelessRelayRadio(@"USB\VID_8087&PID_0033\RADIO_B","Intel","WinUSB",false,false);
+        check(!unsupportedRadio.Ready&&!unsupportedRadio.CanPrepare,"an unsupported adapter cannot become a transmitter merely by using WinUSB");
+        check(!(systemRadio with{Service="unknown"}).CanPrepare,"an unknown driver state cannot trigger automatic radio preparation");
+        check(systemRadio.Label!=(systemRadio with{InstanceId=@"USB\VID_0BDA&PID_0852\RADIO_B"}).Label,"manual selection distinguishes two radios of the same model by exact instance");
         byte[] session=Enumerable.Range(0,16).Select(i=>(byte)i).ToArray(),payload=new byte[362];payload[0]=0x31;
         var encoded=WirelessRelayDatagram.Encode(session,WirelessRelayMessage.FreshInput,7,123,payload);
         check(WirelessRelayDatagram.TryDecode(encoded,session,out var decoded)&&decoded!.Sequence==7&&decoded.Timestamp==123&&decoded.Payload.SequenceEqual(payload),"authenticated maximum NFC-sized relay datagram roundtrip");

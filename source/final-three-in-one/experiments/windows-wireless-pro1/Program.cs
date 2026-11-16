@@ -10,6 +10,14 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        if(args.Contains("--relay-auto"))
+        {
+            string output=Value(args,"--output")??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"PRO2WirelessReceiverControlBoard","wireless_relay_logs",DateTime.Now.ToString("yyyyMMdd-HHmmss-fff"));
+            string? instance=Value(args,"--radio-instance");
+            int seconds=int.TryParse(Value(args,"--seconds"),out var duration)?Math.Clamp(duration,15,600):60;
+            double hz=double.TryParse(Value(args,"--hz"),System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out var frequency)?frequency:133;
+            return RelayAutoAsync(output,instance,seconds,hz,args.Contains("--read-nfc")).GetAwaiter().GetResult();
+        }
         if(args.Contains("--probe"))
         {
             string output=Value(args,"--output")??Path.Combine(AppContext.BaseDirectory,"environment.json");
@@ -81,6 +89,26 @@ internal static class Program
             await Task.Delay(10000,deadline.Token);return 0;
         }
         catch(Exception e){session.Log("[USB_CAPTURE_FAILED] "+e);return 1;}
+    }
+    private static async Task<int> RelayAutoAsync(string output,string? instance,int seconds,double hz,bool readNfc)
+    {
+        await using var session=new ExperimentSession(output);
+        try
+        {
+            var physical=NintendoHidDevice.Enumerate().Where(d=>d.Kind!=NintendoInputKind.Pro1Bluetooth).ToArray();
+            if(physical.Length!=1)throw new IOException("自动测试要求当前只有一只实体 USB 手柄。检测到 "+physical.Length);
+            var radios=WirelessRelayEnvironment.EnumerateRadios();
+            var selected=radios.SingleOrDefault(r=>r.InstanceId.Equals(instance,StringComparison.OrdinalIgnoreCase));
+            if(selected==null)throw new IOException("自动测试必须用 --radio-instance 明确指定一只蓝牙发射器。");
+            using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(seconds+320));
+            await session.ConnectUsbAsync(physical[0],timeout.Token);
+            selected=await session.PrepareRadioAsync(selected,timeout.Token);
+            if(readNfc&&session.CanReadNfc)await session.CaptureNfcAsync(timeout.Token);
+            await session.StartRadioAsync(selected,Path.Combine(AppContext.BaseDirectory,"pro2-wireless-pro1-radio.exe"),Path.Combine(AppContext.BaseDirectory,"firmware"),seconds,timeout.Token,hz);
+            while(!session.RadioFinished)await Task.Delay(500,timeout.Token);
+            return session.RadioExitCode==0?0:1;
+        }
+        catch(Exception e){session.Log("[AUTOMATIC_RELAY_FAILED] "+e);return 1;}
     }
     private static async Task<int> JournalSelfTestAsync(string output)
     {

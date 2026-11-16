@@ -18,6 +18,7 @@ foreach($name in @('pro2-wireless-pro1-radio.exe','BTstack-LICENSE.txt')){
     Copy-Item -LiteralPath (Join-Path $NativeDirectory $name) -Destination (Join-Path $publish $name)
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $publish '使用说明.md')
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'RadioDriver.ps1') -Destination (Join-Path $publish 'RadioDriver.ps1')
 $notices=Join-Path $publish 'Notices';$null=New-Item -ItemType Directory -Path $notices -Force
 Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'Notices') -File|ForEach-Object{Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $notices $_.Name)}
 if(Test-Path -LiteralPath (Join-Path $FirmwareDirectory 'rtl8852cu_fw')){

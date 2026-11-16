@@ -9,7 +9,8 @@ public sealed record WirelessRelayRadio(string InstanceId,string Name,string Ser
     string DriverProvider="",string DriverVersion="",string DriverDate="")
 {
     public bool Ready=>KnownBackend&&Service.Equals("WinUSB",StringComparison.OrdinalIgnoreCase);
-    public string Label=>Name+" · "+Service+" · "+(Ready?"可用于实验":"保留系统驱动，未接管");
+    public bool CanPrepare=>KnownBackend&&Service.Equals("BTHUSB",StringComparison.OrdinalIgnoreCase);
+    public string Label=>Name+" · "+InstanceId.Split('\\').Last()+" · "+(Ready?"发射模式":CanPrepare?"系统蓝牙 · 可准备":"当前后端未支持");
 }
 public static class WirelessRelayEnvironment
 {
@@ -21,14 +22,15 @@ public static class WirelessRelayEnvironment
             string id=item.InstanceId;
             bool realtek=id.StartsWith(@"USB\VID_0BDA&PID_0852\",StringComparison.OrdinalIgnoreCase);
             bool actions=id.StartsWith(@"USB\VID_10D7&PID_B012\",StringComparison.OrdinalIgnoreCase);
-            if(!realtek&&!actions)continue;
             using var key=Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\"+id);
             string service=key?.GetValue("Service") as string??"unknown";
+            bool bluetooth=string.Equals(key?.GetValue("ClassGUID") as string,"{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}",StringComparison.OrdinalIgnoreCase)||service.Equals("BTHUSB",StringComparison.OrdinalIgnoreCase);
+            if(!realtek&&!actions&&!bluetooth)continue;
             string name=key?.GetValue("FriendlyName") as string??key?.GetValue("DeviceDesc") as string??id;
             if(name.Contains(';'))name=name[(name.LastIndexOf(';')+1)..];
             string driverKey=key?.GetValue("Driver") as string??"";
             using var driver=driverKey.Length==0?null:Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\"+driverKey);
-            result.Add(new(id,name,service,true,realtek,driver?.GetValue("ProviderName") as string??"",driver?.GetValue("DriverVersion") as string??"",driver?.GetValue("DriverDate") as string??""));
+            result.Add(new(id,name,service,realtek||actions,realtek,driver?.GetValue("ProviderName") as string??"",driver?.GetValue("DriverVersion") as string??"",driver?.GetValue("DriverDate") as string??""));
         }
         return result.DistinctBy(r=>r.InstanceId,StringComparer.OrdinalIgnoreCase).ToArray();
     }

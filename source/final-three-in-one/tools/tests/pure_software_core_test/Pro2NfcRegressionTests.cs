@@ -75,7 +75,7 @@ internal static class Pro2NfcRegressionTests
         }
         var v3=(byte[])buffer.Clone();v3[18]=6;
         try{Pro2NfcProtocol.ParseTag(v3,Uid);check(false,"partial 2K must not be a full dump");}catch(NotSupportedException){check(true,"2KB partial read is explicitly unsupported");}
-        await Replay(check,"success");await Replay(check,"chunk_short");await Replay(check,"uid_changed");
+        await Replay(check,"success");await Replay(check,"primary_ack");await Replay(check,"chunk_short");await Replay(check,"uid_changed");
         await Replay(check,"nack");await Replay(check,"timeout");await Replay(check,"stop_failure");await Replay(check,"cancel");
         using(var cancelled=new CancellationTokenSource())
         {
@@ -91,40 +91,64 @@ internal static class Pro2NfcRegressionTests
         check(!source.IsOutputReady&&!source.CanOptimizeConnectionCompatibility&&!source.CanAutomaticallyOptimizeConnectionCompatibility,
             "NFC claim blocks rumble and both parameter-optimization paths");
         reading.SetValue(source,false);
+        var recent=new RecentSessionStatus();
+        string[] nfcEvidence=[
+            "[14:17:48.756] [NFC_UI] slot=1 action=read tag_writes=0",
+            "[14:17:50.273] [PRO2_NFC_CHANNEL] route=existing_primary_ack auxiliary_cccd_reads=0 auxiliary_cccd_writes=0",
+            "[14:17:50.274] [PRO2_NFC_COMMAND] phase=send sub=0x04",
+            "[14:17:50.280] [PRO2_NFC_ACK] response_bytes=8 header=0101010410780000 matched=True",
+            "[14:17:50.281] [PRO2_NFC_STATUS] state=0x09 detail=0x00 uid_length=7",
+            "[14:17:50.282] [PRO2_NFC] 读取未完成：无法确认 NFC 应答订阅状态。",
+            "[14:17:51.788] [PRO2_NFC_RATE] phase=after fd2_hz=132.72 parsed_hz=132.72",
+            "[14:17:51.789] [PRO2_NFC_RESULT] success=False commands=0 tag_writes=0"];
+        foreach(string line in nfcEvidence)recent.Add(line);
+        foreach(string line in nfcEvidence)check(recent.Snapshot.Contains(line),"recent log retains NFC original evidence after detail cap: "+line.Split(']')[1]);
     }
     private static async Task Replay(Action<bool,string> check,string failure)
     {
-        bool reading=false;int chunks=0,stops=0;var seen=new List<byte>();var buffer=Buffer();
+        bool reading=false;int chunks=0,stops=0;var seen=new List<byte>();var buffer=Buffer();object primaryOwner=new();
         using var cts=new CancellationTokenSource(TimeSpan.FromSeconds(4));
         Task<byte[]> Exchange(byte[] command,CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();seen.Add(command[3]);
             check(Pro2NfcProtocol.IsReadOnlyCommand(command),"reader emits whitelist commands only "+failure);
+            Task<byte[]> Respond(byte[] reply)
+            {
+                if(failure!="primary_ack")return Task.FromResult(reply);
+                // Real command waiter and primary-owner identity, with neither
+                // an auxiliary characteristic nor a readable CCCD available.
+                var pending=new Pro2CommandAckWaiter(primaryOwner,command);
+                check(!pending.TryComplete(new object(),reply)&&!pending.Task.IsCompleted,"foreign owner cannot satisfy NFC ACK");
+                byte[] noise=(byte[])reply.Clone();noise[3]^=0x80;
+                check(!pending.TryComplete(primaryOwner,noise)&&!pending.Task.IsCompleted,"other command cannot satisfy NFC ACK");
+                check(Pro2NfcProtocol.IsReaderResponse(true,reply)&&pending.TryComplete(primaryOwner,reply),"existing primary ACK completes NFC command without auxiliary CCCD");
+                return pending.Task;
+            }
             if(command[3]==4)
             {
                 stops++;
                 if(failure=="stop_failure"&&chunks==9)throw new IOException("simulated stop failure");
-                return Task.FromResult(Reply(4));
+                return Respond(Reply(4));
             }
             if(failure=="timeout"&&command[3]==3)throw new TimeoutException("simulated no response");
-            if(failure=="nack"&&command[3]==3){var nack=Reply(3);nack[5]=0;return Task.FromResult(nack);}
+            if(failure=="nack"&&command[3]==3){var nack=Reply(3);nack[5]=0;return Respond(nack);}
             if(failure=="cancel"&&command[3]==3){cts.Cancel();ct.ThrowIfCancellationRequested();}
-            if(command[3]==5)return Task.FromResult(Status(reading,failure=="uid_changed"&&chunks==9));
-            if(command[3]==6){reading=true;return Task.FromResult(Reply(6));}
+            if(command[3]==5)return Respond(Status(reading,failure=="uid_changed"&&chunks==9));
+            if(command[3]==6){reading=true;return Respond(Reply(6));}
             if(command[3]==0x15)
             {
                 chunks++;var reply=Chunk(BinaryPrimitives.ReadUInt16LittleEndian(command.AsSpan(8)),buffer);
-                return Task.FromResult(failure=="chunk_short"&&chunks==3?reply[..^1]:reply);
+                return Respond(failure=="chunk_short"&&chunks==3?reply[..^1]:reply);
             }
-            return Task.FromResult(Reply(command[3]));
+            return Respond(Reply(command[3]));
         }
         try
         {
             var result=await new Pro2NfcReader(Exchange).ReadAsync(cts.Token);
-            check(failure=="success"&&result.Data.SequenceEqual(buffer[60..])&&chunks==9,"physical-read replay returns exactly 540 bytes");
+            check((failure is "success" or "primary_ack")&&result.Data.SequenceEqual(buffer[60..])&&chunks==9,"physical-read replay returns exactly 540 bytes");
         }
         catch(Exception error)when(error is IOException or TimeoutException or OperationCanceledException)
-        {check(failure!="success","failing replay cannot return a tag: "+failure);}
+        {check(failure is not ("success" or "primary_ack"),"failing replay cannot return a tag: "+failure);}
         check(stops>=2&&seen[^1]==4,"success, failure and cancellation always attempt stop: "+failure);
         check(!seen.Contains(8)&&!seen.Contains(0x14),"reader never emits tag-write commands: "+failure);
     }

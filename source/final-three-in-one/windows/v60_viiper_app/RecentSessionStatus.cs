@@ -86,7 +86,8 @@ public sealed class RecentSessionStatus
             Has(line, "[VIIPER_INPUT_SAFETY]") || Has(line, "[PS5_MOTION_VALIDITY]") ||
             Has(line, "[BATTERY_RUNTIME_RATE]") || Has(line, "[BLE_LOW_RATE_DIAG]")) return measurements;
 
-        if (Has(line, "[BATTERY_RUNTIME") || Has(line, "[PRO2_BATTERY") ||
+        if (Has(line, "[PRO2_NFC") || Has(line, "[NFC_UI]") ||
+            Has(line, "[BATTERY_RUNTIME") || Has(line, "[PRO2_BATTERY") ||
             Has(line, "[AUDIO_GUARD]") || Has(line, "[BLE_AUTO_PRESET_") ||
             Has(line, "[WIN11_PARAMETER_TRIAL]") || HasRealFailure(line)) return diagnostics;
         return null;

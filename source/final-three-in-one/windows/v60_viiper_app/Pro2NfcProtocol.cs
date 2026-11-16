@@ -67,8 +67,10 @@ public static class Pro2NfcProtocol
         response[1]==1&&response[2]==1&&response[3]==request[3];
     public static void RequireSuccess(ReadOnlySpan<byte> request,ReadOnlySpan<byte> response)
     {
-        if(!MatchesResponse(request,response)||response[5] is not (0x78 or 0xf8))
-            throw new IOException("Pro2 NFC 应答不匹配或请求被拒绝；未返回标签文件。");
+        if(!MatchesResponse(request,response))
+            throw new IOException("Pro2 NFC 应答格式或命令不匹配；未返回标签文件。");
+        if(response[5] is not (0x78 or 0xf8))
+            throw new IOException("Pro2 拒绝 NFC 命令 01/"+request[3].ToString("X2")+"（状态 0x"+response[5].ToString("X2")+"）；未返回标签文件。");
     }
     public static bool TryParseStatus(ReadOnlySpan<byte> response,out Pro2NfcStatus status)
     {

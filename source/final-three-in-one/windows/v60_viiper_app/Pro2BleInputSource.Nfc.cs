@@ -57,7 +57,7 @@ public sealed partial class Pro2BleInputSource
             double seconds=Stopwatch.GetElapsedTime(a.T,b.T).TotalSeconds;
             return FormattableString.Invariant($"seconds={seconds:F2} fd2_hz={(seconds>0?(b.Raw-a.Raw)/seconds:0):F2} parsed_hz={(seconds>0?(b.Parsed-a.Parsed)/seconds:0):F2}");
         }
-        bool wakeHeld=false,outputHeld=false,secondaryAdded=false,secondaryOwned=false;
+        bool wakeHeld=false,outputHeld=false;
         bool restoreBatteryWorker=runtimeBatteryTask!=null;
         Task? batteryStopTask=null;
         bool readSucceeded=false,stopConfirmed=false;int commandCount=0;
@@ -69,36 +69,45 @@ public sealed partial class Pro2BleInputSource
             var pending=new Pro2CommandAckWaiter(ack,command);
             Volatile.Write(ref pendingNfcAck,pending);
             long sent=Stopwatch.GetTimestamp();bool submitted=false;
+            string identity="sub=0x"+command[3].ToString("X2")+
+                (command[3]==0x15?" buffer_offset="+(command[8]|command[9]<<8):"");
             try
             {
                 // No retry: a timed-out 0x15 reply has no offset/transaction ID.
                 // Retrying it could misattribute a late reply to the next chunk.
                 submitted=true;commandCount++;if(command[3]==3)stopConfirmed=false;
+                NfcTrace("[PRO2_NFC_COMMAND] phase=send "+identity+" ordinal="+commandCount+
+                    " write_handle=0x"+writer.AttributeHandle.ToString("X4")+" packet_bytes="+(33+command.Length)+" tag_writes=0");
                 var status=await writer.WriteValueAsync(ToBuffer(Pro2NfcProtocol.BuildExtendedPacket(command)),
                     GattWriteOption.WriteWithoutResponse).AsTask(ct).WaitAsync(TimeSpan.FromSeconds(3),ct).ConfigureAwait(false);
+                NfcTrace("[PRO2_NFC_COMMAND] phase=write_return "+identity+" api_write_status="+status+
+                    " remote_ack_confirmed=false elapsed_ms="+Stopwatch.GetElapsedTime(sent).TotalMilliseconds.ToString("F1"));
                 if(status!=GattCommunicationStatus.Success)throw new IOException("NFC 命令写入失败："+status);
                 byte[] reply=await pending.Task.WaitAsync(TimeSpan.FromSeconds(3),ct).ConfigureAwait(false);
                 Pro2NfcProtocol.RequireSuccess(command,reply);
                 if(!SameOwner())throw new IOException("收到应答时 Pro2 连接已改变。");
                 if(command[3]==4)stopConfirmed=true;else if(command[3]==3)stopConfirmed=false;
-                NfcTrace("[PRO2_NFC_COMMAND] sub=0x"+command[3].ToString("X2")+
+                NfcTrace("[PRO2_NFC_COMMAND] phase=reply "+identity+
                     " response_bytes="+reply.Length+" elapsed_ms="+Stopwatch.GetElapsedTime(sent).TotalMilliseconds.ToString("F1")+
                     " response_source=primary_ack payload_logged=false tag_writes=0");
+                if(command[3]==5&&Pro2NfcProtocol.TryParseStatus(reply,out var state))
+                    NfcTrace("[PRO2_NFC_STATUS] state=0x"+state.State.ToString("X2")+" detail=0x"+state.Detail.ToString("X2")+
+                        " uid_length="+state.Uid.Length+" uid_logged=false");
                 return reply;
             }
             catch(Exception error)
             {
                 if(SameOwner()&&submitted&&!pending.Task.IsCompleted&&(error is TimeoutException or OperationCanceledException))
                 {nfcNeedsReconnect=true;Report("应答超时或被取消 · 再次读卡前请重新连接");}
+                NfcTrace("[PRO2_NFC_COMMAND] phase=failed "+identity+" error="+error.GetType().Name+
+                    " hresult=0x"+error.HResult.ToString("X8")+" response_received="+pending.Task.IsCompletedSuccessfully+
+                    " elapsed_ms="+Stopwatch.GetElapsedTime(sent).TotalMilliseconds.ToString("F1")+
+                    " requires_reconnect="+nfcNeedsReconnect);
+                if(error is TimeoutException)
+                    throw new IOException("NFC 命令 01/"+command[3].ToString("X2")+" 等待超时，请重新连接后再读取。",error);
                 throw;
             }
             finally{Interlocked.CompareExchange(ref pendingNfcAck,null,pending);}
-        }
-        void OnSecondary(GattCharacteristic sender,GattValueChangedEventArgs args)
-        {
-            // Captured ordinary NFC replies use the already subscribed primary
-            // ACK. Never feed duplicate secondary replies into chunk assembly.
-            if(SameOwner())NfcTrace("[PRO2_NFC_SECONDARY] bytes="+args.CharacteristicValue.Length+" routed_to_reader=false");
         }
         try
         {
@@ -134,29 +143,13 @@ public sealed partial class Pro2BleInputSource
             }
             start=Counts();await Task.Delay(1500,operation.Token).ConfigureAwait(false);before=Counts();
             NfcTrace("[PRO2_NFC_RATE] phase=before "+Rates(start,before)+" synthetic_reports=0");
-            if(secondary!=null)
-            {
-                var prior=await secondary.ReadClientCharacteristicConfigurationDescriptorAsync().AsTask(operation.Token)
-                    .WaitAsync(TimeSpan.FromSeconds(2),operation.Token).ConfigureAwait(false);
-                if(prior.Status!=GattCommunicationStatus.Success)throw new IOException("无法确认 NFC 应答订阅状态。");
-                secondary.ValueChanged+=OnSecondary;secondaryAdded=true;
-                if(prior.ClientCharacteristicConfigurationDescriptor==GattClientCharacteristicConfigurationDescriptorValue.None)
-                {
-                    // Own this subscription before issuing the asynchronous call,
-                    // so even a timeout follows the cleanup path.
-                    secondaryOwned=true;
-                    var subscription=secondary.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask();
-                    GattCommunicationStatus subscribed;
-                    try{subscribed=await subscription.WaitAsync(TimeSpan.FromSeconds(2),operation.Token).ConfigureAwait(false);}
-                    catch
-                    {
-                        nfcNeedsReconnect=true;
-                        _=ReleaseLateNfcSubscriptionAsync(subscription,secondary,owner,sequence);
-                        throw;
-                    }
-                    if(subscribed!=GattCommunicationStatus.Success)throw new IOException("NFC 应答订阅失败："+subscribed);
-                }
-            }
+            // v3.2.8 stopped before sending any command when Windows could not
+            // read the auxiliary CCCD. Ordinary NFC replies were captured on
+            // the existing primary ACK; this route changes no subscriptions.
+            NfcTrace("[PRO2_NFC_CHANNEL] route=existing_primary_ack write_uuid="+writer.Uuid+
+                " write_handle=0x"+writer.AttributeHandle.ToString("X4")+
+                " ack_uuid="+ack.Uuid+" ack_handle=0x"+ack.AttributeHandle.ToString("X4")+
+                " auxiliary_present="+(secondary!=null)+" auxiliary_cccd_reads=0 auxiliary_cccd_writes=0 input_subscriptions_changed=false");
             var result=await new Pro2NfcReader(Exchange,Report).ReadAsync(operation.Token).ConfigureAwait(false);
             readSucceeded=true;Report("已读取 NTAG215 · 540 字节");
             return new(result.Uid,result.Data,FormatAddress(owner.BluetoothAddress),"Pro2Ble",DateTimeOffset.Now){Signature=result.Signature};
@@ -172,22 +165,6 @@ public sealed partial class Pro2BleInputSource
             {
             finished=Counts();
             if(SameOwner()&&before.T>start.T)NfcTrace("[PRO2_NFC_RATE] phase=during "+Rates(before,finished)+" synthetic_reports=0");
-            if(secondaryOwned&&secondary!=null&&SameOwner())
-            {
-                try
-                {
-                    using var cleanup=new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                    var released=await secondary.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.None)
-                        .AsTask(cleanup.Token).WaitAsync(TimeSpan.FromSeconds(2),cleanup.Token).ConfigureAwait(false);
-                    var verified=await secondary.ReadClientCharacteristicConfigurationDescriptorAsync().AsTask(cleanup.Token)
-                        .WaitAsync(TimeSpan.FromSeconds(1),cleanup.Token).ConfigureAwait(false);
-                    if(released!=GattCommunicationStatus.Success||verified.Status!=GattCommunicationStatus.Success||
-                        verified.ClientCharacteristicConfigurationDescriptor!=GattClientCharacteristicConfigurationDescriptorValue.None)
-                        throw new IOException("NFC 应答订阅未确认释放。");
-                }
-                catch(Exception error){nfcNeedsReconnect=true;Report("NFC 订阅清理未确认 · 请重新连接："+error.GetType().Name);}
-            }
-            if(secondaryAdded&&secondary!=null)secondary.ValueChanged-=OnSecondary;
             if(SameOwner())
             {
                 var afterStart=Counts();
@@ -238,19 +215,6 @@ public sealed partial class Pro2BleInputSource
             NfcTrace("[PRO2_NFC] deferred_battery_worker_restored=true");
         }
         catch(Exception error){NfcTrace("[PRO2_NFC] deferred_battery_restore="+error.GetType().Name);}
-    }
-    private async Task ReleaseLateNfcSubscriptionAsync(Task<GattCommunicationStatus> pending,GattCharacteristic characteristic,
-        BluetoothLEDevice owner,long sequence)
-    {
-        try
-        {
-            await pending.ConfigureAwait(false);
-            lock(gate)if(!ReferenceEquals(device,owner)||connectionSequence!=sequence)return;
-            using var cleanup=new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.None)
-                .AsTask(cleanup.Token).WaitAsync(TimeSpan.FromSeconds(3),cleanup.Token).ConfigureAwait(false);
-        }
-        catch(Exception error){NfcTrace("[PRO2_NFC] late_subscription_cleanup="+error.GetType().Name+" connection_seq="+sequence);}
     }
     private async Task StopNfcReadAsync()
     {

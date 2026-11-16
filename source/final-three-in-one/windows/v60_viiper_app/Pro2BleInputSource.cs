@@ -2574,7 +2574,12 @@ public sealed partial class Pro2BleInputSource :
             " ack=" + (data.Length >= 8 ? "0x" + data[5].ToString("X2") : "short") + " payload_logged=false");
         if (!ReferenceEquals(sender, ackCharacteristic)) return;
         if(Pro2NfcProtocol.IsReaderResponse(IsReadingNfc,data))
-        {Volatile.Read(ref pendingNfcAck)?.TryComplete(sender,data);return;}
+        {
+            bool matched=Volatile.Read(ref pendingNfcAck)?.TryComplete(sender,data)==true;
+            NfcTrace("[PRO2_NFC_ACK] response_bytes="+data.Length+" header="+Convert.ToHexString(data.AsSpan(0,8))+
+                " matched="+matched+" response_source=primary_ack payload_logged=false");
+            return;
+        }
         if (Pro2FirmwareInfo.TryDecode(data, out var firmware))
         {
             lock (gate) firmwareInfo = firmware;

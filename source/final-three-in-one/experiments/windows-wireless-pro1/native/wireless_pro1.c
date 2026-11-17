@@ -19,6 +19,8 @@
 #include "btstack_chipset_realtek.h"
 #include "pro1_descriptor.h"
 #include "wireless_descriptors.h"
+#include "relay_flow.h"
+#include "relay_recovery.h"
 #include "utf8_files.h"
 
 #define HEADER 48
@@ -48,6 +50,11 @@ static uint64_t malformed,protocol_replies,host_commands,submitted,completions,l
 static uint64_t digital_transitions_queued,send_failures;
 static uint64_t digital_transitions_expired,digital_resyncs,protocol_expired,send_rearms;
 static double send_request_time,last_send_event,last_sniff_exit;
+static double last_flow_snapshot;
+static relay_recovery_t recovery;
+static int peer_unplugged;
+static unsigned connection_count;
+static double connected_since,connected_seconds;
 static unsigned sniff_exit_attempts;static int link_in_sniff;
 static ack_t ledger[ACK_QUEUE];static unsigned ack_head,ack_tail,ack_count;
 static double submitted_times[SAMPLE_LIMIT],completed_times[SAMPLE_LIMIT];static unsigned submitted_count,completed_count;
@@ -76,6 +83,21 @@ static void emit_ipc(int kind,const uint8_t*payload,int len){
     if(sendto(sock,(const char*)message,HEADER+len,0,(struct sockaddr*)&managed,sizeof(managed))!=HEADER+len){failed=1;puts("{\"event\":\"MANAGED_IPC_SEND_FAILED\"}");stop_backend();}
 }
 static void emit_link(int state,int reason){uint8_t payload[8];memcpy(payload,local,6);payload[6]=(uint8_t)state;payload[7]=(uint8_t)reason;emit_ipc(4,payload,8);}
+static void clear_pending_input(void){
+    have_latest=send_requested=0;edge_head=edge_tail=edge_count=0;
+    control_head=control_tail=control_count=0;last_report_len=0;
+}
+static void close_link_accounting(void){
+    if(connected_since){connected_seconds+=now()-connected_since;connected_since=0;}
+    connected=0;cid=0;clear_pending_input();
+}
+static int begin_recovery(int reason){
+    if(profile!=0||!have_peer||peer_unplugged||stopping||!ever_connected)return 0;
+    if(!relay_recovery_begin(&recovery,now(),acl==HCI_CON_HANDLE_INVALID))return 0;
+    close_link_accounting();emit_link(4,reason);
+    printf("{\"event\":\"HID_RECOVERY_WAIT\",\"attempts_used\":%u,\"limit\":2,\"waiting_old_acl_release\":%s,\"same_peer_only\":true,\"physical_input_kept\":true}\n",recovery.attempts,acl==HCI_CON_HANDLE_INVALID?"false":"true");
+    return 1;
+}
 static int valid_input(const uint8_t*report,int len){
     if(profile==2)return len==78&&report[0]==0x31;
     if(profile==1)return (len==17&&report[0]==1)||(len==2&&(report[0]==2||report[0]==4));
@@ -95,12 +117,21 @@ static int decode_ipc(const uint8_t*p,int size,uint64_t*sequence,int*kind,int*le
     return 1;
 }
 static void request_send(void){
-    if(!stopping&&connected&&!send_requested&&(control_count||edge_count||have_latest)){
+    if(!stopping&&connected&&!send_requested&&(control_count||edge_count||have_latest)&&relay_hid_channels_open(cid)){
         send_requested=1;send_request_time=now();hid_device_request_can_send_now_event(cid);
     }
 }
 static void prune_edges(int64_t stamp){
     while(edge_count&&(stamp-edges[edge_head].ticks)/qpc_frequency>.1){edge_head=(edge_head+1)%EDGE_QUEUE;edge_count--;digital_transitions_expired++;}
+}
+static void trace_flow(const char*reason){
+    relay_hid_flow_t hid;relay_usb_flow_t usb;
+    relay_hid_flow_snapshot(cid,&hid);relay_usb_flow_snapshot(&usb);
+    int free_acl=acl!=HCI_CON_HANDLE_INVALID?hci_number_free_acl_slots_for_handle(acl):0;
+    printf("{\"event\":\"FLOW_STATE\",\"build\":\"20261117-hid2\",\"reason\":\"%s\",\"hci_reserved\":%s,\"free_acl\":%d,\"hci_acl_ready\":%s,\"usb_acl_busy\":%d,\"usb_acl_done\":%d,\"usb_acl_error\":%u,\"usb_acl_bytes\":%u,\"usb_acl_status\":%"PRIu64",\"usb_cmd_busy\":%d,\"usb_cmd_done\":%d,\"usb_cmd_error\":%u,\"usb_cmd_status\":%"PRIu64",\"hid_found\":%d,\"hid_state\":%d,\"hid_waiting\":%d,\"hid_control\":%u,\"hid_interrupt\":%u,\"l2cap_ready\":%d,\"app_waiting\":%d,\"latest_pending\":%d,\"ack_queue\":%u}\n",
+        reason,hci_is_packet_buffer_reserved()?"true":"false",free_acl,acl!=HCI_CON_HANDLE_INVALID&&hci_can_send_acl_packet_now(acl)?"true":"false",
+        usb.acl_busy,usb.acl_done,usb.acl_error,usb.acl_bytes,usb.acl_io_status,usb.command_busy,usb.command_done,usb.command_error,usb.command_io_status,
+        hid.found,hid.state,hid.pending,hid.control_cid,hid.interrupt_cid,hid.can_send,send_requested,have_latest,ack_count);
 }
 static void preserve_transition(const frame_t*frame,int64_t stamp){
     prune_edges(stamp);
@@ -155,12 +186,27 @@ static void series(FILE*out,double*times,unsigned count){
 }
 static void write_result(void){
     FILE*out=fopen(result_path,"w");if(!out){failed=1;return;}
-    fprintf(out,"{\"profile\":\"%s\",\"transport\":\"bluetooth_classic_hid\",\"digital_expired\":%"PRIu64",\"digital_resyncs\":%"PRIu64",\"control_expired\":%"PRIu64",\"send_rearms\":%"PRIu64",\"sniff_exit_attempts\":%u,",profile_names[profile],digital_transitions_expired,digital_resyncs,protocol_expired,send_rearms,sniff_exit_attempts);
-    fprintf(out,"\"backend\":\"btstack_winusb_multimode\",\"completed\":%s,\"failed\":%s,\"ever_connected\":%s,\"disconnect_reason\":%d,\"connected_seconds\":%.3f,\"source_received\":%"PRIu64",\"source_superseded\":%"PRIu64",\"source_stale\":%"PRIu64",\"source_not_ready\":%"PRIu64",\"invalid_ipc\":%"PRIu64",\"host_output_commands\":%"PRIu64",\"protocol_replies\":%"PRIu64",\"fresh_submissions\":%"PRIu64",\"fresh_hci_completions\":%"PRIu64",\"ledger_overflow\":%"PRIu64",\"submitted\":",completed?"true":"false",failed?"true":"false",ever_connected?"true":"false",disconnect_reason,ready?(stop_time?stop_time:now())-ready:0,source_received,source_superseded,source_stale,source_not_ready,malformed,host_commands,protocol_replies,submitted,completions,ledger_overflow);
+    fprintf(out,"{\"profile\":\"%s\",\"transport\":\"bluetooth_classic_hid\",\"connections\":%u,\"reconnect_attempts\":%u,\"digital_expired\":%"PRIu64",\"digital_resyncs\":%"PRIu64",\"control_expired\":%"PRIu64",\"send_rearms\":%"PRIu64",\"sniff_exit_attempts\":%u,",profile_names[profile],connection_count,recovery.attempts,digital_transitions_expired,digital_resyncs,protocol_expired,send_rearms,sniff_exit_attempts);
+    fprintf(out,"\"backend\":\"btstack_winusb_multimode\",\"completed\":%s,\"failed\":%s,\"ever_connected\":%s,\"disconnect_reason\":%d,\"connected_seconds\":%.3f,\"source_received\":%"PRIu64",\"source_superseded\":%"PRIu64",\"source_stale\":%"PRIu64",\"source_not_ready\":%"PRIu64",\"invalid_ipc\":%"PRIu64",\"host_output_commands\":%"PRIu64",\"protocol_replies\":%"PRIu64",\"fresh_submissions\":%"PRIu64",\"fresh_hci_completions\":%"PRIu64",\"ledger_overflow\":%"PRIu64",\"submitted\":",completed?"true":"false",failed?"true":"false",ever_connected?"true":"false",disconnect_reason,connected_seconds,source_received,source_superseded,source_stale,source_not_ready,malformed,host_commands,protocol_replies,submitted,completions,ledger_overflow);
     series(out,submitted_times,submitted_count);fputs(",\"hci_completed\":",out);series(out,completed_times,completed_count);
     fprintf(out,",\"digital_transitions_queued\":%"PRIu64",\"l2cap_send_failures\":%"PRIu64",\"realtek_firmware_runtime_verified\":%s,\"receiver_rate_verified\":false,\"driver_changes\":0,\"registry_changes\":0,\"windows_pairing_imported\":false,\"keys_logged\":false,\"tag_writes\":0}\n",digital_transitions_queued,send_failures,firmware_verified?"true":"false");fclose(out);
 }
+/* Only signaling metadata is logged. Never dump HID/tag payloads or arbitrary
+ * HCI events, which can contain pairing keys. Fragmented signals are skipped. */
+static void trace_acl_signals(const char *direction,const uint8_t *p,uint16_t size){
+    if(size<12||!owns_acl(little_endian_read_16(p,0))||((p[1]>>4)&3)==1||little_endian_read_16(p,6)!=1)return;
+    unsigned length=little_endian_read_16(p,4);
+    if(length+8>size||little_endian_read_16(p,2)+4u!=size)return;
+    for(unsigned pos=8;pos+4<=length+8;){
+        unsigned code=p[pos],bytes=little_endian_read_16(p,pos+2);pos+=4;
+        if(bytes>length+8-pos)return;
+        if((code==6||code==7)&&bytes==4)
+            printf("{\"event\":\"L2CAP_CHANNEL_SIGNAL\",\"direction\":\"%s\",\"code\":%u,\"destination_cid\":%u,\"source_cid\":%u}\n",direction,code,little_endian_read_16(p,pos),little_endian_read_16(p,pos+2));
+        pos+=bytes;
+    }
+}
 static void receive_packet(uint8_t type,uint8_t*p,uint16_t size){
+    if(type==HCI_ACL_DATA_PACKET)trace_acl_signals("peer_to_pc",p,size);
     if(type==HCI_EVENT_PACKET&&size>=2){
         if(p[0]==HCI_EVENT_COMMAND_COMPLETE&&size>=6){
             uint16_t opcode=little_endian_read_16(p,3);
@@ -194,6 +240,7 @@ static void receive_packet(uint8_t type,uint8_t*p,uint16_t size){
 }
 static void register_receive(void(*callback)(uint8_t,uint8_t*,uint16_t)){stack_receive=callback;base_transport->register_packet_handler(receive_packet);}
 static int send_packet(uint8_t type,uint8_t*p,int size){
+    if(type==HCI_ACL_DATA_PACKET)trace_acl_signals("pc_to_peer",p,(uint16_t)size);
     int fresh=send_is_fresh&&type==HCI_ACL_DATA_PACKET&&size==sending_len+9&&p[8]==0xa1;
     int result=base_transport->send_packet(type,p,size);
     if(!result&&type==HCI_ACL_DATA_PACKET&&size>=4&&(little_endian_read_16(p,0)&0xfff)==acl){
@@ -264,27 +311,43 @@ static void events(uint8_t type,uint16_t channel,uint8_t*p,uint16_t size){
             if(size<8)break;
             printf("{\"event\":\"LINK_MODE\",\"status\":%u,\"mode\":%u,\"interval_slots\":%u}\n",p[2],p[5],little_endian_read_16(p,6));
             if(size>=8&&p[2]==0&&owns_acl(little_endian_read_16(p,3))){link_in_sniff=p[5]==2;send_requested=0;request_send();}break;
+        case HCI_EVENT_CONNECTION_COMPLETE:
+            if(size>=13&&p[2]&&recovery.active){
+                bd_addr_t who;reverse_bd_addr(p+5,who);
+                if(!bd_addr_cmp(who,peer)){failed=1;printf("{\"event\":\"HID_RECOVERY_ACL_FAILED\",\"status\":%u}\n",p[2]);emit_link(3,p[2]);stop_backend();}
+            }break;
         case HCI_EVENT_DISCONNECTION_COMPLETE:
             printf("{\"event\":\"ACL_DISCONNECTED\",\"reason\":%u,\"cleanup\":%s}\n",p[5],stopping?"true":"false");
-            if(!stopping&&ever_connected&&owns_acl(little_endian_read_16(p,3))){failed=1;emit_link(2,p[5]);stop_backend();}break;
+            if(!stopping&&ever_connected&&owns_acl(little_endian_read_16(p,3))){
+                close_link_accounting();acl=HCI_CON_HANDLE_INVALID;
+                ack_head=ack_tail=ack_count=0;link_in_sniff=0;
+                if(p[5]==ERROR_CODE_REMOTE_USER_TERMINATED_CONNECTION&&begin_recovery(p[5]))relay_recovery_acl_down(&recovery,now());
+                else{failed=1;emit_link(2,p[5]);stop_backend();}
+            }break;
         case HCI_EVENT_HID_META:
             switch(hci_event_hid_meta_get_subevent_code(p)){
+                case HID_SUBEVENT_SUSPEND:puts("{\"event\":\"PEER_HID_SUSPEND\"}");break;
+                case HID_SUBEVENT_EXIT_SUSPEND:puts("{\"event\":\"PEER_HID_EXIT_SUSPEND\"}");break;
+                case HID_SUBEVENT_VIRTUAL_CABLE_UNPLUG:peer_unplugged=1;puts("{\"event\":\"PEER_VIRTUAL_CABLE_UNPLUG\",\"auto_reconnect\":false}");break;
                 case HID_SUBEVENT_CONNECTION_OPENED:{
                     uint8_t status=hid_subevent_connection_opened_get_status(p);
-                    if(status){printf("{\"event\":\"HID_CONNECT_FAILED\",\"status\":%u}\n",status);break;}
+                    if(status){printf("{\"event\":\"HID_CONNECT_FAILED\",\"status\":%u}\n",status);if(recovery.active){failed=1;emit_link(3,status);stop_backend();}break;}
                     bd_addr_t who;hid_subevent_connection_opened_get_bd_addr(p,who);uint16_t opened=hid_subevent_connection_opened_get_hid_cid(p);
                     if(have_peer&&bd_addr_cmp(who,peer)){hid_device_disconnect(opened);break;}cid=opened;
                     memcpy(peer,who,6);have_peer=1;acl=hid_subevent_connection_opened_get_con_handle(p);
                     if(gap_security_level(acl)<LEVEL_2){failed=1;puts("{\"event\":\"ENCRYPTION_REQUIRED_ABORT\"}");stop_backend();break;}
-                    connected=ever_connected=1;ready=now();gap_discoverable_control(0);
+                    if(recovery.active){clear_pending_input();emit_link(0,0);}
+                    relay_recovery_opened(&recovery);connection_count++;connected_since=now();if(!ever_connected)ready=connected_since;
+                    connected=ever_connected=1;peer_unplugged=0;last_send_event=0;gap_discoverable_control(0);
                     printf("{\"event\":\"CONTROLLER_HID_READY\",\"profile\":\"%s\",\"receiver_rate_verified\":false}\n",profile_names[profile]);emit_link(1,0);request_send();break;
                 }
                 case HID_SUBEVENT_CONNECTION_CLOSED:
                     if(hid_subevent_connection_closed_get_hid_cid(p)!=cid)break;
-                    connected=0;cid=0;send_requested=0;puts("{\"event\":\"HID_CLOSED\"}");if(ever_connected&&!stopping){failed=1;emit_link(2,disconnect_reason);stop_backend();}break;
+                    trace_flow("hid_channels_closed");close_link_accounting();puts("{\"event\":\"HID_CLOSED\"}");
+                    if(ever_connected&&!stopping&&!begin_recovery(0)){failed=1;emit_link(2,disconnect_reason);stop_backend();}break;
                 case HID_SUBEVENT_CAN_SEND_NOW:{
                     if(hid_subevent_can_send_now_get_hid_cid(p)!=cid)break;
-                    send_requested=0;last_send_event=now();if(!connected||stopping)break;
+                    send_requested=0;last_send_event=now();if(!connected||stopping||!relay_hid_channels_open(cid))break;
                     prune_edges(ticks());
                     frame_t frame;int fresh=0;
                     if(control_count){frame=controls[control_head];control_head=(control_head+1)%CONTROL_QUEUE;control_count--;}
@@ -305,12 +368,21 @@ static void events(uint8_t type,uint16_t channel,uint8_t*p,uint16_t size){
             }break;
     }
 }
-static void stop_backend(void){if(stopping)return;stopping=1;stop_time=now();hci_power_control(HCI_POWER_OFF);}
+static void stop_backend(void){if(stopping)return;stopping=1;stop_time=now();close_link_accounting();hci_power_control(HCI_POWER_OFF);}
 static void watchdog(btstack_timer_source_t*t){
     double stamp=now();
     if(stopping&&stamp-stop_time>5){puts("{\"event\":\"POWER_OFF_TIMEOUT\"}");failed=1;btstack_run_loop_trigger_exit();return;}
     if(!stopping){
+        int reconnect_action=relay_recovery_poll(&recovery,stamp);
+        if(reconnect_action<0){failed=1;puts("{\"event\":\"HID_RECOVERY_TIMEOUT\",\"old_acl_reset\":false}");emit_link(3,0xff);stop_backend();}
+        else if(reconnect_action>0){
+            clear_pending_input();
+            uint8_t status=hid_device_connect(peer,&cid);
+            printf("{\"event\":\"HID_RECOVERY_CONNECT\",\"attempt\":%u,\"limit\":2,\"status\":%u,\"same_peer_only\":true,\"old_acl_released\":true}\n",recovery.attempts,status);
+            if(status){failed=1;emit_link(3,status);stop_backend();}
+        }
         if(connected&&(control_count||edge_count||have_latest)&&send_requested&&stamp-send_request_time>.25){
+            if(stamp-last_flow_snapshot>=.25){last_flow_snapshot=stamp;trace_flow("send_wait_over_250ms");}
             send_requested=0;send_rearms++;if(send_rearms<=5)puts("{\"event\":\"SEND_NOW_REARM\",\"pending_real_input\":true,\"disconnect\":false}");request_send();
         }
         if(connected&&link_in_sniff&&sniff_exit_attempts<3&&stamp-last_sniff_exit>=5){
@@ -322,6 +394,7 @@ static void watchdog(btstack_timer_source_t*t){
         else if(stamp-last_heartbeat>5){failed=1;puts("{\"event\":\"MANAGED_HEARTBEAT_TIMEOUT\"}");stop_backend();}
         else if(!ever_connected&&stamp-boot>wait_seconds){failed=1;puts("{\"event\":\"PAIRING_WINDOW_TIMEOUT\"}");stop_backend();}
         else if(seconds>0&&connected&&stamp-ready>=seconds){completed=1;stop_backend();}
+        if(connected&&stamp-last_progress>=5)trace_flow("periodic");
         if(stamp-last_progress>=5){last_progress=stamp;printf("{\"event\":\"WIRELESS_WINDOW\",\"connected\":%s,\"source\":%"PRIu64",\"submitted\":%"PRIu64",\"hci_completed\":%"PRIu64",\"superseded\":%"PRIu64",\"stale\":%"PRIu64",\"host_commands\":%"PRIu64"}\n",connected?"true":"false",source_received,submitted,completions,source_superseded,source_stale,host_commands);
             printf("{\"event\":\"TX_HEALTH\",\"edge_queue\":%u,\"control_queue\":%u,\"digital_expired\":%"PRIu64",\"digital_resyncs\":%"PRIu64",\"send_rearms\":%"PRIu64",\"last_send_event_age_ms\":%.1f,\"sniff\":%s}\n",edge_count,control_count,digital_transitions_expired,digital_resyncs,send_rearms,last_send_event?1000*(stamp-last_send_event):0,link_in_sniff?"true":"false");}
     }
@@ -362,6 +435,25 @@ static int self_test(void){
     for(int i=0;i<40;i++){pressure.ticks=i;preserve_transition(&pressure,i);}
     VERIFY(!failed&&!stopping);VERIFY(digital_resyncs>0);VERIFY(edge_count<EDGE_QUEUE);
     prune_edges(1000);VERIFY(edge_count==0);
+    relay_usb_flow_t usb_flow;relay_hid_flow_t hid_flow;
+    relay_usb_flow_snapshot(&usb_flow);relay_hid_flow_snapshot(0xffff,&hid_flow);
+    VERIFY(usb_flow.acl_busy==0&&usb_flow.command_busy==0);VERIFY(hid_flow.found==0&&hid_flow.can_send==0);
+    failures+=relay_hid_lifecycle_self_test(&cases);
+    relay_recovery_t retry={0};
+    VERIFY(relay_recovery_begin(&retry,10,0));
+    VERIFY(relay_recovery_poll(&retry,11)==0); /* old ACL must finish closing */
+    relay_recovery_acl_down(&retry,11);
+    VERIFY(relay_recovery_poll(&retry,11.49)==0);
+    VERIFY(relay_recovery_poll(&retry,11.5)==1&&retry.attempts==1);
+    VERIFY(relay_recovery_poll(&retry,12)==0); /* never create two in flight */
+    relay_recovery_opened(&retry);
+    VERIFY(!retry.active&&retry.attempts==1); /* brief reconnect does not reset budget */
+    VERIFY(relay_recovery_begin(&retry,14,1));
+    VERIFY(relay_recovery_poll(&retry,14.5)==1&&retry.attempts==2);
+    relay_recovery_opened(&retry);
+    VERIFY(!relay_recovery_begin(&retry,16,1));
+    retry=(relay_recovery_t){0};VERIFY(relay_recovery_begin(&retry,20,0));
+    VERIFY(relay_recovery_poll(&retry,40)==-1&&retry.attempts==0);
 #undef VERIFY
     printf("{\"event\":\"NATIVE_SELF_TEST\",\"cases\":%d,\"failures\":%d,\"radio_opened\":false}\n",cases,failures);return failures?1:0;
 }
@@ -421,7 +513,9 @@ static int relay_main(int argc,char**argv){
     if(realtek&&firmware_folder){btstack_chipset_realtek_set_product_id(0x0852);btstack_chipset_realtek_set_firmware_folder_path(firmware_folder);btstack_chipset_realtek_set_config_folder_path(firmware_folder);hci_set_chipset(btstack_chipset_realtek_instance());hci_enable_custom_pre_init();}
     hci_set_link_key_db(btstack_link_key_db_memory_instance());
     gap_set_local_name(device_names[profile]);gap_set_class_of_device(0x2508);gap_set_bondable_mode(1);gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);gap_set_security_level(LEVEL_2);
-    gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_ROLE_SWITCH);gap_set_allow_role_switch(true);gap_discoverable_control(1);gap_connectable_control(1);
+    uint16_t policy=LM_LINK_POLICY_ENABLE_ROLE_SWITCH|(profile==0?LM_LINK_POLICY_ENABLE_SNIFF_MODE:0);
+    gap_set_default_link_policy_settings(policy);gap_set_allow_role_switch(true);gap_discoverable_control(1);gap_connectable_control(1);
+    printf("{\"event\":\"LINK_POLICY\",\"default_mask\":%u,\"sniff_allowed\":%s,\"registry_changes\":0}\n",policy,profile==0?"true":"false");
     l2cap_init();sdp_init();
     hid_sdp_record_t params={8,0,1,1,1,true,false,24,24,3200,profile_descriptor(),profile_descriptor_size(),device_names[profile]};
     hid_create_sdp_record(hid_record,0x10002,&params);sdp_register_service(hid_record);

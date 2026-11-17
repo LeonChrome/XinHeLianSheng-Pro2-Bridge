@@ -34,7 +34,7 @@ public sealed partial class MainViewModel
         "仅接管选中的适配器，先备份，停止后恢复。PS5 支持兼容马达反馈；蓝牙触觉音频、自适应扳机和主机认证未实现。";
     public string UnifiedConnectionTitle=>bluetoothOutput?wirelessOutput?.State??"选择手柄身份与蓝牙适配器，连接后转发":BleConnectionTitle;
     public string UnifiedConnectionHint=>bluetoothOutput?"选择输入与外发身份，停止后恢复系统蓝牙。"+(pro2Slots[0].IsBleInputSelected||pro2Slots[0].IsPro1WirelessSelected?"无线输入需要两只蓝牙适配器。":"USB 输入只需一只蓝牙适配器。"):BleConnectionHint;
-    public string UnifiedStateText=>bluetoothOutput?wirelessOutput?.RadioFinished==true?"转发已停止":wirelessOutput?.ReceiverConnected==true?"蓝牙外发中":wirelessOutput?.RadioStarted==true?"等待接收端配对":"蓝牙外发待连接":CompactStateText;
+    public string UnifiedStateText=>bluetoothOutput?wirelessOutput?.RadioFinished==true?"转发已停止":wirelessOutput?.ReceiverRecovering==true?"正在恢复蓝牙连接":wirelessOutput?.ReceiverConnected==true?"蓝牙外发中":wirelessOutput?.RadioStarted==true?"等待接收端配对":"蓝牙外发待连接":CompactStateText;
     public string UnifiedFooterText=>bluetoothOutput?"蓝牙转发 · 仅接管选中的适配器":"纯软件 · 无需外置接收器";
     public string Ps5ModeHint=>bluetoothOutput?"蓝牙 · 体感 · 普通震动":"触觉转换 · 陀螺仪";
     public string WirelessFirmware=>wirelessOutput?.Firmware??"未读取";

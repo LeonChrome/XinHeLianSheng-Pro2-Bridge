@@ -50,7 +50,7 @@ public sealed class ExperimentSession:IAsyncDisposable
     private long invalidIpc,usbBaselineConsumed;
     private Task<NintendoNfcTag>? captureTask;
     private int disposed;
-    private bool relayStarted,receiverConnected;
+    private bool relayStarted,receiverConnected,receiverRecovering;
     private volatile bool radioEnded;
     private volatile string radioEndReason="";
     private long tagGeneration;
@@ -62,6 +62,7 @@ public sealed class ExperimentSession:IAsyncDisposable
     public bool RadioStarted=>relayStarted;
     public WirelessPadMode OutputMode=>outputMode;
     public bool ReceiverConnected=>receiverConnected;
+    public bool ReceiverRecovering=>receiverRecovering&&!radioEnded;
     public bool RadioFinished=>radioEnded;
     public int RadioExitCode {get;private set;}=-1;
     public bool CanReadNfc=>(PhysicalSource?.CanReadUsbNfc==true||source is Pro2BleInputSource{IsRunning:true})&&captureTask is not{IsCompleted:false};
@@ -76,7 +77,7 @@ public sealed class ExperimentSession:IAsyncDisposable
         set{Volatile.Write(ref rumbleGain,double.IsFinite(value)?Math.Clamp(value,0,3):1);PhysicalSource?.SetRumbleGain(rumbleGain);if(source is Pro2BleInputSource ble)ble.SetRumbleGain(rumbleGain);}
     }
     public string Summary=>SourceMetrics;
-    public string State=>radioEnded?radioEndReason:inputPaused?"实体输入暂时停顿 · 已松开按键，等待恢复":receiverConnected?WirelessPadModes.Label(outputMode)+" 已连接 · 接收端频率待验证":relayStarted?protocol==null&&alternateProtocol==null?"发射器正在初始化，请稍候…":"等待接收设备配对 "+(outputMode==WirelessPadMode.Pro1?"Pro Controller":outputMode==WirelessPadMode.Xbox?"Xbox Wireless Controller":"Wireless Controller"):UsbConnected?"实体输入已连接 · 无线发射尚未启动":"未连接";
+    public string State=>radioEnded?radioEndReason:receiverRecovering?"接收端连接中断 · 正在恢复 HID 连接":inputPaused?"实体输入暂时停顿 · 已松开按键，等待恢复":receiverConnected?WirelessPadModes.Label(outputMode)+" 已连接 · 接收端频率待验证":relayStarted?protocol==null&&alternateProtocol==null?"发射器正在初始化，请稍候…":"等待接收设备配对 "+(outputMode==WirelessPadMode.Pro1?"Pro Controller":outputMode==WirelessPadMode.Xbox?"Xbox Wireless Controller":"Wireless Controller"):UsbConnected?"实体输入已连接 · 无线发射尚未启动":"未连接";
     public ExperimentSession(string directory,Action<string>? display=null,string? runtimeDirectory=null,bool integrated=false)
     {
         this.runtimeDirectory=Path.GetFullPath(runtimeDirectory??AppContext.BaseDirectory);this.integrated=integrated;
@@ -316,19 +317,24 @@ public sealed class ExperimentSession:IAsyncDisposable
                 {if(backendReady.TrySetResult())Log("[RELAY_IPC_READY] authenticated=true native_udp_bound=true");continue;}
                 if(frame.Kind==WirelessRelayMessage.LinkState&&frame.Payload.Length==8)
                 {
+                    byte linkState=frame.Payload[6];
                     lock(protocolGate)
                     {
-                        if(outputMode==WirelessPadMode.Pro1&&protocol==null){protocol=new WirelessPro1Protocol(frame.Payload[..6],Log);if(snapshot!=null)protocol.SetTag(snapshot);}
+                        if(outputMode==WirelessPadMode.Pro1&&(protocol==null||linkState==0))
+                        {
+                            if(protocol!=null)Log("[WIRELESS_PROTOCOL_RESET] reason=new_hid_handshake prior_host_commands="+protocol.HostCommands+" prior_nfc_commands="+protocol.NfcCommands+" old_report_and_mcu_mode_discarded=true");
+                            protocol=new WirelessPro1Protocol(frame.Payload[..6],Log);if(snapshot!=null)protocol.SetTag(snapshot);
+                        }
                         else if(outputMode!=WirelessPadMode.Pro1&&alternateProtocol==null)alternateProtocol=new(outputMode);
                     }
-                    receiverConnected=frame.Payload[6]==1;
+                    receiverConnected=linkState==1;receiverRecovering=linkState==4;
                     if(receiverConnected)QueuePlayerLights(1);
                     if(!receiverConnected&&frame.Payload[6]>=2)
                     {
                         feedbackCancellation?.Cancel();Interlocked.Increment(ref feedbackGeneration);
                         WriteFeedback(Pro2OutputPacketMapper.BuildOrdinaryPacket(0,0,"wireless-link-stop"));
                     }
-                    if(frame.Payload[6]>=2){radioEnded=true;radioEndReason="无线链路已停止 · 原因 "+frame.Payload[7]+" · 查看本轮日志";}
+                    if(linkState is 2 or 3){radioEnded=true;radioEndReason="无线链路已停止 · 原因 "+frame.Payload[7]+" · 查看本轮日志";}
                     Log("[RELAY_LINK] state="+frame.Payload[6]+" reason="+frame.Payload[7]+" actual_local_address="+Convert.ToHexString(frame.Payload.AsSpan(0,6)));
                     continue;
                 }
@@ -479,7 +485,7 @@ public sealed class ExperimentSession:IAsyncDisposable
                 try{await RestoreRadioAsync();}catch(Exception e){Log("[RADIO_RESTORE_REQUIRED] "+e.Message);}
                 ipc?.Dispose();radio?.Dispose();CryptographicOperations.ZeroMemory(session);
                 string secret=Path.Combine(DirectoryPath,"private-session.bin");if(File.Exists(secret))File.Delete(secret);
-                source=null;receiverConnected=false;relayStarted=false;
+                source=null;receiverConnected=false;receiverRecovering=false;relayStarted=false;
             }
             finally{journal.Writer.TryComplete();await journalTask.ConfigureAwait(false);disposeComplete.TrySetResult();}
         }

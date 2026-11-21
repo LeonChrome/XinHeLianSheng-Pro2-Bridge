@@ -11,4 +11,5 @@ void relay_hid_flow_snapshot(uint16_t cid,relay_hid_flow_t *flow);
 void relay_usb_flow_snapshot(relay_usb_flow_t *flow);
 int relay_hid_lifecycle_self_test(int *cases);
 int relay_hid_channels_open(uint16_t cid);
+void relay_hid_forget_acl(uint16_t handle);
 #endif

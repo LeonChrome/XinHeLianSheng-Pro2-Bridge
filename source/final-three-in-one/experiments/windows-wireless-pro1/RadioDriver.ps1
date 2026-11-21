@@ -28,10 +28,19 @@ function Read-Radio {
     [pscustomobject][ordered]@{instance=$InstanceId;hardware=$hardware;status=$entry.Status;problem_code=[int]$problem.Data;problem_name=[string]$entry.Problem;service=$key.Service;inf=$driver.InfPath;version=$driver.DriverVersion;provider=$driver.ProviderName;date=$driver.DriverDate;windows=[Environment]::OSVersion.Version.ToString()}
 }
 function Test-RadioHealthy($radio){$radio.status -eq 'OK' -and $radio.problem_code -eq 0 -and (-not $radio.PSObject.Properties['health_stable'] -or $radio.health_stable)}
-function Wait-RadioHealthy([int]$Seconds=15){
+function Test-RadioIdentity($Radio,$Expected){
+    $Radio.service -ieq $Expected.service -and $Radio.inf -ieq $Expected.inf -and $Radio.version -eq $Expected.version
+}
+function Wait-RadioHealthy([int]$Seconds=22,[double]$StableSeconds=12,$Expected=$null){
     $watch=[Diagnostics.Stopwatch]::StartNew();$stableSince=-1.0;$last=$null
     while($watch.Elapsed.TotalSeconds -lt $Seconds){
-        try{$last=Read-Radio;if(Test-RadioHealthy $last){if($stableSince -lt 0){$stableSince=$watch.Elapsed.TotalSeconds};if($watch.Elapsed.TotalSeconds-$stableSince -ge 3){return $last}}else{$stableSince=-1}}catch{$stableSince=-1}
+        try{
+            $last=Read-Radio
+            if((Test-RadioHealthy $last) -and (-not $Expected -or (Test-RadioIdentity $last $Expected))){
+                if($stableSince -lt 0){$stableSince=$watch.Elapsed.TotalSeconds}
+                if($watch.Elapsed.TotalSeconds-$stableSince -ge $StableSeconds){return $last}
+            }else{$stableSince=-1}
+        }catch{$stableSince=-1}
         Start-Sleep -Milliseconds 300
     }
     if($last){$last|Add-Member -NotePropertyName health_stable -NotePropertyValue $false -Force;return $last};throw 'Selected radio did not reappear after the bounded wait.'
@@ -61,7 +70,7 @@ function Check-StatePath {
 function Save-Json($name,$value){$value|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $StateDirectory $name) -Encoding UTF8}
 function Log($value){Add-Content -LiteralPath (Join-Path $StateDirectory 'driver.log') -Value ((Get-Date -Format 'HH:mm:ss.fff')+' '+$value) -Encoding UTF8}
 function Read-Baseline {
-    $record=Get-Content -LiteralPath (Join-Path $StateDirectory 'baseline.json') -Raw|ConvertFrom-Json
+    $record=Get-Content -LiteralPath (Join-Path $StateDirectory 'baseline.json') -Raw -Encoding UTF8|ConvertFrom-Json
     if($record.adapter.instance -ine $InstanceId -or $record.adapter.hardware -ine $hardware -or $record.adapter.service -ine 'BTHUSB'){throw 'Backup does not belong to this system radio.'}
     if($record.adapter.windows -ne [Environment]::OSVersion.Version.ToString()){throw 'Windows build changed since backup; manual review required.'}
     $allowed=[IO.Path]::GetFullPath($StateDirectory).TrimEnd('\')+'\'
@@ -125,18 +134,24 @@ public static class Pro2ExactRadioDriver {
     }
     [Pro2ExactRadioDriver]::Install($InstanceId,$inf,(-not $ProbeOnly))
 }
+function Test-OwnedBackendPath([string]$Path,[string]$RadioInstance){
+    if(-not $Path -or -not [IO.Path]::IsPathRooted($Path)){return $false}
+    $name=[IO.Path]::GetFileName($Path)
+    $name -ieq 'pro2-wireless-pro1-radio.exe' -or
+        ($name -ieq 'Pro1UpstreamComparisonRealtek.exe' -and $RadioInstance -match '^USB\\VID_0BDA&PID_0852\\[A-Z0-9&_.-]+$')
+}
 function Stop-OwnedRadio {
     $file=Join-Path $StateDirectory 'radio-process.json'
     if(-not(Test-Path -LiteralPath $file)){return}
-    $record=Get-Content -LiteralPath $file -Raw|ConvertFrom-Json
+    $record=Get-Content -LiteralPath $file -Raw -Encoding UTF8|ConvertFrom-Json
     $process=Get-Process -Id $record.pid -ErrorAction SilentlyContinue
     $baseline=Read-Baseline
     $expected=$baseline.native_executable
-    if(-not $expected -or -not [IO.Path]::IsPathRooted($expected) -or [IO.Path]::GetFileName($expected) -ine 'pro2-wireless-pro1-radio.exe' -or $record.exe -ine $expected){throw 'Recorded native process path is invalid.'}
+    if(-not(Test-OwnedBackendPath $expected $InstanceId) -or $record.exe -ine $expected){throw 'Recorded native process path is invalid.'}
     if($process -and $process.Path -ieq $expected -and $process.StartTime.ToUniversalTime().Ticks -eq $record.start_ticks){
         if((Get-FileHash -LiteralPath $expected).Hash -ne $baseline.native_sha256){throw 'Owned native backend changed since preparation; refusing to terminate another program.'}
         Log 'Stopping exact owned radio backend before driver restoration.'
-        Stop-Process -Id $process.Id -Force
+        Stop-Process -InputObject $process -Force
         Start-Sleep -Milliseconds 500
     }
 }
@@ -144,20 +159,23 @@ function Restore-Radio {
     $baseline=Read-Baseline
     Stop-OwnedRadio
     $before=Read-Radio
-    if($before.service -ieq $baseline.adapter.service -and $before.inf -ieq $baseline.adapter.inf -and $before.version -eq $baseline.adapter.version -and (Test-RadioHealthy $before)){
-        Save-Json 'restore-result.json' ([ordered]@{success=$true;status='ALREADY_RESTORED';after=$before;reboot_required=$false});return
+    if((Test-RadioIdentity $before $baseline.adapter) -and (Test-RadioHealthy $before)){
+        $before=Wait-RadioHealthy -Seconds 14 -Expected $baseline.adapter
+        if(Test-RadioHealthy $before){
+            Save-Json 'restore-result.json' ([ordered]@{success=$true;status='ALREADY_RESTORED';after=$before;stable_seconds=12;reboot_required=$false});return
+        }
     }
     if($before.service -ine 'WinUSB' -and $before.inf -ine $baseline.adapter.inf){throw 'Unexpected driver changed by another application; restore refused.'}
     $inf=Join-Path $env:windir ('INF\'+$baseline.adapter.inf)
     if(-not(Test-Path -LiteralPath $inf) -or (Get-FileHash -LiteralPath $inf).Hash -ne $baseline.original_inf_sha256){throw 'Original staged INF changed; backup retained, manual review required.'}
     Log ('Restoring original driver on exact instance: '+$baseline.adapter.inf)
     $reboot=Install-Exact $inf
-    $after=Wait-RadioHealthy
+    $after=Wait-RadioHealthy -Expected $baseline.adapter
     if(-not(Test-RadioHealthy $after) -and $after.service -ieq 'BTHUSB' -and $after.inf -ieq $baseline.adapter.inf -and $after.problem_code -in @(10,43) -and -not $script:restartStages.ContainsKey('restore')){
-        Restart-SelectedRadio 'restore';$after=Wait-RadioHealthy
+        Restart-SelectedRadio 'restore';$after=Wait-RadioHealthy -Expected $baseline.adapter
     }
-    $ok=$after.service -ieq $baseline.adapter.service -and $after.inf -ieq $baseline.adapter.inf -and $after.version -eq $baseline.adapter.version -and (Test-RadioHealthy $after)
-    Save-Json 'restore-result.json' ([ordered]@{success=$ok;status=if($ok){'ORIGINAL_DRIVER_RESTORED'}else{'RESTORE_NEEDS_ATTENTION'};after=$after;reboot_required=$reboot})
+    $ok=(Test-RadioIdentity $after $baseline.adapter) -and (Test-RadioHealthy $after)
+    Save-Json 'restore-result.json' ([ordered]@{success=$ok;status=if($ok){'ORIGINAL_DRIVER_RESTORED'}else{'RESTORE_NEEDS_ATTENTION'};after=$after;stable_seconds=if($ok){12}else{0};reboot_required=$reboot})
     Log ('Restore completed: '+$ok+' reboot_required='+$reboot)
     if(-not $ok){throw 'Original driver not active yet. See restore result; no automatic reboot.'}
 }
@@ -175,7 +193,7 @@ $acl=Get-Acl -LiteralPath $StateDirectory
 if(-not $acl.AreAccessRulesProtected -or @($acl.Access|Where-Object{$_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $identity.User.Value}).Count){throw 'Driver state directory is not private to the current user.'}
 $lockName='Local\PRO2RadioDriver_'+([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash([Text.Encoding]::UTF8.GetBytes($InstanceId.ToUpperInvariant())))).Replace('-','')
 $mutex=New-Object Threading.Mutex($false,$lockName)
-$owned=$false;$changed=$false
+$owned=$false;$changed=$false;$restorationAttempted=$false
 try{
     try{$owned=$mutex.WaitOne(0)}catch [Threading.AbandonedMutexException]{$owned=$true}
     if(-not $owned){throw 'Selected radio is already managed by another driver session.'}
@@ -202,12 +220,12 @@ try{
     if($LASTEXITCODE -ne 0){throw 'Original device configuration export failed.'}
     $files=@(Get-ChildItem -LiteralPath $backup -File -Recurse|ForEach-Object{[pscustomobject]@{relative=$_.FullName.Substring($StateDirectory.TrimEnd('\').Length+1);sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
     $nativeExecutable=if($BackendPath){[IO.Path]::GetFullPath($BackendPath)}else{Join-Path (Split-Path -Parent $owner.Path) 'pro2-wireless-pro1-radio.exe'}
-    if([IO.Path]::GetFileName($nativeExecutable) -ine 'pro2-wireless-pro1-radio.exe' -or -not(Test-Path -LiteralPath $nativeExecutable -PathType Leaf)){throw 'Exact native radio backend is missing.'}
+    if(-not(Test-OwnedBackendPath $nativeExecutable $InstanceId) -or -not(Test-Path -LiteralPath $nativeExecutable -PathType Leaf)){throw 'Exact native radio backend is missing.'}
     Save-Json 'baseline.json' ([ordered]@{adapter=$before;original_inf_sha256=$originalHash;files=$files;created=(Get-Date).ToString('o');owner_pid=$OwnerPid;owner_start_ticks=$OwnerStartTicks;owner_exe=$owner.Path;native_executable=$nativeExecutable;native_sha256=(Get-FileHash -LiteralPath $nativeExecutable).Hash;binding_inf=$package.inf;binding_inf_sha256=(Get-FileHash -LiteralPath $package.inf).Hash;binding_catalog_sha256=(Get-FileHash -LiteralPath $package.catalog).Hash})
     Log ('Fresh current-Windows baseline saved; original='+$before.inf+' version='+$before.version)
     $null=Read-Baseline
     if(-not(Test-RadioHealthy $before)){
-        Restart-SelectedRadio 'prepare';$recovered=Wait-RadioHealthy
+        Restart-SelectedRadio 'prepare';$recovered=Wait-RadioHealthy -Expected $before
         Save-Json 'prepare-recovery-result.json' $recovered
         if(-not(Test-RadioHealthy $recovered) -or $recovered.service -ine $before.service -or $recovered.inf -ine $before.inf -or $recovered.version -ne $before.version){throw ('Selected radio recovery failed: service='+$recovered.service+' inf='+$recovered.inf+' status='+$recovered.status+' problem_code='+$recovered.problem_code+'. Original driver retained; no WinUSB binding attempted.')}
         Log 'Selected radio recovered; original driver identity unchanged.'
@@ -226,10 +244,14 @@ try{
         if(-not $owner -or $owner.StartTime.ToUniversalTime().Ticks -ne $OwnerStartTicks){Log 'Owner exited; restore automatically.';break}
         Start-Sleep -Milliseconds 500
     }
+    $restorationAttempted=$true
     Restore-Radio
 }catch{
     $errorMessage=$_.Exception.Message;Log ('FAILED: '+$errorMessage)
-    if($changed){try{Restore-Radio}catch{Log ('AUTO_RESTORE_FAILED: '+$_.Exception.Message);Save-Json 'restore-result.json' ([ordered]@{success=$false;error=$_.Exception.Message})}}
+    if($changed -and -not $restorationAttempted){try{Restore-Radio}catch{Log ('AUTO_RESTORE_FAILED: '+$_.Exception.Message)}}
+    if($owned -and ($changed -or $Operation -eq 'Restore') -and -not(Test-Path -LiteralPath (Join-Path $StateDirectory 'restore-result.json'))){
+        Save-Json 'restore-result.json' ([ordered]@{success=$false;error=$errorMessage})
+    }
     if(-not(Test-Path -LiteralPath (Join-Path $StateDirectory 'ready.json'))){Save-Json 'error.json' ([ordered]@{success=$false;error=$errorMessage})}
     exit 1
 }finally{

@@ -58,7 +58,7 @@ public sealed class ExperimentWindow:Window
         Selector("实体 USB 输入",devices,0);Selector("蓝牙发射器",radios,1);Selector("无线报告节奏",cadence,2);Row(selections,2);
         var actions=new WrapPanel{Margin=new(0,0,0,14)};
         foreach(var button in new[]{refresh,connect,start,capture,load,stop,restore}){button.Margin=new(0,0,9,8);button.Padding=new(13,8,13,8);actions.Children.Add(button);}
-        var remove=new Button{Content="移除标签快照",Padding=new(13,8,13,8),Margin=new(0,0,9,8)};remove.Click+=(_,_)=>session?.RemoveTag();actions.Children.Add(remove);
+        var remove=new Button{Content="移除标签快照",Padding=new(13,8,13,8),Margin=new(0,0,9,8)};remove.Click+=async(_,_)=>{if(session!=null)await ActAsync(()=>session.RemoveTagAsync(lifetime.Token));};actions.Children.Add(remove);
         var folder=new Button{Content="打开本轮日志",Padding=new(13,8,13,8),Margin=new(0,0,0,8)};actions.Children.Add(folder);Row(actions,3);
         status.FontSize=15;status.FontWeight=FontWeights.SemiBold;status.Margin=new(0,0,0,10);
         var connectionState=new StackPanel();connectionState.Children.Add(status);connectionState.Children.Add(radioHint);
@@ -132,15 +132,14 @@ public sealed class ExperimentWindow:Window
     private async Task StartAsync()
     {
         if(radios.SelectedItem is not WirelessRelayRadio selected)throw new InvalidOperationException("未发现可选择的实验发射适配器。");
+        if(!selected.Ready)throw new InvalidOperationException("请选择已就绪的 WinUSB 发射器。");
         if(session?.UsbConnected!=true)await ConnectAsync();
         string radioPath=Path.Combine(runtimeDirectory,"pro2-wireless-pro1-radio.exe");
         string? firmware=Path.Combine(runtimeDirectory,"firmware");
         double hz=cadence.SelectedIndex switch{1=>133,2=>250,_=>1000.0/15};
         try
         {
-            status.Text="备份所选发射器并准备无线模式；如有管理员弹窗请允许";
-            selected=await session!.PrepareRadioAsync(selected,lifetime.Token,continuous:integrated);
-            await session.StartRadioAsync(selected,radioPath,firmware,integrated?0:180,lifetime.Token,hz);status.Text=session.State;
+            await session!.StartRadioAsync(selected,radioPath,firmware,integrated?0:180,lifetime.Token,hz);status.Text=session.State;
         }
         catch(Exception error)
         {
@@ -157,14 +156,13 @@ public sealed class ExperimentWindow:Window
         refresh.IsEnabled=!busy&&session?.RadioStarted!=true;devices.IsEnabled=!busy&&session==null;radios.IsEnabled=!busy&&session?.RadioStarted!=true;
         cadence.IsEnabled=!busy&&session?.RadioStarted!=true;
         connect.IsEnabled=!busy&&session?.UsbConnected!=true&&devices.SelectedItem!=null;
-        start.IsEnabled=!busy&&session?.RadioStarted!=true&&radios.SelectedItem is WirelessRelayRadio selectedRadio&&(selectedRadio.Ready||selectedRadio.CanPrepare)&&devices.SelectedItem!=null;
+        start.IsEnabled=!busy&&session?.RadioStarted!=true&&radios.SelectedItem is WirelessRelayRadio{Ready:true}&&devices.SelectedItem!=null;
         restore.IsEnabled=!busy&&radios.SelectedItem is WirelessRelayRadio;
         capture.IsEnabled=!busy&&session?.CanReadNfc==true;load.IsEnabled=!busy&&session!=null;stop.IsEnabled=!busy&&session!=null;
         radioHint.Text=radios.SelectedItem switch
         {
             WirelessRelayRadio{Ready:true}=>"发射器已准备。USB 连接后可启动无线 Pro1。",
-            WirelessRelayRadio{CanPrepare:true} selected=>"仅接管 "+selected.Name+"；先备份，异常时尝试重启所选适配器，停止后恢复原驱动。需要管理员授权。",
-            WirelessRelayRadio=>"所选蓝牙当前尚无可用外发后端，未修改驱动；可换选已支持的 Realtek / Actions。",
+            WirelessRelayRadio=>"所选设备尚未就绪。请选择显示“发射模式 · 就绪”的设备。",
             _=>"请选择一个蓝牙适配器；多个适配器时不会自动替你决定。USB 输入和 Pro2 读卡可单独测试。"
         };
     }

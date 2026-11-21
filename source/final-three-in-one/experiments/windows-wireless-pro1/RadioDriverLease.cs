@@ -33,7 +33,7 @@ public sealed class RadioDriverLease:IAsyncDisposable
         if(process.ExitCode!=0)throw new IOException("发射器检查失败："+await error);
         return await output;
     }
-    public static async Task<RadioDriverLease?> PrepareAsync(WirelessRelayRadio radio,Action<string> log,CancellationToken token,string? runtimeDirectory=null,bool continuous=false)
+    public static async Task<RadioDriverLease?> PrepareAsync(WirelessRelayRadio radio,Action<string> log,CancellationToken token,string? runtimeDirectory=null,bool continuous=false,bool upstreamSwitch=false)
     {
         if(radio.Ready)return null; // Never restore a WinUSB configuration we did not change.
         if(!radio.CanPrepare)throw new NotSupportedException("所选蓝牙尚无可用外发后端，未修改驱动。可选已支持的 Realtek / Actions。");
@@ -52,7 +52,7 @@ public sealed class RadioDriverLease:IAsyncDisposable
         using var owner=Process.GetCurrentProcess();
         var info=PowerShell(helper,true);
         Add(info,"-Operation","Prepare","-InstanceId",radio.InstanceId,"-StateDirectory",state,"-OwnerPid",Environment.ProcessId.ToString(),"-OwnerStartTicks",owner.StartTime.ToUniversalTime().Ticks.ToString());
-        Add(info,"-BackendPath",Path.Combine(runtimeDirectory,"pro2-wireless-pro1-radio.exe"),"-MaxMinutes",continuous?"0":"12");
+        Add(info,"-BackendPath",Path.Combine(runtimeDirectory,upstreamSwitch?ExperimentSession.UpstreamFilename:"pro2-wireless-pro1-radio.exe"),"-MaxMinutes",continuous?"0":"12");
         log("[RADIO_PREPARE] instance="+radio.InstanceId+" state="+state+" backup=current_windows_driver scope=exact_instance system_bluetooth_temporarily_unavailable=true restore=automatic_and_cmd");
         Process? helperProcess;
         try{helperProcess=Process.Start(info)??throw new IOException("未能启动管理员准备程序。");}
@@ -93,8 +93,15 @@ public sealed class RadioDriverLease:IAsyncDisposable
     public void RecordRadio(Process child)
     {
         if(!Prepared)return;
-        File.WriteAllText(Path.Combine(StateDirectory,"radio-process.json"),JsonSerializer.Serialize(new
-        {pid=child.Id,start_ticks=child.StartTime.ToUniversalTime().Ticks,exe=child.StartInfo.FileName}));
+        string record=Path.Combine(StateDirectory,"radio-process.json");
+        string temporary=record+"."+Guid.NewGuid().ToString("N")+".tmp";
+        try
+        {
+            File.WriteAllText(temporary,JsonSerializer.Serialize(new
+                {pid=child.Id,start_ticks=child.StartTime.ToUniversalTime().Ticks,exe=child.StartInfo.FileName}));
+            File.Move(temporary,record,true);
+        }
+        finally{File.Delete(temporary);}
     }
     public async Task RestoreAsync()
     {
@@ -103,7 +110,7 @@ public sealed class RadioDriverLease:IAsyncDisposable
         {
             if(Restored)return;
             await File.WriteAllTextAsync(Path.Combine(StateDirectory,"restore.request"),"owner_stop");
-            using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(75));
             while(true)
             {
                 timeout.Token.ThrowIfCancellationRequested();
@@ -141,7 +148,7 @@ public sealed class RadioDriverLease:IAsyncDisposable
             using var process=Process.Start(info)??throw new IOException("未能启动恢复程序。");
             // A live guard may restore first; the exact helper refuses competing
             // ownership. Read the result, not just the helper process exit code.
-            using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(TimeSpan.FromSeconds(75));
             while(true)
             {
                 timeout.Token.ThrowIfCancellationRequested();

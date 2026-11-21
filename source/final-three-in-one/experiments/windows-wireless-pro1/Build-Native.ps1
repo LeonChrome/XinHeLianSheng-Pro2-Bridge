@@ -2,7 +2,7 @@
 param(
     [string]$BtstackRoot=(Join-Path $PSScriptRoot '../../../../third_party/btstack'),
     [string]$Compiler='clang',
-    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../../../../artifacts/pro2-v3.5.2/native')
+    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../../../../artifacts/pro2-v4.0/native')
 )
 $ErrorActionPreference='Stop'
 if(-not(Test-Path -LiteralPath $Compiler)){
@@ -11,6 +11,7 @@ if(-not(Test-Path -LiteralPath $Compiler)){
     $Compiler=$resolved.Source
 }
 if(-not(Test-Path -LiteralPath (Join-Path $BtstackRoot 'LICENSE'))){throw 'BTstack checkout and original license required.'}
+& (Join-Path $PSScriptRoot 'Assert-SourceRevision.ps1') -Root $BtstackRoot -Commit 'e38553977a25fb0b55b383c72c289be0975f422c' -ManifestHash '0652b6e9a83066a603ffb1c3acaa9a870b5f3bfd52626d3bd920f51d57a8f3eb'
 $null=New-Item -ItemType Directory -Path $BuildDirectory -Force
 $native=Join-Path $PSScriptRoot 'native'
 $headers=@($native,'src','platform/windows','platform/embedded','platform/posix','chipset/realtek','3rd-party/bluedroid/encoder/include','3rd-party/bluedroid/decoder/include','3rd-party/rijndael','3rd-party/yxml')
@@ -21,6 +22,9 @@ $classic=@('btstack_link_key_db_memory','sdp_client','sdp_server','sdp_util','de
 $sources=@($core|ForEach-Object{Join-Path $BtstackRoot ('src/'+$_+'.c')})
 $sources+=@($classic|ForEach-Object{Join-Path $BtstackRoot ('src/classic/'+$_+'.c')})
 $sources+=@((Join-Path $BtstackRoot 'platform/windows/btstack_run_loop_windows.c'),(Join-Path $BtstackRoot 'chipset/realtek/btstack_chipset_realtek.c'),(Join-Path $native 'target_transport.c'),(Join-Path $native 'hid_device_checked.c'),(Join-Path $native 'wireless_pro1.c'))
+$sources+=(Join-Path $native 'relay_btkey_adapter.c')
+$sources+=(Join-Path $native 'relay_safe_trace.c')
+$sources+=(Join-Path $native 'relay_transition_capture.c')
 $flags+=('-I'+(Join-Path $BtstackRoot 'src/classic'))
 $objects=@()
 foreach($source in $sources){
@@ -37,12 +41,14 @@ $exe=Join-Path $BuildDirectory 'pro2-wireless-pro1-radio.exe'
 if($LASTEXITCODE -ne 0){throw 'Native radio link failed.'}
 & $exe '--self-test'
 if($LASTEXITCODE -ne 0){throw 'Native offline checks failed.'}
+& $exe '--btkey-self-test'
+if($LASTEXITCODE -ne 0){throw 'btkeyLib engine offline checks failed.'}
 Copy-Item -LiteralPath (Join-Path $BtstackRoot 'LICENSE') -Destination (Join-Path $BuildDirectory 'BTstack-LICENSE.txt')
 $revision=if(Test-Path -LiteralPath (Join-Path $BtstackRoot '.git')){
     & git -C $BtstackRoot rev-parse HEAD
 }elseif(Test-Path -LiteralPath (Join-Path $BtstackRoot 'BTSTACK_COMMIT.txt')){
     (Get-Content -LiteralPath (Join-Path $BtstackRoot 'BTSTACK_COMMIT.txt') -Raw).Trim()
 }else{'unrecorded_source_revision'}
-$sourceHashes=@{};Get-ChildItem -LiteralPath $native -File|ForEach-Object{$sourceHashes[$_.Name]=(Get-FileHash -LiteralPath $_.FullName).Hash}
+$sourceHashes=@{};Get-ChildItem -LiteralPath $native -File -Recurse|ForEach-Object{$relative=$_.FullName.Substring($native.Length+1).Replace('\','/');$sourceHashes[$relative]=(Get-FileHash -LiteralPath $_.FullName).Hash}
 @{executable=$exe;sha256=(Get-FileHash -LiteralPath $exe).Hash;btstack_revision=$revision;sources=$sourceHashes;purpose='LOCAL_PERSONAL_EXPERIMENT_ONLY';system_changes=0}|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $BuildDirectory 'build.json') -Encoding UTF8
 Write-Output ('RADIO_EXE='+$exe)

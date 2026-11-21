@@ -10,6 +10,9 @@ $function=$ast.Find({param($node)$node -is [Management.Automation.Language.Funct
 if(-not $function){throw 'Owned-process guard not found.'}
 # Load only this function. No entry point, PnP, driver install or UAC is run.
 Invoke-Expression $function.Extent.Text
+$allow=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-OwnedBackendPath'},$true)
+Invoke-Expression $allow.Extent.Text
+$InstanceId='USB\VID_0BDA&PID_0852\ANOTHER_0852'
 $StateDirectory=$OutputDirectory
 $expected=Join-Path $OutputDirectory 'pro2-wireless-pro1-radio.exe'
 [IO.File]::WriteAllText($expected,'inert fixture; never executed')
@@ -20,7 +23,7 @@ $record|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $StateDirectory 'radi
 $script:fakeProcess=$null;$script:stopped=0
 function Read-Baseline {$baseline}
 function Get-Process {param([int]$Id,[object]$ErrorAction) $script:fakeProcess}
-function Stop-Process {param([int]$Id,[switch]$Force) $script:stopped++}
+function Stop-Process {param([object]$InputObject,[switch]$Force) $script:stopped++}
 function Start-Sleep {param([int]$Milliseconds)}
 function Log {param($Message)}
 Stop-OwnedRadio

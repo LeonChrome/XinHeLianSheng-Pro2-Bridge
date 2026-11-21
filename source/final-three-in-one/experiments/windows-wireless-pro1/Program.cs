@@ -10,13 +10,17 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        bool probeHome=args.Contains("--probe-home");
+        if(probeHome&&(!args.Contains("--relay-auto")||!args.Contains("--switch-upstream")))return 64;
         if(args.Contains("--relay-auto"))
         {
             string output=Value(args,"--output")??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"PRO2WirelessReceiverControlBoard","wireless_relay_logs",DateTime.Now.ToString("yyyyMMdd-HHmmss-fff"));
             string? instance=Value(args,"--radio-instance");
-            int seconds=int.TryParse(Value(args,"--seconds"),out var duration)?Math.Clamp(duration,15,600):60;
+            int seconds=int.TryParse(Value(args,"--seconds"),out var duration)?Math.Clamp(duration,15,600):probeHome?180:60;
+            if(probeHome&&seconds<70)return 64;
             double hz=double.TryParse(Value(args,"--hz"),System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out var frequency)?frequency:133;
-            return RelayAutoAsync(output,instance,seconds,hz,args.Contains("--read-nfc")).GetAwaiter().GetResult();
+            return RelayAutoAsync(output,instance,seconds,hz,args.Contains("--read-nfc"),args.Contains("--verify-switch"),
+                args.Contains("--switch-upstream"),args.Contains("--prepare-radio"),Value(args,"--pairing-state"),Value(args,"--runtime"),probeHome).GetAwaiter().GetResult();
         }
         if(args.Contains("--probe"))
         {
@@ -90,9 +94,11 @@ internal static class Program
         }
         catch(Exception e){session.Log("[USB_CAPTURE_FAILED] "+e);return 1;}
     }
-    private static async Task<int> RelayAutoAsync(string output,string? instance,int seconds,double hz,bool readNfc)
+    private static async Task<int> RelayAutoAsync(string output,string? instance,int seconds,double hz,bool readNfc,bool verifySwitch,
+        bool upstream,bool prepare,string? previousState,string? runtime,bool probeHome)
     {
-        await using var session=new ExperimentSession(output);
+        runtime=Path.GetFullPath(runtime??AppContext.BaseDirectory);
+        await using var session=new ExperimentSession(output,runtimeDirectory:runtime){UseUpstreamSwitch=upstream,UpstreamPairingState=previousState,ProbeUpstreamHome=probeHome};
         try
         {
             var physical=NintendoHidDevice.Enumerate().Where(d=>d.Kind!=NintendoInputKind.Pro1Bluetooth).ToArray();
@@ -100,13 +106,15 @@ internal static class Program
             var radios=WirelessRelayEnvironment.EnumerateRadios();
             var selected=radios.SingleOrDefault(r=>r.InstanceId.Equals(instance,StringComparison.OrdinalIgnoreCase));
             if(selected==null)throw new IOException("自动测试必须用 --radio-instance 明确指定一只蓝牙发射器。");
+            bool ready=upstream?selected.SwitchReady:selected.Ready;
+            if(!ready&&!(upstream&&prepare&&selected.SwitchCanPrepare))throw new IOException(upstream?selected.SwitchHint:"Pro1 外发需要已就绪的 WinUSB 适配器。");
             using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(seconds+320));
             await session.ConnectUsbAsync(physical[0],timeout.Token);
-            selected=await session.PrepareRadioAsync(selected,timeout.Token);
+            if(!ready)selected=await session.PrepareRadioAsync(selected,timeout.Token);
             if(readNfc&&session.CanReadNfc)await session.CaptureNfcAsync(timeout.Token);
-            await session.StartRadioAsync(selected,Path.Combine(AppContext.BaseDirectory,"pro2-wireless-pro1-radio.exe"),Path.Combine(AppContext.BaseDirectory,"firmware"),seconds,timeout.Token,hz);
+            await session.StartRadioAsync(selected,Path.Combine(runtime,"pro2-wireless-pro1-radio.exe"),Path.Combine(runtime,"firmware"),seconds,timeout.Token,upstream?60:hz,verifySwitchInitialization:verifySwitch);
             while(!session.RadioFinished)await Task.Delay(500,timeout.Token);
-            return session.RadioExitCode==0?0:1;
+            return session.RadioExitCode==0&&(!upstream||session.UpstreamTransportObserved)&&(!probeHome||session.UpstreamHomeObserved)?0:1;
         }
         catch(Exception e){session.Log("[AUTOMATIC_RELAY_FAILED] "+e);return 1;}
     }

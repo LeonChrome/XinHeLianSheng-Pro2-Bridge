@@ -75,6 +75,18 @@ USB 250Hz、提交频率、HCI 完成回执和接收端真实输入频率分别�
 
 ## 编译及离线验证
 
+### Switch 一代 HOME 测试
+
+在主机打开「手柄 → 更改握法／顺序」。上游对照程序的 `--home-test --log <新日志>` 会等待玩家灯握手，五秒后短按一次 HOME，再观察连接二十秒。日志中的 `press_report` 和 `release_report` 分别表示按下和松开已进入发给主机的 HID 报告。主机是否切回桌面需看主机画面。
+
+本机 Realtek `0BDA:0852` 在 HOME 后保持了连接，Switch 继续回包。Actions `10D7:B012` 在同一测试中拒绝了 `Read Encryption Key Size`，电脑在发送第一帧输入前断开。遇到这一组日志时，更改 USB 输入速率或反复按 HOME 都无法推进握手。
+
+4.0 在 USB 输入、蓝牙输出和 Pro1 组合下默认使用一代 Switch 模式。可选择蓝牙发射器，转发按键、体感和震动，并向主机提供只读 amiibo。Pro2 有线输入可读实体卡，Pro1 有线输入可载入标签文件。操作与兼容范围见[蓝牙转发使用说明](INTEGRATED.md)。
+
+同一台电脑、Realtek 和 Switch 的实测中，实体 Pro2 USB 输入约 250 Hz。使用上游默认 Windows 计时，回连后的约 96 秒内发出了 3,293 份 `0x30` 报告，约 34 Hz。转发进程改为在 HID 握手后申请 1 ms 计时精度，使用已有配对记录再次连上后，诊断程序在第 5 秒发送了一次 HOME；之后 60.031 秒发出 3,667 份 `0x30` 报告，约 61.1 Hz，收到 305 份主机回包。直到测试主动结束，HID 通道持续连接。日常使用只传实体按键，计时精度在转发结束时释放。主机画面和游戏中的震感需单独验收。
+
+诊断时先看 `CLASSIC_ACL`。`status=0x04` 表示发射器此次寻呼超时，尚未建立蓝牙链路；可唤醒 Switch 并打开「更改握法／顺序」。`RELAY_INPUT` 记录原生发射进程收到的 USB 帧数。只有完成 HID 握手且 `reports30` 与 `peer_output` 都有增长，才能确认手柄报告与主机回包均已出现。
+
 `Build-Native.ps1` 使用之前的官方 BTstack 源码和 LLVM-MinGW 工具链，产出 `pro2-wireless-pro1-radio.exe`。`Publish-Experiment.ps1` 构建实验窗口并打包本地文件夹。
 
 共用回归项目新增 `WirelessPro1RegressionTests` 与 `UsbNfcRegressionTests`。`--wireless-only` 验证 IPC 信封、Pro1 握手、按键位置、六轴单位、NFC 分块重发/CRC/540 字节往返，以及 USB NFC 失败恢复。这些测试不打开蓝牙，不使用实体标签。原生 `--self-test` 也不打开无线电；`--verify-ipc-fixture 文件` 用于 .NET / C 数据格式互通检查。

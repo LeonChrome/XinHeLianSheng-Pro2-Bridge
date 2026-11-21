@@ -16,6 +16,7 @@ public sealed partial class MainViewModel
     private string wirelessLastLog="";
     private int wirelessRearCancelRequested;
     private ICommand? outputDestinationCommand,refreshRadiosCommand,readWirelessNfcCommand,removeWirelessTagCommand;
+    private ICommand? confirmSwitchPairingCommand;
     public bool IsBluetoothOutput=>bluetoothOutput;
     public bool IsLocalOutput=>!bluetoothOutput;
     public bool CanUseNativePro2Output=>!bluetoothOutput;
@@ -27,14 +28,41 @@ public sealed partial class MainViewModel
     public WirelessRelayRadio? SelectedWirelessRadio
     {
         get=>selectedWirelessRadio;
-        set{selectedWirelessRadio=value;if(value!=null)lastWirelessRadio=value.InstanceId;OnPropertyChanged();OnPropertyChanged(nameof(WirelessOutputHint));}
+        set{selectedWirelessRadio=value;if(value!=null)lastWirelessRadio=value.InstanceId;OnPropertyChanged();OnPropertyChanged(nameof(WirelessOutputHint));OnPropertyChanged(nameof(WirelessRadioSummary));OnPropertyChanged(nameof(WirelessRadioDetails));OnPropertyChanged(nameof(CanSelectUpstreamSwitch));}
     }
+    public string WirelessRadioSummary=>selectedWirelessRadio is {} radio?radio.ChipLabel+" · "+radio.Service+" · "+radio.StateLabel+"。"+
+        (UpstreamSelected?radio.SwitchHint:IsPro1Selected&&!radio.Ready?"Pro1 需要已就绪的发射器。":radio.SelectionHint):
+        WirelessRadios.Count==0?"未发现当前连接的蓝牙适配器，插入后刷新。":lastWirelessRadio!=null?"上次选择的适配器已离线，请重新选择。":"请选择一只蓝牙发射器；故障和未支持的设备也会列出。";
+    public string WirelessRadioDetails=>selectedWirelessRadio is {} radio?radio.Name+"\n"+radio.InstanceId+"\n驱动："+radio.DriverProvider+" "+radio.DriverVersion+" "+radio.DriverDate+"\n设备状态："+radio.DeviceStatus:"仅列出当前连接的适配器；刷新和选择不会修改驱动。";
     public string WirelessOutputHint=>"外发："+(pro2Slots[0].SelectedMode==ViiperVirtualMode.Pro2?"请选择 Pro1、Xbox 或 PS5":WirelessPadModes.Label(WirelessPadModes.FromVirtual(pro2Slots[0].SelectedMode)))+"。切换身份后，接收端可能需要忘记旧配对再连接。"+
         (pro2Slots[0].IsBleInputSelected||pro2Slots[0].IsPro1WirelessSelected?"无线输入需要另一只由 Windows 管理的蓝牙适配器。":"USB 输入只需一只蓝牙发射器。")+
-        "仅接管选中的适配器，先备份，停止后恢复。PS5 支持兼容马达反馈；蓝牙触觉音频、自适应扳机和主机认证未实现。";
-    public string UnifiedConnectionTitle=>bluetoothOutput?wirelessOutput?.State??"选择手柄身份与蓝牙适配器，连接后转发":BleConnectionTitle;
-    public string UnifiedConnectionHint=>bluetoothOutput?"选择输入与外发身份，停止后恢复系统蓝牙。"+(pro2Slots[0].IsBleInputSelected||pro2Slots[0].IsPro1WirelessSelected?"无线输入需要两只蓝牙适配器。":"USB 输入只需一只蓝牙适配器。"):BleConnectionHint;
-    public string UnifiedStateText=>bluetoothOutput?wirelessOutput?.RadioFinished==true?"转发已停止":wirelessOutput?.ReceiverRecovering==true?"正在恢复蓝牙连接":wirelessOutput?.ReceiverConnected==true?"蓝牙外发中":wirelessOutput?.RadioStarted==true?"等待接收端配对":"蓝牙外发待连接":CompactStateText;
+        (UpstreamSelected?"停止后恢复原蓝牙驱动。":IsPro1Selected?"请选择已就绪的发射器。":"仅接管选中的适配器，先备份，停止后恢复。PS5 支持兼容马达反馈；蓝牙触觉音频、自适应扳机和主机认证未实现。");
+    private bool useUpstreamSwitch=true;
+    public bool CanSelectUpstreamSwitch=>WirelessRelayRuntime.HasUpstreamRealtek&&IsPro1Selected&&
+        pro2Slots[0].SelectedInputKind is ControllerInputKind.Pro1Usb or ControllerInputKind.Pro2Usb;
+    private bool UpstreamSelected=>CanSelectUpstreamSwitch&&useUpstreamSwitch;
+    public bool UseUpstreamSwitch
+    {
+        get=>useUpstreamSwitch;
+        set{useUpstreamSwitch=value;OnPropertyChanged();OnPropertyChanged(nameof(WirelessRadioSummary));OnPropertyChanged(nameof(WirelessOutputHint));}
+    }
+    public bool UseSwitchPairingCompatibility {get;set;}
+    public bool SwitchPairingConfirmationPending=>bluetoothOutput&&
+        wirelessOutput is { RadioFinished:false, PairingConfirmationPending:true };
+    public bool ShowUnifiedConnect=>!SwitchPairingConfirmationPending;
+    public bool CanConfirmSwitchPairing=>!Busy&&SwitchPairingConfirmationPending;
+    private bool WaitingForSwitchPairing=>bluetoothOutput&&wirelessOutput is
+        { DeferSwitchPairing:true, RadioStarted:true, RadioFinished:false, ReceiverConnected:false, ReceiverRecovering:false };
+
+    public string UnifiedConnectionTitle=>SwitchPairingConfirmationPending?"已收到 Switch 配对请求":
+        bluetoothOutput?wirelessOutput?.State??"选择手柄身份与蓝牙适配器，连接后转发":BleConnectionTitle;
+    public string UnifiedConnectionHint=>SwitchPairingConfirmationPending
+        ?"请在 18 秒内用 Switch 触屏或另一只已连接的手柄退出“更改握法／顺序”，然后点击下方确认按钮。"
+        :WaitingForSwitchPairing?"在 Switch 的“手柄 → 更改握法／顺序”中发起配对，出现确认按钮时按提示操作。"
+        :bluetoothOutput?(IsPro1Selected?"在 Switch 的“更改握法／顺序”页面完成配对。":"选择输入与外发身份，停止后恢复系统蓝牙。")+
+            (pro2Slots[0].IsBleInputSelected||pro2Slots[0].IsPro1WirelessSelected?"无线输入需要两只蓝牙适配器。":"USB 输入只需一只蓝牙适配器。"):BleConnectionHint;
+    public string UnifiedStateText=>SwitchPairingConfirmationPending?"等待确认配对":
+        bluetoothOutput?wirelessOutput?.RadioFinished==true?"转发已停止":wirelessOutput?.ReceiverRecovering==true?"正在恢复蓝牙连接":wirelessOutput?.AwaitingPro1Initialization==true?"蓝牙已连接 · 简单输入":wirelessOutput?.ReceiverConnected==true?"蓝牙外发中":wirelessOutput?.RadioStarted==true?"等待接收端配对":"蓝牙外发待连接":CompactStateText;
     public string UnifiedFooterText=>bluetoothOutput?"蓝牙转发 · 仅接管选中的适配器":"纯软件 · 无需外置接收器";
     public string Ps5ModeHint=>bluetoothOutput?"蓝牙 · 体感 · 普通震动":"触觉转换 · 陀螺仪";
     public string WirelessFirmware=>wirelessOutput?.Firmware??"未读取";
@@ -43,9 +71,14 @@ public sealed partial class MainViewModel
     public bool UnifiedCanConnect=>bluetoothOutput?!Busy:CompactCanConnect;
     public bool UnifiedCanStop=>!Busy&&(wirelessOutput!=null||CompactCanStop);
     public string WirelessInputSummary=>wirelessOutput?.Summary??"";
-    public string WirelessNfcStatus=>wirelessNfcStatus;
-    public bool CanReadWirelessNfc=>!Busy&&wirelessOutput?.CanReadNfc==true;
-    public bool CanUseWirelessNfc=>!Busy&&wirelessOutput?.OutputMode==WirelessPadMode.Pro1;
+    public string WirelessNfcStatus=>wirelessOutput switch
+    {
+        {UseUpstreamSwitch:true,RadioFinished:true}=>"转发已结束。",
+        {UseUpstreamSwitch:true} engine=>engine.UpstreamNfcStatus,
+        _=>wirelessNfcStatus
+    };
+    public bool CanReadWirelessNfc=>!Busy&&wirelessOutput is {RadioFinished:false,CanReadNfc:true};
+    public bool CanUseWirelessNfc=>!Busy&&wirelessOutput is {OutputMode:WirelessPadMode.Pro1,RadioStarted:true,RadioFinished:false};
     public ICommand SelectOutputDestinationCommand=>outputDestinationCommand??=new RelayCommand(parameter=>RunExclusiveAsync("切换输出位置",async token=>
     {
         bool next=parameter?.ToString()=="bluetooth";if(next==bluetoothOutput)return;
@@ -57,16 +90,35 @@ public sealed partial class MainViewModel
         RefreshWirelessPresentation();
     },allowWirelessOperation:true));
     public ICommand RefreshWirelessRadiosCommand=>refreshRadiosCommand??=new RelayCommand(_=>RefreshWirelessRadiosAsync());
+    public ICommand ConfirmSwitchPairingCommand=>confirmSwitchPairingCommand??=new RelayCommand(_=>
+        RunExclusiveAsync("确认 Switch 配对",async token=>
+        {
+            if(wirelessOutput is not { PairingConfirmationPending:true } engine)
+                throw new IOException("本次请求已经结束，请在 Switch 重新进入配对页。");
+            await engine.ConfirmPairingAsync(token);
+            Status="已发送确认，等待 Switch 完成连接。";
+        },allowWirelessOperation:true));
     public ICommand ReadWirelessNfcCommand=>readWirelessNfcCommand??=new RelayCommand(_=>RunExclusiveAsync("读取转发手柄 NFC",async token=>
     {
         if(wirelessOutput==null)throw new IOException("先连接实体手柄。");
-        await wirelessOutput.CaptureNfcAsync(token);wirelessNfcStatus="已读取 540 字节只读快照。"+(CanUseWirelessNfc?"接收端发起 NFC 扫描后应答；是否识别以接收端结果为准。":"当前身份不提供 NFC 外发。");OnPropertyChanged(nameof(WirelessNfcStatus));
+        await wirelessOutput.CaptureNfcAsync(token);
+        wirelessNfcStatus=wirelessOutput.OutputMode==WirelessPadMode.Pro1?"实体卡已读取，等待接收端扫描。":"已读取 540 字节只读快照。";
+        OnPropertyChanged(nameof(WirelessNfcStatus));
     },allowWirelessOperation:true));
-    public ICommand RemoveWirelessTagCommand=>removeWirelessTagCommand??=new RelayCommand(_=>{wirelessOutput?.RemoveTag();wirelessNfcStatus="标签快照已移除。";OnPropertyChanged(nameof(WirelessNfcStatus));});
+    public ICommand RemoveWirelessTagCommand=>removeWirelessTagCommand??=new RelayCommand(_=>RunExclusiveAsync("移除转发标签",async token=>
+    {
+        if(wirelessOutput==null)return;
+        await wirelessOutput.RemoveTagAsync(token);
+        wirelessNfcStatus="已移除标签。";OnPropertyChanged(nameof(WirelessNfcStatus));
+    },allowWirelessOperation:true));
     public async Task RefreshWirelessRadiosAsync()
     {
         if(previewOnly)return;
         var found=await Task.Run(WirelessRelayEnvironment.EnumerateRadios);
+        ApplyWirelessRadioSnapshot(found);
+    }
+    private void ApplyWirelessRadioSnapshot(IReadOnlyList<WirelessRelayRadio> found)
+    {
         WirelessRadios.Clear();foreach(var radio in found)WirelessRadios.Add(radio);
         SelectedWirelessRadio=WirelessRelayRadioSelection.Resolve(found,lastWirelessRadio);
     }
@@ -74,21 +126,37 @@ public sealed partial class MainViewModel
     {
         if(previewOnly){Status="界面预览不连接设备。";return;}
         if(!WirelessRelayRuntime.IsAvailable)throw new IOException("此构建没有无线转发组件。");
-        var selected=SelectedWirelessRadio??throw new IOException("请选择蓝牙发射适配器。多个适配器时不会自动替你选择。");
+        var choice=SelectedWirelessRadio??throw new IOException("请选择蓝牙发射适配器。多个适配器时不会自动替你选择。");
+        var radios=WirelessRelayEnvironment.EnumerateRadios();
+        ApplyWirelessRadioSnapshot(radios);
+        var selected=radios.SingleOrDefault(r=>r.InstanceId.Equals(choice.InstanceId,StringComparison.OrdinalIgnoreCase))??throw new IOException("所选蓝牙适配器已离线，请刷新后重新选择。");
         if(pro2Slots.Any(controller=>!controller.CanChangeConnection))throw new IOException("请先完成或取消 NFC 读取。");
         var slot=pro2Slots[0];var kind=slot.SelectedInputKind;
+        var mode=WirelessPadModes.FromVirtual(slot.SelectedMode);
+        bool upstreamSwitch=UpstreamSelected;
+        bool useExistingWinUsb=mode==WirelessPadMode.Pro1&&!upstreamSwitch;
+        if(useExistingWinUsb&&!selected.Ready)
+            throw new IOException("Pro1 外发需要已就绪的 WinUSB 适配器。请选择列表中显示“发射模式 · 就绪”的设备。");
+        bool prepare=upstreamSwitch?!selected.SwitchReady:!selected.Ready;
+        if(prepare&&!(upstreamSwitch?selected.SwitchCanPrepare:selected.CanPrepare))
+            throw new IOException(upstreamSwitch?selected.SwitchHint:"所选适配器："+selected.StateLabel+"。"+selected.SelectionHint);
         var hid=slot.SelectedPhysicalDevice;
         bool wirelessInput=kind is ControllerInputKind.Pro2Ble or ControllerInputKind.Pro1Bluetooth;
-        if(wirelessInput&&!WirelessRelayEnvironment.EnumerateRadios().Any(r=>r.InstanceId!=selected.InstanceId&&r.Service.Equals("BTHUSB",StringComparison.OrdinalIgnoreCase)))
+        if(wirelessInput&&!radios.Any(r=>!r.InstanceId.Equals(selected.InstanceId,StringComparison.OrdinalIgnoreCase)&&r.SystemBluetoothReady))
             throw new IOException("无线输入需要另一只系统蓝牙接收手柄。可改用 USB 输入，或保留另一只 Windows 蓝牙适配器。");
-        var mode=WirelessPadModes.FromVirtual(slot.SelectedMode);
         string runtime=await Task.Run(()=>WirelessRelayRuntime.EnsureExtracted(),token);
         await StopAsync();
         foreach(var controller in pro2Slots){await DisconnectPro2SlotAsync(controller,token);controller.PhysicalInput=null;controller.RefreshFromSource();}
         wirelessNfcStatus="";
         WirelessRelayModeActive=true;
         wirelessLastLog=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"PRO2WirelessReceiverControlBoard","wireless_relay_logs",DateTime.Now.ToString("yyyyMMdd-HHmmss-fff"));
-        var engine=new ExperimentSession(wirelessLastLog,AppendLog,runtime,integrated:true){RumbleGain=rumbleMultiplier};wirelessOutput=engine;
+        var engine=new ExperimentSession(wirelessLastLog,AppendLog,runtime,integrated:true)
+        {
+            RumbleGain=rumbleMultiplier,
+            UseUpstreamSwitch=upstreamSwitch,
+            DeferSwitchPairing=mode==WirelessPadMode.Pro1&&!upstreamSwitch&&UseSwitchPairingCompatibility
+        };
+        wirelessOutput=engine;
         var face=new FaceButtonMapper();var rear=new RearButtonMapper();ViiperVirtualMode mappedMode=slot.SelectedMode;
         Interlocked.Exchange(ref wirelessRearCancelRequested,0);long previousInputTicks=0;
         engine.TransformInput=(state,ticks)=>
@@ -105,17 +173,19 @@ public sealed partial class MainViewModel
         {
             // Prepare the transmitter before creating a wireless input link.
             // The remaining Windows radio then owns the receiving side.
-            if(wirelessInput)selected=await engine.PrepareRadioAsync(selected,token,continuous:true);
+            if(wirelessInput&&prepare)selected=await engine.PrepareRadioAsync(selected,token,continuous:true);
             if(kind==ControllerInputKind.Pro2Ble)await engine.ConnectBleAsync(token);
             else
             {
                 if(hid==null)throw new IOException("请选择要连接的实体手柄。");
                 await engine.ConnectUsbAsync(hid,token);
             }
-            if(!wirelessInput)selected=await engine.PrepareRadioAsync(selected,token,continuous:true);
-            await engine.StartRadioAsync(selected,Path.Combine(runtime,"pro2-wireless-pro1-radio.exe"),Path.Combine(runtime,"firmware"),0,token,SelectedWirelessRate,mode);
-            Status="正在转发为 "+WirelessPadModes.Label(mode)+"；接收端实测性能尚待验证。";
-            AppendLog("[UNIFIED_OUTPUT] destination=bluetooth mode="+mode+" input="+kind+" radio="+selected.InstanceId+" requested_hz="+SelectedWirelessRate);
+            if(!wirelessInput&&prepare)selected=await engine.PrepareRadioAsync(selected,token,continuous:true);
+            double reportRate=mode==WirelessPadMode.Pro1 ? 60 : SelectedWirelessRate;
+            await engine.StartRadioAsync(selected,Path.Combine(runtime,"pro2-wireless-pro1-radio.exe"),Path.Combine(runtime,"firmware"),0,token,reportRate,mode);
+            Status=engine.DeferSwitchPairing?"请打开 Switch 的“更改握法／顺序”，等待配对请求。"
+                :"正在转发为 "+WirelessPadModes.Label(mode)+"；接收端实测性能尚待验证。";
+            AppendLog("[UNIFIED_OUTPUT] destination=bluetooth mode="+mode+" input="+kind+" radio="+selected.InstanceId+" requested_hz="+reportRate);
         }
         catch(Exception error)
         {
@@ -129,7 +199,7 @@ public sealed partial class MainViewModel
         if(engine!=null)
         {
             try{await engine.DisposeAsync();}
-            finally{wirelessOutput=null;WirelessRelayModeActive=false;RefreshWirelessPresentation();}
+            finally{wirelessOutput=null;wirelessNfcStatus="";WirelessRelayModeActive=false;RefreshWirelessPresentation();}
         }
     }
     public Task LoadWirelessTagAsync(string path)=>RunExclusiveAsync("载入只读标签",async token=>
@@ -156,6 +226,10 @@ public sealed partial class MainViewModel
     }
     private void RefreshWirelessPresentation()
     {
-        foreach(string property in new[]{nameof(IsBluetoothOutput),nameof(IsLocalOutput),nameof(Ps5ModeHint),nameof(CanUseLocalTools),nameof(CanUseNativePro2Output),nameof(HasWirelessOutput),nameof(UnifiedConnectionTitle),nameof(UnifiedConnectionHint),nameof(UnifiedStateText),nameof(UnifiedFooterText),nameof(UnifiedConnectText),nameof(UnifiedCanConnect),nameof(UnifiedCanStop),nameof(WirelessOutputHint),nameof(WirelessInputSummary),nameof(WirelessNfcStatus),nameof(CanReadWirelessNfc),nameof(CanUseWirelessNfc),nameof(CanOperate)})OnPropertyChanged(property);
+        foreach(string property in new[]{nameof(IsBluetoothOutput),nameof(IsLocalOutput),nameof(Ps5ModeHint),nameof(CanUseLocalTools),nameof(CanUseNativePro2Output),nameof(HasWirelessOutput),nameof(UnifiedConnectionTitle),nameof(UnifiedConnectionHint),nameof(UnifiedStateText),nameof(UnifiedFooterText),nameof(UnifiedConnectText),nameof(UnifiedCanConnect),nameof(UnifiedCanStop),nameof(WirelessOutputHint),nameof(WirelessRadioSummary),nameof(WirelessRadioDetails),nameof(WirelessInputSummary),nameof(WirelessNfcStatus),nameof(CanReadWirelessNfc),nameof(CanUseWirelessNfc),nameof(CanOperate)})OnPropertyChanged(property);
+        OnPropertyChanged(nameof(SwitchPairingConfirmationPending));
+        OnPropertyChanged(nameof(ShowUnifiedConnect));
+        OnPropertyChanged(nameof(CanConfirmSwitchPairing));
+        OnPropertyChanged(nameof(CanSelectUpstreamSwitch));
     }
 }

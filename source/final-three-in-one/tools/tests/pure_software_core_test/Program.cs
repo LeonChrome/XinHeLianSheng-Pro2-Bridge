@@ -25,6 +25,36 @@ internal static class Program
         Directory.CreateDirectory(output);
         try
         {
+            if(args.Contains("--list-wireless-radios"))
+            {
+                var radios=WirelessRelayEnvironment.EnumerateRadios();
+                var snapshot=new{capturedAt=DateTimeOffset.Now,enumeration="CM_GETIDLIST_FILTER_PRESENT",radioOpened=false,driverChanges=0,radios};
+                File.WriteAllText(Path.Combine(output,"actual-wireless-radios.json"),System.Text.Json.JsonSerializer.Serialize(snapshot,new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
+                var text=new StringBuilder("ENUMERATION=CM_GETIDLIST_FILTER_PRESENT\nRADIO_OPENED=false\nDRIVER_CHANGES=0\nCOUNT="+radios.Count+"\n");
+                foreach(var radio in radios)
+                    text.AppendLine(radio.Label+" | instance="+radio.InstanceId+" service="+radio.Service+" problem_code="+radio.ProblemCode+" status_known="+radio.StatusKnown+" devnode_status=0x"+radio.DevNodeStatus.ToString("X")+" ready="+radio.Ready+" can_prepare="+radio.CanPrepare);
+                File.WriteAllText(Path.Combine(output,"actual-wireless-radios.txt"),text.ToString());
+                Console.Write(text.ToString());
+                return 0;
+            }
+            if (args.Contains("--desktop-notice-only"))
+            {
+                var vm = new MainViewModel(previewOnly: true);
+                var notices = new List<(string Title, string Body)>();
+                vm.UserNotificationRequested += (title, body) => notices.Add((title, body));
+                var notify = typeof(MainViewModel).GetMethod("NotifyPro2Offline", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                var offline = new Pro2BleDisconnectSignal(DateTimeOffset.UtcNow, 1, "gatt_session", "", "Disconnected",
+                    "DeviceNotConnected", 300, 78, false, false);
+                notify.Invoke(vm, [1, offline, true]);
+                notify.Invoke(vm, [1, offline, true]);
+                Check(notices.Count == 1 && notices[0] == ("手柄 1 · 已断开","正在自动重连。"), "short reconnect notice is sent once per disconnection");
+                notify.Invoke(vm, [2, offline with { Detector = "fd2_input_timeout" }, false]);
+                Check(notices[1].Title == "手柄 2 · 输入中断" && notices[1].Body.Contains("唤醒"), "input timeout has a distinct title and manual action");
+                notify.Invoke(vm, [1, offline with { ConnectionSequence = 2, BluetoothErrorCode = "DisabledByUser" }, true]);
+                Check(notices[2].Body == "请打开 Windows 蓝牙。", "disabled radio offers a specific action");
+                Console.WriteLine("PASS disconnect notifications and duplicate suppression.");
+                return 0;
+            }
             if(args.Contains("--relay-ui-only"))
             {
                 TestUnifiedRelayUi();Console.WriteLine("PASS: "+checks+" unified relay UI assertions; preview only, radio_opened=false.");return 0;
@@ -33,6 +63,7 @@ internal static class Program
             {
                 WirelessControllerRegressionTests.Run(Check);
                 WirelessPro1RegressionTests.Run(Check);
+                BtkeyEngineIntegrationTests.Run(Check);
                 WirelessRelayStartupRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
                 WirelessRelayIntegrationRegressionTests.RunAsync(Check,output).GetAwaiter().GetResult();
                 Console.WriteLine("PASS: "+checks+" relay integration assertions; radio_opened=false driver_changes=0.");return 0;
@@ -41,6 +72,7 @@ internal static class Program
             {
                 WirelessControllerRegressionTests.Run(Check);
                 WirelessPro1RegressionTests.Run(Check);
+                BtkeyEngineIntegrationTests.Run(Check);
                 UsbNfcRegressionTests.RunAsync(Check).GetAwaiter().GetResult();
                 WirelessPro1RegressionTests.WriteIpcFixtures(Path.Combine(output,"中文-ipc-fixtures"));
                 WirelessControllerRegressionTests.WriteFixtures(Path.Combine(output,"multimode-ipc-fixtures"));
@@ -1036,6 +1068,7 @@ internal static class Program
         Save(window,"ui-unified-local.png");
         vm.SelectOutputDestinationCommand.Execute("bluetooth");Pump(window);
         Check(vm.IsBluetoothOutput&&!vm.CanUseNativePro2Output&&vm.IsPro1Selected,"inline Bluetooth destination offers supported identities");
+        Check(!vm.UseSwitchPairingCompatibility&&vm.UnifiedConnectionHint.Contains("在 Switch"),"Pro1 defaults to standard pairing inside the Switch menu");
         Check(vm.UnifiedConnectText=="连接并转发"&&!vm.Busy,"inline connection command is available");
         foreach(string mode in new[]{"Xbox","PS5","Pro1"})
         {
@@ -1043,6 +1076,17 @@ internal static class Program
             Check(vm.WirelessOutputHint.Contains(mode=="PS5"?"PS5":mode),"wireless role selection "+mode);
         }
         vm.SelectCompactModeCommand.Execute("Pro2");Pump(window);Check(vm.IsPro1Selected,"unsupported native Pro2 Bluetooth choice is blocked");
+        var failedRadio=new WirelessRelayRadio(@"USB\VID_0BDA&PID_0852\RADIO_A","Realtek Bluetooth Adapter","BTHUSB",true,true,ProblemCode:43,DevNodeStatus:0x400);
+        var actionsRadio=new WirelessRelayRadio(@"USB\VID_10D7&PID_B012\RADIO_B","Bluetooth USB Adapter","WinUSB",true,false);
+        vm.WirelessRadios.Add(failedRadio);vm.WirelessRadios.Add(actionsRadio);Pump(window);
+        var radioSelector=Descendants<ComboBox>(window).Single(c=>ReferenceEquals(c.ItemsSource,vm.WirelessRadios));
+        radioSelector.SelectedItem=failedRadio;Pump(window);
+        Check(vm.SelectedWirelessRadio?.InstanceId==failedRadio.InstanceId&&vm.WirelessRadioSummary.Contains("代码 43"),"home selector can select the present failed radio and explain code 43");
+        Check(vm.WirelessRadioSummary.Contains("Pro1 需要已就绪"),"Pro1 explains its existing transmitter requirement before connection");
+        Check(Descendants<TextBlock>(window).Any(t=>t.IsVisible&&t.Text==vm.WirelessRadioSummary),"selected radio status is visible on home without expanding advanced settings");
+        Save(window,"ui-unified-radio-code43.png");
+        radioSelector.SelectedItem=actionsRadio;Pump(window);
+        Check(vm.SelectedWirelessRadio?.InstanceId==actionsRadio.InstanceId&&vm.WirelessRadioSummary.Contains("Actions"),"home selector can switch to the other exact radio instance");
         Save(window,"ui-unified-bluetooth.png");
         Check(Descendants<ScrollViewer>(window).Where(s=>s.IsVisible).All(s=>s.ComputedHorizontalScrollBarVisibility!=Visibility.Visible),"unified home has no horizontal overflow");
         vm.SelectOutputDestinationCommand.Execute("local");Pump(window);

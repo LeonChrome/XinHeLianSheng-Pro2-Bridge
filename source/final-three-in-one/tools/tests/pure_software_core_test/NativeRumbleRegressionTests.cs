@@ -14,8 +14,8 @@ internal static class NativeRumbleRegressionTests
         for (int sample = 0; sample < 256; sample++)
         {
             var report = new byte[64]; random.NextBytes(report);
-            report[0] = 2; report[1] = (byte)(0x50 | sample % 16);
-            report[17] = (byte)(0x50 | (sample + 7) % 16);
+            report[0] = 2; report[1] = (byte)(((5 + sample % 3) << 4) | sample % 16);
+            report[17] = (byte)(((5 + (sample + 1) % 3) << 4) | (sample + 7) % 16);
             byte[] original = report.ToArray();
             check(Pro2NativeRumbleEncoder.TryEncode(report, ble, 1, out _, out _), "native unity accepted");
             check(ble[0] == 0 && report.AsSpan(1, 32).SequenceEqual(ble.AsSpan(1)),
@@ -29,6 +29,11 @@ internal static class NativeRumbleRegressionTests
                 {
                     int offset = side + 1 + 5 * frame;
                     ulong input = Read(report, offset), output = Read(ble, offset);
+                    if (frame >= (report[side] >> 4) - 4)
+                    {
+                        check(input == output, "gain preserves unused payload bytes beyond this motor's count");
+                        continue;
+                    }
                     check((input & ~ampMask) == (output & ~ampMask), "gain never changes frequency/control bits");
                     foreach (int shift in new[] { 10, 30 })
                     {
@@ -55,14 +60,27 @@ internal static class NativeRumbleRegressionTests
             "converted encoder preserves amplitude/frequency layout and owns only sequence nibbles");
         // First slot silent, later slot active: must not be dropped or called neutral.
         Array.Clear(fixture, 2, 5); Write(fixture, 12, 200UL << 30);
+        check(!Pro2NativeRumbleEncoder.HasEffect(fixture), "unused sample bytes cannot start a motor");
+        fixture[1] = 0x7a; fixture[17] = 0x63;
         var feedback = new byte[34]; fixture.AsSpan(1, 32).CopyTo(feedback); feedback[32] = 1;
         check(Pro2OutputPacketMapper.TryMapFeedback(ViiperDeviceProfile.Pro2, feedback, out var packet, out _) &&
             packet.PreserveNativePayload && packet.Active, "native mode tags full report; third slot alone is active");
         check(Pro2NativeRumbleEncoder.TryEncode(packet.Report, ble, 1, out bool activeLater, out _) && activeLater &&
             feedback.AsSpan(0, 32).SequenceEqual(ble.AsSpan(1)), "VIIPER feedback to BLE retains all 32 bytes");
+        check(Pro2BleRumblePacketEncoder.TryEncodeRaw02(fixture, 0x1e, ble, out _, out _) &&
+            ble[1] == 0x7e && ble[17] == 0x6e && ble[16] == fixture[16],
+            "converted BLE retains asymmetric sample counts and stamps only the sequence");
+        fixture[63] = 0xbc;
+        var usb = new byte[64];
+        var generated = new Pro2OutputPacket(fixture, "switch1-hd", true, null);
+        check(Pro2NativeRumbleEncoder.TryEncodeUsb(generated, usb, 31, 1, out _) &&
+            usb[0] == 2 && usb[1] == 0x7f && usb[17] == 0x6f && usb[63] == 0xbc &&
+            usb.AsSpan(2,15).SequenceEqual(fixture.AsSpan(2,15)), "converted USB keeps count, trailing bytes and all samples");
+        check(Pro2NativeRumbleEncoder.TryEncodeUsb(generated with {PreserveNativePayload=true}, usb, 31, 1, out _) &&
+            usb.SequenceEqual(fixture), "native USB leaves the entire source report intact at unity");
         feedback[32] = 2;
         check(!Pro2OutputPacketMapper.TryMapFeedback(ViiperDeviceProfile.Pro2, feedback, out _, out _), "LED-only never becomes rumble");
-        fixture[1] = 0x7a;
+        fixture[1] = 0x8a;
         check(Pro2NativeRumbleEncoder.TryEncode(fixture, ble, 1, out _, out _) &&
             fixture.AsSpan(1, 32).SequenceEqual(ble.AsSpan(1)), "unknown format remains opaque at unity");
         check(!Pro2NativeRumbleEncoder.TryEncode(fixture, ble, 0.5, out _, out _), "unknown non-unity format is not guessed");
@@ -79,11 +97,11 @@ internal static class NativeRumbleRegressionTests
         foreach (string path in Directory.GetFiles(directory, "*-feedback.bin"))
         {
             byte[] wire = File.ReadAllBytes(path);
-            byte[] usb = File.ReadAllBytes(path.Replace("-feedback.bin", "-usb.bin"));
+            byte[] originalUsb = File.ReadAllBytes(path.Replace("-feedback.bin", "-usb.bin"));
             check(Pro2OutputPacketMapper.TryMapFeedback(ViiperDeviceProfile.Pro2, wire, out var mapped, out _) &&
                 mapped.PreserveNativePayload, "actual Go output selects native encoding: " + Path.GetFileName(path));
             check(Pro2NativeRumbleEncoder.TryEncode(mapped.Report, ble, 1, out _, out _) &&
-                usb.AsSpan(1, 32).SequenceEqual(ble.AsSpan(1)), "Go USB-to-feedback-to-BLE exact payload equality");
+                originalUsb.AsSpan(1, 32).SequenceEqual(ble.AsSpan(1)), "Go USB-to-feedback-to-BLE exact payload equality");
         }
     }
 
@@ -133,7 +151,7 @@ internal static class NativeRumbleRegressionTests
             "native production enqueue can deliver an active effect before unsupported input");
         queue.TryEnqueueNative(native, 0.5, Tick(8), out _, out _);
         queue.TryEnqueueNative(native, 0.5, Tick(9), out _, out _);
-        native[1] = 0x70;
+        native[1] = 0x80;
         check(!queue.TryEnqueueNative(native, 0.5, Tick(10), out _, out var error) &&
             error.Contains("safety_stop_queued=true"), "unknown scaled report explicitly reports safe fallback");
         check(queue.Count == 1 && queue.SafetyStops == 1 && queue.SafetyDiscarded == 2 &&

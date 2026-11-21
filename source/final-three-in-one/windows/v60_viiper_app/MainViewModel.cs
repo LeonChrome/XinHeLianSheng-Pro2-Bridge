@@ -214,6 +214,18 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             StickProcessingOption.FromLabel(userSettings.StickProcessingLabel).Label;
         runtimeBatteryRefreshEnabled = userSettings.RuntimeBatteryRefreshEnabled;
         launchAtLoginEnabled = !previewOnly && userSettings.LaunchAtLoginEnabled && StartupLaunchRegistration.IsEnabled();
+        if (launchAtLoginEnabled)
+        {
+            try
+            {
+                if (StartupLaunchRegistration.RefreshExisting())
+                    AppendLog("[STARTUP] existing login command updated to current EXE and tray mode.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[STARTUP] login command update failed: " + FirstLine(ex.Message));
+            }
+        }
         autoReconnectOnStartupEnabled = userSettings.AutoReconnectOnStartupEnabled;
         if (userSettings.LaunchAtLoginEnabled != launchAtLoginEnabled)
         {
@@ -1498,6 +1510,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             return;
         }
 
+        if (AutoReconnectOnStartupEnabled && IsLoopbackHost(Host) && usbipPromptDeferred)
+        {
+            startupAutomationWaitingForUsbip = true;
+            Status = "未找到 USBIP。打开助手选择程序后，可继续自动连接。";
+            AppendLog("[STARTUP_AUTO] waiting_for_usbip=true foreground_required=true");
+            return;
+        }
         startupAutomationRan = true;
         if(!previewOnly&&App.RecoveryLaunch is { } recovery&&App.RecoveryResult is { } recoveryResult)
         {await CompleteBluetoothRecoveryAsync(recovery,recoveryResult);return;}
@@ -1737,6 +1756,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         if (IsLoopbackHost(Host))
         {
             UsbipRuntime? runtime = FindConfiguredUsbip();
+            // A runtime can also disappear after startup checked it. Leave
+            // installation to a visible window before opening any dialogs.
+            if (runtime == null && DeferMissingUsbipPrompt())
+                throw new InvalidOperationException("未找到 USBIP，请打开助手选择程序或安装。");
             if (runtime == null && await AskForMissingUsbipAsync(cancellationToken)) runtime = FindConfiguredUsbip();
             if (runtime == null)
             {
@@ -2428,8 +2451,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             startupAutomationNoticeSent = true;
             RequestUserNotification(
                 "开机自动连接已暂停",
-                "5 分钟内没有连接到 " + SelectedModeLabel +
-                " 的 Pro2。已暂停自动检索，避免 Windows BLE 长时间反复建立连接；请手动点击模式或进入游戏恢复。");
+                "5 分钟未找到手柄。唤醒后点击「进入游戏」。");
         }
         RaiseConnectionStateChanged();
         OnPropertyChanged(nameof(StartupAutomationSummary));
@@ -2438,6 +2460,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
     private async Task CancelStartupAutomationForManualOperationAsync(string operation)
     {
+        if (startupAutomationWaitingForUsbip)
+        {
+            startupAutomationWaitingForUsbip = false;
+            startupAutomationRan = true;
+        }
         if (!startupAutomationActive && !startupAutomationPaused)
         {
             return;
@@ -2508,33 +2535,22 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
         lastDisconnectNoticeSequence[noticeIndex] = signal.ConnectionSequence;
         string severity = signal.IsAbnormal ? "abnormal" : "offline";
-        string title = signal.IsAbnormal
-            ? "Pro2 异常断联警报"
-            : "Pro2 手柄已离线";
+        string title = $"手柄 {slotIndex} · " +
+            (signal.Detector == "fd2_input_timeout" ? "输入中断" : "已断开");
         string reason = DescribePro2DisconnectReason(signal);
-        string address = string.IsNullOrWhiteSpace(signal.ConnectedAddress)
-            ? "未知地址"
-            : signal.ConnectedAddress;
-        string age = double.IsFinite(signal.LastInputAgeMs)
-            ? signal.LastInputAgeMs.ToString("F0") + "ms"
-            : "未知";
-        string battery = signal.LastBatteryPercent == GamepadState.BatteryUnknown
-            ? "电量未知"
-            : "最后电量约 " + signal.LastBatteryPercent + "%" +
-              (signal.LastBatteryCharging ? "（充电中）" : "");
-        string followUp = autoReconnectContinues
-            ? "程序将继续自动重连。"
-            : "自动重连未启用。";
+        string action = signal.BluetoothErrorCode switch
+        {
+            "DisabledByUser" => "请打开 Windows 蓝牙。",
+            "RadioNotAvailable" => "请检查蓝牙适配器。",
+            "ConsentRequired" => "请允许助手访问蓝牙。",
+            "DisabledByPolicy" => "Windows 策略已禁用蓝牙。",
+            _ => autoReconnectContinues ? "正在自动重连。" : "唤醒手柄后，点击「连接」。"
+        };
 
         AppendLog("[PRO2_OFFLINE_NOTICE] slot=" + slotIndex +
                   " severity=" + severity + " " + signal.TelemetryValue +
                   " reason=\"" + reason + "\"");
-        RequestUserNotification(
-            title,
-            "Slot " + slotIndex + " 的 Pro2 已离线。\n" +
-            reason + "\n" +
-            "地址：" + address + "；最后输入距今：" + age + "；" + battery + "。\n" +
-            followUp);
+        RequestUserNotification(title, action);
     }
 
     private static string DescribePro2DisconnectReason(

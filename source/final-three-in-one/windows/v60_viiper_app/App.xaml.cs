@@ -10,6 +10,7 @@ public partial class App : System.Windows.Application
     internal static BluetoothRestartResult? RecoveryResult;
     private Mutex? singleInstanceMutex;
     private bool ownsSingleInstanceMutex;
+    private InstanceActivationWindow? activationWindow;
 
     public App()
     {
@@ -80,17 +81,25 @@ public partial class App : System.Windows.Application
             PureSoftware133Mode.EnableForCurrentProcess();
         }
         bool uiSmoke = Environment.GetEnvironmentVariable("V60_UI_SMOKE") == "1";
+        bool loginRequest = Array.Exists(e.Args, arg =>
+            string.Equals(arg, StartupLaunchRegistration.LoginTrayArgument, StringComparison.OrdinalIgnoreCase));
 
         singleInstanceMutex = new Mutex(
             initiallyOwned: true,
             name: uiSmoke ? @"Local\PRO2UiSmoke" : @"Global\Y700Switch2V60ViiperManager",
             createdNew: out bool createdNew);
         ownsSingleInstanceMutex = createdNew;
+        if (!createdNew && !bleDiagnosticCli && !loginRequest && InstanceActivationWindow.TryShowExisting(uiSmoke))
+        {
+            Shutdown(0);
+            return;
+        }
         if (!ownsSingleInstanceMutex)
         {
             try
             {
-                ownsSingleInstanceMutex = singleInstanceMutex.WaitOne(TimeSpan.FromSeconds(3));
+                ownsSingleInstanceMutex = singleInstanceMutex.WaitOne(loginRequest && !bleDiagnosticCli
+                    ? TimeSpan.Zero : TimeSpan.FromSeconds(3));
             }
             catch (AbandonedMutexException)
             {
@@ -108,6 +117,11 @@ public partial class App : System.Windows.Application
                 return;
             }
 
+            if (loginRequest || InstanceActivationWindow.TryShowExisting(uiSmoke))
+            {
+                Shutdown(0);
+                return;
+            }
             System.Windows.MessageBox.Show(
                 "PRO2 手柄助手已在运行。请从任务栏或系统托盘打开现有窗口；若正在退出，请稍后再试。",
                 "PRO2 手柄助手",
@@ -119,6 +133,7 @@ public partial class App : System.Windows.Application
 
         // Acquire the shared mutex before stale-process cleanup. A second click
         // must not terminate the live manager and drop its BLE connection.
+        if (!bleDiagnosticCli && !Bootstrap.SafeStartup) ListenForManualLaunch(uiSmoke);
         if (!bleDiagnosticCli && !uiSmoke && !Bootstrap.SafeStartup)
             StartupProcessGuard.CleanupConflictingProcesses();
         base.OnStartup(e);
@@ -133,7 +148,9 @@ public partial class App : System.Windows.Application
         if (uiSmoke) window.ShowActivated = false;
         MainWindow = window;
         Bootstrap.Write("window_constructed");
-        window.Show();
+        bool startedInTray = loginRequest && window.StartInTray();
+        Bootstrap.Write("startup_presentation=" + (startedInTray ? "tray" : "window"));
+        if (!startedInTray) window.Show();
         if (uiSmoke) _ = FinishUiSmokeAsync(window);
     }
 
@@ -158,7 +175,27 @@ public partial class App : System.Windows.Application
                 "RUNNING=" + ((MainViewModel)window.DataContext).Running + "\r\n" +
                 "MODE=" + ((MainViewModel)window.DataContext).SelectedModeLabel + "\r\n");
         }
-        window.Close();
+        if (Environment.GetEnvironmentVariable("V60_UI_SMOKE_TRAY") == "1" && path != null)
+        {
+            bool initialVisible = window.IsVisible, initialTaskbar = window.ShowInTaskbar;
+            if (Environment.GetEnvironmentVariable("V60_UI_SMOKE_WAIT_ACTIVATION") == "1")
+            {
+                for (int i = 0; i < 200 && !window.IsVisible; ++i)
+                    await System.Threading.Tasks.Task.Delay(100);
+                await System.IO.File.AppendAllTextAsync(path, "SECOND_LAUNCH_VISIBLE=" + window.IsVisible + "\r\n");
+            }
+            window.ShowFromTray();
+            window.WindowState = WindowState.Minimized;
+            bool taskbarMinimized = window.IsVisible && window.ShowInTaskbar && window.WindowState == WindowState.Minimized;
+            window.ShowFromTray();
+            window.Close();
+            await window.Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            bool closedToTray = !window.IsVisible && !window.ShowInTaskbar;
+            window.ShowFromTray();
+            await System.IO.File.AppendAllTextAsync(path,
+                $"INITIAL_VISIBLE={initialVisible}\r\nINITIAL_TASKBAR={initialTaskbar}\r\nMINIMIZE_TO_TASKBAR={taskbarMinimized}\r\nCLOSE_TO_TRAY={closedToTray}\r\nRESTORED={window.IsVisible && window.ShowInTaskbar}\r\n");
+        }
+        window.ExitAssistant();
     }
 
     private async System.Threading.Tasks.Task RunBleDiagnosticCliAsync(string[] args)
@@ -166,6 +203,23 @@ public partial class App : System.Windows.Application
         int exitCode = await BleDiagnosticCli.RunAsync(args);
         Shutdown(exitCode);
         Environment.Exit(exitCode);
+    }
+
+    private void ListenForManualLaunch(bool smoke)
+    {
+        try
+        {
+            activationWindow = new InstanceActivationWindow(smoke, () =>
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Normal, new Action(() =>
+                {
+                    if (MainWindow is MainWindow window)
+                    {
+                        window.ShowFromTray();
+                        Bootstrap.Write("existing_window_activated visible=" + window.IsVisible);
+                    }
+                })));
+        }
+        catch (Exception ex) { Bootstrap.Write("optional_instance_activation_failed " + ex.Message); }
     }
 
     private async System.Threading.Tasks.Task RunGameGlyphHelperAsync(string[] args)
@@ -219,6 +273,7 @@ public partial class App : System.Windows.Application
             }
             if(!ownsSingleInstanceMutex)throw new InvalidOperationException("另一助手仍在运行，未叠加蓝牙连接。");
             RecoveryLaunch=request;RecoveryResult=result;
+            if (!Bootstrap.SafeStartup) ListenForManualLaunch(false);
             var window=new MainWindow();MainWindow=window;window.Show();
             completed=true;waiting.Close();
         }
@@ -234,6 +289,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        activationWindow?.Dispose();
         if (ownsSingleInstanceMutex)
         {
             try

@@ -248,7 +248,30 @@ internal static class PhysicalInputRegressionTests
             check(source.TryWriteOutputPacket(Pro2OutputPacketMapper.BuildOrdinaryPacket(100,150,"test"),out _),"physical feedback queued "+kind);
             await Until(()=>io.Writes.Any(p=>p[0]==(kind==NintendoInputKind.Pro2Usb?2:0x10)),deadline.Token);
             check(io.Writes.Any(p=>p[0]==(kind==NintendoInputKind.Pro2Usb?2:0x10)),"mode feedback encoded for physical transport "+kind);
+            if(kind==NintendoInputKind.Pro2Usb)
+            {
+                byte previous=io.Writes.Last(p=>p[0]==2)[1];
+                var effect=Pro2OutputPacketMapper.BuildOrdinaryPacket(30,50,"test-usb-sequence");
+                var emptyReport=new byte[64]; emptyReport[0]=2; emptyReport[1]=emptyReport[17]=0x40;
+                int writes=io.Writes.Count(p=>p[0]==2);
+                check(source.TryWriteOutputPacket(new(emptyReport,"switch1-hd-converted",false,null,NativePro1Rumble:new byte[8]),out _),
+                    "empty first-generation command is accepted without stopping the physical Pro2");
+                effect.Report[1]=0x74;
+                effect.Report[17]=0x62;
+                check(source.TryWriteOutputPacket(effect,out _),"USB enqueues a generated multi-sample effect");
+                await Until(()=>io.Writes.Count(p=>p[0]==2)>writes,deadline.Token);
+                byte[] actual=io.Writes.Last(p=>p[0]==2);
+                int next=(previous+1)&15;
+                check(actual[1]==(0x70|next)&&actual[17]==(0x60|next),
+                    "physical USB skips empty updates, advances generated sequence, and preserves each grip's count");
+                writes++;
+                check(source.TryWriteOutputPacket(effect with {PreserveNativePayload=true},out _),"USB enqueues native feedback");
+                await Until(()=>io.Writes.Count(p=>p[0]==2)>writes,deadline.Token);
+                check(io.Writes.Last(p=>p[0]==2).SequenceEqual(effect.Report),"USB native feedback retains the host sequences");
+            }
             await Task.WhenAll(source.DisposeAsync().AsTask(),source.DisposeAsync().AsTask());
+            if(kind==NintendoInputKind.Pro2Usb)
+                check(!Pro2NativeRumbleEncoder.HasEffect(io.Writes.Last(p=>p[0]==2)),"physical USB final report stops both grips");
             await using var reopened=new NintendoPhysicalInputSource(Device(kind,"ownership-"+kind));
             var nextIo=new FakeHid(kind);await reopened.ConnectAsync(deadline.Token,nextIo,kind==NintendoInputKind.Pro2Usb?new FakeUsb(nextIo):null);
             check(reopened.IsRunning,"hotplug replacement can reclaim released identity "+kind);

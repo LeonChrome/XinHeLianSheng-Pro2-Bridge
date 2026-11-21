@@ -33,9 +33,9 @@ public static class Pro2BleRumblePacketEncoder
             error = "raw02 HID report must be 64 bytes with report id 0x02";
             return false;
         }
-        if ((report[1] & 0xf0) != 0x50 || (report[17] & 0xf0) != 0x50)
+        if (!Pro2NativeRumbleEncoder.HasKnownBlocks(report))
         {
-            error = "converted raw02 HID report requires two known 0x50 rumble blocks";
+            error = "converted raw02 HID report requires one to three samples per motor";
             return false;
         }
 
@@ -45,7 +45,8 @@ public static class Pro2BleRumblePacketEncoder
         // false for converted feedback, and the caller owns its sequence.
         if (!Pro2NativeRumbleEncoder.TryEncode(report, packet, gain, out active, out error))
             return false;
-        packet[1] = packet[17] = (byte)(0x50 | (packetId & 0x0f));
+        packet[1] = (byte)((packet[1] & 0xf0) | (packetId & 0x0f));
+        packet[17] = (byte)((packet[17] & 0xf0) | (packetId & 0x0f));
         return true;
     }
 }

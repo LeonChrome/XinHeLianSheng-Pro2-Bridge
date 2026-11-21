@@ -15,7 +15,7 @@ internal static class NativeRumbleMetricsRegressionTests
         metrics.Reset(0);
         for (int i = 0; i < 417; i++)
         {
-            report[1] = (byte)(0x50 | (i & 15)); report[17] = (byte)(0x50 | ((i + 7) & 15));
+            report[1] = (byte)(0x70 | (i & 15)); report[17] = (byte)(0x60 | ((i + 7) & 15));
             long at = Tick(i * 12);
             metrics.ObserveSource(report, at);
             metrics.ObserveWrite(at, at + Tick(.2), at + Tick(.8), true);
@@ -32,7 +32,7 @@ internal static class NativeRumbleMetricsRegressionTests
         check(Number(s, "write_start_gap_p50_ms") == 12 && Number(s, "write_start_gap_p95_ms") == 12 &&
             Number(s, "write_start_gap_p99_ms") == 12, "actual write starts have independent interval percentiles");
         check(Number(s, "duplicate_ratio") == 1 && Number(s, "duplicate_comparisons") == 416 &&
-            Number(s, "format_known5n") == 417, "known header sequence changes alone are duplicate effects");
+            Number(s, "format_known_1_to_3_samples") == 417, "known header sequence changes alone are duplicate effects");
         check(s.Contains("source_clock=manager_feedback_receive") &&
             s.Contains("delivery_scope=BLE_API_completion_not_air_or_playback"),
             "telemetry explicitly limits clock and delivery claims");
@@ -55,9 +55,9 @@ internal static class NativeRumbleMetricsRegressionTests
             Number(s, "queue_wait_max_ms") == 10, "changing payloads not duplicates; unsuccessful wait included");
 
         metrics.Reset(0);
-        report[1] = report[17] = 0x70;
+        report[1] = report[17] = 0x80;
         metrics.ObserveSource(report, Tick(1));
-        report[1] = 0x71;
+        report[1] = 0x81;
         metrics.ObserveSource(report, Tick(2));
         metrics.ObserveSource(report, Tick(3));
         metrics.ObserveSource(new byte[2], Tick(4));

@@ -55,6 +55,7 @@ internal static class Pro1RegressionTests
         check(!Switch1RumbleConverter.TryMap(new byte[9], out _, out _) &&
             !Switch1RumbleConverter.TryMap(new byte[10], out _, out _), "short/no-rumble feedback rejected");
         f = new byte[10]; f[8] = 1;
-        check(Switch1RumbleConverter.TryMap(f, out packet, out _) && !packet.Active, "all-zero feedback stops physical vibration");
+        check(Switch1RumbleConverter.TryMap(f, out packet, out _) && !packet.Active && packet.Report[1] == 0x40,
+            "format zero contains no new vibration samples");
     }
 }

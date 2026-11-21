@@ -13,6 +13,30 @@ public sealed partial class MainViewModel
     public ICommand ResetUsbipPathCommand { get; private set; } = null!;
     public Func<CancellationToken, Task<string?>>? RequestUsbipExecutableAsync { get; set; }
     private bool usbipPickerOffered;
+    private bool usbipPromptDeferred;
+    private bool startupAutomationWaitingForUsbip;
+    public bool DeferStartupPrompts { get; set; }
+
+    // Called on the UI dispatcher after the first foreground activation and
+    // after startup initialization, so it cannot race the initial USBIP check.
+    public async Task ResumeStartupPromptsAsync()
+    {
+        if (DeferStartupPrompts || previewOnly || shuttingDown) return;
+        if (usbipPromptDeferred)
+        {
+            await RunExclusiveAsync("检查 USBIP", async token =>
+            {
+                usbipPromptDeferred = false;
+                if (FindConfiguredUsbip() == null) await AskForMissingUsbipAsync(token);
+                await RefreshRuntimeReadinessAsync(token);
+            }, isStartupAutomationOperation: true);
+        }
+        if (startupAutomationWaitingForUsbip && !usbipPromptDeferred)
+        {
+            startupAutomationWaitingForUsbip = false;
+            await RunStartupAutomationAsync();
+        }
+    }
 
     public async Task InitializeAfterWindowShownAsync()
     {
@@ -29,10 +53,22 @@ public sealed partial class MainViewModel
             await RefreshRuntimeReadinessAsync(token);
             if (FindConfiguredUsbip() == null)
             {
-                await AskForMissingUsbipAsync(token);
-                await RefreshRuntimeReadinessAsync(token);
+                if (!DeferMissingUsbipPrompt())
+                {
+                    await AskForMissingUsbipAsync(token);
+                    await RefreshRuntimeReadinessAsync(token);
+                }
             }
         }, isStartupAutomationOperation: true);
+    }
+
+    private bool DeferMissingUsbipPrompt()
+    {
+        if (!DeferStartupPrompts) return false;
+        if (!usbipPromptDeferred)
+            AppendLog("[USBIP_PATH] login_tray=true manual_picker_deferred=true");
+        usbipPromptDeferred = true;
+        return true;
     }
 
     private async Task<bool> AskForMissingUsbipAsync(CancellationToken token)

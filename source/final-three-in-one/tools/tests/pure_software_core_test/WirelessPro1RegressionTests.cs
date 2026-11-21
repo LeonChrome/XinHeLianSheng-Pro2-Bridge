@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
+using Pro2WirelessExperiment;
 using Y700Switch2V60Viiper;
 
 internal static class WirelessPro1RegressionTests
@@ -27,12 +28,30 @@ internal static class WirelessPro1RegressionTests
     private static byte[] Mcu(byte command,byte[]? payload=null)=>[0x11,0,0,1,0x40,0x40,0,1,0x40,0x40,command,..payload??[]];
     public static void Run(Action<bool,string> check)
     {
+        WirelessPro1HandshakePolicyTests.Run(check);
+        WirelessPro1PhaseCadenceTests.Run(check);
         var systemRadio=new WirelessRelayRadio(@"USB\VID_0BDA&PID_0852\RADIO_A","Realtek","BTHUSB",true,true);
         check(systemRadio.CanPrepare&&!systemRadio.Ready,"system Bluetooth requires reversible preparation before the native backend can open it");
         var preparedRadio=systemRadio with{Service="WinUSB"};
         check(preparedRadio.Ready&&!preparedRadio.CanPrepare,"an already prepared radio is not rebound by the application");
         var unsupportedRadio=new WirelessRelayRadio(@"USB\VID_8087&PID_0033\RADIO_B","Intel","WinUSB",false,false);
         check(!unsupportedRadio.Ready&&!unsupportedRadio.CanPrepare,"an unsupported adapter cannot become a transmitter merely by using WinUSB");
+        var standard=unsupportedRadio with{BluetoothUsbClass=true};
+        check(standard.SwitchReady&&!standard.Ready&&!standard.SwitchCanPrepare,"standard WinUSB Bluetooth-class device can use Switch transport without modifying its driver or enabling other outputs");
+        check(!unsupportedRadio.SwitchReady,"unidentified generic WinUSB device cannot use Switch transport");
+        check(!((standard with{Service="BTHUSB"}).SwitchCanPrepare),"a non-Realtek system driver is never replaced");
+        check(!(standard with{ProblemCode=43}).SwitchReady,"a stopped WinUSB radio cannot be selected for transmission");
+        check((standard with{InstanceId=@"USB\VID_0B05&PID_17CB\SECOND",BluetoothUsbClass=false}).SwitchReady,"known ASUS Broadcom alternate class recognized as untested USB HCI");
+        check(!(standard with{InstanceId=@"USB\VID_10D7&PID_B012\SECOND"}).SwitchReady,"known Actions Switch security failure is not routed through generic HCI");
+        check(!(standard with{InstanceId=@"USB\VID_0BDA&PID_8771\SECOND"}).SwitchReady,"another Realtek does not receive the bundled 0852 firmware");
+        check((systemRadio with{InstanceId=@"USB\VID_0BDA&PID_0852\OTHER_PORT"}).SwitchCanPrepare&&preparedRadio.SwitchReady,"verified firmware family is not locked to a single installation's serial");
+        check(!WirelessRelayEnvironment.IsSupportedUsbInstance(@"USB\VID_0BDA&PID_0852\*")&&
+            WirelessRelayEnvironment.IsSupportedUsbInstance(@"USB\VID_1234&PID_ABCD&MI_00\6&45&0&1"),"reject wildcard/accept exact composite interface");
+        check(WirelessRelayEnvironment.HasBluetoothUsbClass([@"USB\Class_E0&SubClass_01&Prot_01"])&&
+            !WirelessRelayEnvironment.HasBluetoothUsbClass([@"USB\Class_E0&SubClass_01&Prot_03"]),"require exact Bluetooth USB programming interface");
+        check(ExperimentSession.SwitchPairingFolder(standard.InstanceId)==ExperimentSession.SwitchPairingFolder(standard.InstanceId.ToLowerInvariant())&&
+            ExperimentSession.SwitchPairingFolder(standard.InstanceId)!=ExperimentSession.SwitchPairingFolder(@"USB\VID_8087&PID_0033\OTHER"),"private Switch bond store is unique per radio and case insensitive");
+        check(ExperimentSession.SwitchPairingFolder(@"USB\VID_0BDA&PID_0852\00E04C000001")=="upstream-realtek-00E04C000001","existing verified Switch pairing remains usable on the original physical adapter");
         check(!(systemRadio with{Service="unknown"}).CanPrepare,"an unknown driver state cannot trigger automatic radio preparation");
         check(systemRadio.Label!=(systemRadio with{InstanceId=@"USB\VID_0BDA&PID_0852\RADIO_B"}).Label,"manual selection distinguishes two radios of the same model by exact instance");
         WirelessRelayRadio[] available=[systemRadio,unsupportedRadio];
@@ -40,6 +59,23 @@ internal static class WirelessPro1RegressionTests
         check(WirelessRelayRadioSelection.Resolve(available,systemRadio.InstanceId)==systemRadio,"adapter refresh preserves the selected exact instance");
         check(WirelessRelayRadioSelection.Resolve([unsupportedRadio],systemRadio.InstanceId)==null,"unplugging the chosen adapter never redirects driver preparation to a different radio");
         check(WirelessRelayRadioSelection.Resolve([systemRadio],null)==systemRadio,"a single radio is a visible selectable default");
+        var failedSystemRadio=systemRadio with{ProblemCode=43,DevNodeStatus=0x400};
+        check(!failedSystemRadio.Healthy&&!failedSystemRadio.Ready&&failedSystemRadio.CanPrepare,"known BTHUSB code 43 remains selectable for the existing bounded recovery path");
+        check((systemRadio with{ProblemCode=10,DevNodeStatus=0x400}).CanPrepare,"known BTHUSB code 10 retains the existing bounded recovery path");
+        check(!(failedSystemRadio with{Service="WinUSB"}).Ready&&!(failedSystemRadio with{Service="WinUSB"}).CanPrepare,"a failed WinUSB node is neither ready nor silently rebound");
+        var disabledRadio=systemRadio with{ProblemCode=22,DevNodeStatus=0x400};
+        check(!disabledRadio.Ready&&!disabledRadio.CanPrepare&&disabledRadio.Label.Contains("代码 22"),"disabled present radios expose code 22 without automatically enabling or preparing them");
+        check(!(preparedRadio with{StatusKnown=false}).Ready&&!(systemRadio with{StatusKnown=false}).CanPrepare,"unreadable status fails closed for both transmit and preparation");
+        check(!(preparedRadio with{DevNodeStatus=0}).Ready&&!(systemRadio with{DevNodeStatus=0}).CanPrepare,"a service name alone cannot make an unstarted node usable");
+        check(!(preparedRadio with{DevNodeStatus=0x408}).Ready,"a reported device problem cannot be masked by problem code zero");
+        check(!failedSystemRadio.SystemBluetoothReady&&systemRadio.SystemBluetoothReady,"a failed second radio cannot satisfy the wireless-input receiver requirement");
+        check(failedSystemRadio.Label.Contains("代码 43")&&failedSystemRadio.ChipLabel.Contains("Realtek")&&!failedSystemRadio.ChipLabel.Contains("UGREEN"),"selection shows the precise problem and chip ID without inferring a retail brand");
+        check(WirelessRelayRadioSelection.Resolve([failedSystemRadio,disabledRadio with{InstanceId=@"USB\VID_0BDA&PID_0852\RADIO_DISABLED"}],systemRadio.InstanceId)==failedSystemRadio,"re-enumeration preserves the chosen exact instance even when it reports an error");
+        const string bluetoothClass="{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}";
+        check(WirelessRelayEnvironment.IsRadioDeviceNode(systemRadio.InstanceId,"","unknown"),"known present radio nodes are discoverable without a USB interface or readable class");
+        check(WirelessRelayEnvironment.IsRadioDeviceNode(unsupportedRadio.InstanceId,bluetoothClass,"BTHUSB")&&!WirelessRelayEnvironment.HasKnownBackend(unsupportedRadio.InstanceId),"an unknown Bluetooth radio is visible while its backend remains unsupported");
+        check(WirelessRelayEnvironment.HasKnownBackend(@"USB\VID_10D7&PID_B012\RADIO_ACTIONS")&&!WirelessRelayEnvironment.HasKnownBackend(@"USB\VID_0BDA&PID_0853\OTHER"),"backend support remains restricted to the two existing exact USB IDs");
+        check(!WirelessRelayEnvironment.IsRadioDeviceNode(@"BTHENUM\DEV_001122334455\7&1",bluetoothClass,"BTHUSB")&&!WirelessRelayEnvironment.IsRadioDeviceNode(@"BTH\MS_BTHBRB\6&1",bluetoothClass,"BTHUSB"),"paired peripherals and Windows Bluetooth enumerators are not offered as transmitters");
         byte[] session=Enumerable.Range(0,16).Select(i=>(byte)i).ToArray(),payload=new byte[362];payload[0]=0x31;
         var encoded=WirelessRelayDatagram.Encode(session,WirelessRelayMessage.FreshInput,7,123,payload);
         check(WirelessRelayDatagram.TryDecode(encoded,session,out var decoded)&&decoded!.Sequence==7&&decoded.Timestamp==123&&decoded.Payload.SequenceEqual(payload),"authenticated maximum NFC-sized relay datagram roundtrip");
@@ -70,6 +106,25 @@ internal static class WirelessPro1RegressionTests
             check(Math.Abs(parsed.GyroX-state.GyroX)<4&&Math.Abs(parsed.GyroY-state.GyroY)<4&&Math.Abs(parsed.GyroZ-state.GyroZ)<4&&parsed.AccelX==state.AccelX&&parsed.AccelY==state.AccelY&&parsed.AccelZ==state.AccelZ,"all six motion axes preserve sign/units through Pro1 calibration");
         }
         state=GamepadState.Neutral();
+        byte[] expectedConfig=new byte[34];
+        new byte[]{1,0,0xff,0,3,0,5,1}.CopyTo(expectedConfig,0);expectedConfig[33]=0x5c;
+        foreach(byte mode in new byte[]{0,4})
+        {
+            var trace=new List<string>();var configProtocol=new WirelessPro1Protocol([2,3,4,5,6,7],trace.Add);
+            configProtocol.HandleOutput(Sub(0x22,1),state,tick,frequency);
+            byte[] configured=configProtocol.HandleOutput(Sub(0x21,0x21,0,mode),state,tick,frequency).Reply!;
+            check(configured.Length==49&&configured[0]==0x21&&configured[13]==0xa0&&configured[14]==0x21,
+                "MCU configuration ACK envelope stays compatible for requested mode "+mode);
+            check(configured.AsSpan(15,34).SequenceEqual(expectedConfig),"MCU configuration ACK exactly matches Pro1 34-byte schema in mode "+mode);
+            check(configured[48]==Pro1NfcProtocol.Crc8(configured.AsSpan(15,33))&&configured[48]==0x5c,
+                "MCU configuration CRC covers exactly 33 payload bytes, at report offset 48, in mode "+mode);
+            byte[] liveStatus=configProtocol.HandleOutput(Mcu(1),state,tick,frequency).Reply!;
+            check(liveStatus.Length==362&&liveStatus[49]==1&&liveStatus[51]==0&&liveStatus[53]==3&&liveStatus[55]==5&&liveStatus[56]==(mode==4?4:1),
+                "configuration-only FF never contaminates live 0x31 status or changes mode transition "+mode);
+            check(liveStatus[^1]==Pro1NfcProtocol.Crc8(liveStatus.AsSpan(49,312)),"runtime MCU status retains its separate 312-byte CRC scope in mode "+mode);
+            check(trace.Contains("[WIRELESS_PRO1_MCU_CONFIG_ACK] schema=pro1_config_3_5 prefix=0100FF0003000501 crc=5C"),
+                "configuration diagnostics expose only schema, prefix and CRC in mode "+mode);
+        }
         check(Send(Sub(0x22,1)).Reply![13]==0x80&&Send(Sub(0x21,0x21,0,4)).Reply![13]==0xa0,"NFC MCU resume and mode configuration handshake");
         var status=Send(Mcu(1)).Reply!;
         check(Pro1NfcProtocol.TryGetMcu(status,out byte type,out var data)&&type==1&&data[6]==4,"MCU status reports NFC mode without fabricating tag data");

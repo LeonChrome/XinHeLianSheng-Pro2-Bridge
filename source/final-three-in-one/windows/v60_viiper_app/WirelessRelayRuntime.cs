@@ -13,6 +13,11 @@ public static class WirelessRelayRuntime
     private const string ResourceName="Embedded.wireless.runtime.zip";
     private static readonly object extractionGate=new();
     public static bool IsAvailable=>typeof(WirelessRelayRuntime).Assembly.GetManifestResourceNames().Contains(ResourceName);
+#if EMBED_UPSTREAM_REALTEK
+    public static bool HasUpstreamRealtek=>true;
+#else
+    public static bool HasUpstreamRealtek=>false;
+#endif
 
     // The single EXE carries the backend, firmware, helper and original notices.
     // Extraction is file-only. It never opens a radio or installs a driver.

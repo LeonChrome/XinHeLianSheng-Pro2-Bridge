@@ -1201,7 +1201,10 @@ public sealed partial class Pro2BleInputSource :
         => QueueOutputReport(report, native: false, out error, "raw02");
 
     public bool TryWriteOutputPacket(Pro2OutputPacket packet, out string error)
-        => QueueOutputReport(packet.Report, packet.PreserveNativePayload, out error, packet.Source, packet.FrequencyClamps);
+    {
+        if (IsOutputReady && Pro2NativeRumbleEncoder.IsEmptyPro1Update(packet)) { error = ""; return true; }
+        return QueueOutputReport(packet.Report, packet.PreserveNativePayload, out error, packet.Source, packet.FrequencyClamps);
+    }
 
     private bool QueueOutputReport(ReadOnlySpan<byte> report, bool native, out string error, string source,
         int frequencyClamps = 0)
@@ -3741,7 +3744,7 @@ public sealed partial class Pro2BleInputSource :
         }
         rumbleWriterTask = Task.Run(
             () => RumbleWriterLoopAsync(progress, writerCts.Token));
-        progress.Report("[PRO2_OUTPUT] BLE writer started: native_pro2=adaptive_original_events; converted=adaptive_ordered_events; all_modes_max_queue_ms=30; overload=measured_lossy_event_selection; native_payload_preserved=true; converted_frequency_mapping=legacy_hz_proxy_unvalidated; minimum_write_ms=7.5; ordinary_state_refresh_target_ms=12; refresh_clock=write_start; refresh_scope=xbox_ps5_only; refresh_not_source_event=true.");
+        progress.Report("[PRO2_OUTPUT] BLE writer started: native_pro2=adaptive_original_events; converted=adaptive_ordered_events; all_modes_max_queue_ms=30; overload=measured_lossy_event_selection; native_payload_preserved=true; pro1_frequency_mapping=pro2_log96 ps5_pcm_frequency_mapping=legacy_hz_proxy_unvalidated; minimum_write_ms=7.5; ordinary_state_refresh_target_ms=12; refresh_clock=write_start; refresh_scope=xbox_ps5_only; refresh_not_source_event=true.");
     }
 
     private async Task RumbleWriterLoopAsync(

@@ -213,12 +213,17 @@ func TestStereoRumbleAndLifetime(t *testing.T) {
 	if calls != 1 || !bytes.Equal(got[:8], out[2:10]) || got[8] != 1 {
 		t.Fatal("stereo HD feedback lost")
 	}
+	out[0] = 0x11
+	p.output(out)
+	if calls != 2 || !bytes.Equal(got[:8], out[2:10]) {
+		t.Fatal("MCU report lost its stereo rumble prefix")
+	}
 	command(t, p, 0x30, 5)
 	if got[8] != 3 || got[9] != 5 {
 		t.Fatal("LED flags")
 	}
 	command(t, p, 0x48, 0)
-	if got[8] != 1 || !bytes.Equal(got[:8], make([]byte, 8)) {
+	if got != ([FeedbackSize]byte{0, 1, 0x40, 0x40, 0, 1, 0x40, 0x40, 1}) {
 		t.Fatal("missing stop")
 	}
 	n := calls

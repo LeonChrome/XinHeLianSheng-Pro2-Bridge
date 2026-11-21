@@ -125,7 +125,7 @@ internal static class NativeRumbleTimingRegressionTests
         check(written.Any(item => item.Data.SequenceEqual(changedFrequency)), "frequency change survives without frequency synthesis");
 
         queue = Warm(check, Packet(0, 100, 100));
-        byte[] opaque = Packet(11, 100, 100); opaque[1] = 0x7b;
+        byte[] opaque = Packet(11, 100, 100); opaque[1] = 0x8b;
         EnqueueTriplet(queue, baseline, opaque, after);
         written = DrainTwo(queue, check);
         check(written.Any(item => item.Data.SequenceEqual(opaque)) && queue.OpaqueDropped == 0,
@@ -164,7 +164,7 @@ internal static class NativeRumbleTimingRegressionTests
         check(queue.DeadlineEdgeDropped > 0, "deadline-discarded edge is not misreported as preserved");
 
         queue = Warm(check, Packet(0, 100, 100));
-        byte[] opaque = Packet(10, 300, 100); opaque[17] = 0x7d;
+        byte[] opaque = Packet(10, 300, 100); opaque[17] = 0x8d;
         queue.Enqueue(opaque, true, Tick(30));
         check(queue.TryDequeue(Tick(100), out var opaqueStop) && opaqueStop is not null &&
               !Pro2NativeRumbleEncoder.HasEffect(opaqueStop.Data), "expired opaque command fails closed to neutral");
@@ -325,8 +325,8 @@ internal static class NativeRumbleTimingRegressionTests
 
     private static byte[] Packet(int sequence, int left, int right, int frequency = 391)
     {
-        var data = new byte[33]; data[1] = (byte)(0x50 | (sequence & 15));
-        data[17] = (byte)(0x50 | ((sequence + 7) & 15));
+        var data = new byte[33]; data[1] = (byte)(0x70 | (sequence & 15));
+        data[17] = (byte)(0x70 | ((sequence + 7) & 15));
         for (int frame = 0; frame < 3; frame++)
         {
             SetFrame(data, 2 + frame * 5, frequency, left, 274, left / 2);

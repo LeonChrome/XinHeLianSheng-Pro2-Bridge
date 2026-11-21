@@ -1168,6 +1168,8 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
             profile.UsesDualSenseHaptics
                 ? new DualSenseHapticRumbleScheduler(Pro2QualityMode.HapticsEnabled)
                 : null;
+        Switch1RumbleStream? pro1Rumble = profile.Mode == ViiperVirtualMode.Pro1 ? new() : null;
+        ViiperDeviceStream? pro1Connection = null;
         ulong frames = 0;
         progress.Report("[QUALITY_PIPELINE] gyro_quality=" + Pro2QualityMode.GyroEnabled +
             " haptics_quality=" + Pro2QualityMode.HapticsEnabled +
@@ -1217,6 +1219,11 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
                 return;
             }
 
+            if (pro1Rumble != null && !ReferenceEquals(pro1Connection, current))
+            {
+                pro1Connection = current;
+                pro1Rumble = new();
+            }
             byte[] feedback;
             try
             {
@@ -1271,7 +1278,8 @@ public sealed partial class ViiperBridgeSession : IAsyncDisposable
                     profile,
                     feedback,
                     out packet,
-                    out reason);
+                    out reason,
+                    pro1Rumble);
                 if (mapped)
                     Volatile.Write(ref feedbackSource, profile.Mode switch
                     {

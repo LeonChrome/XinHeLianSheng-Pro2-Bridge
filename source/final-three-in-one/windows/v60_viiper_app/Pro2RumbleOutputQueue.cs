@@ -300,7 +300,7 @@ public sealed class Pro2RumbleOutputQueue
         pending.RemoveAt(index);
         if (expired) ExpiredDropped++; else OverflowDropped++;
     }
-    private static bool Known(byte[] data) => data.Length >= 33 && (data[1] & 0xf0) == 0x50 && (data[17] & 0xf0) == 0x50;
+    private static bool Known(byte[] data) => Pro2NativeRumbleEncoder.HasKnownBlocks(data);
     [Flags]
     private enum Protection { None = 0, Edge = 1, Stop = 2, Frequency = 4, Peak = 8, Opaque = 16 }
     private static Protection ClassifyProtection(byte[] current, byte[] before, byte[]? after)
@@ -327,7 +327,9 @@ public sealed class Pro2RumbleOutputQueue
     }
     private static ulong Frame(byte[] data, int index)
     {
-        int offset = 2 + index / 3 * 16 + index % 3 * 5;
+        int side = 1 + index / 3 * 16;
+        if (index % 3 >= Pro2NativeRumbleEncoder.SampleCount(data[side])) return 0;
+        int offset = side + 1 + index % 3 * 5;
         ulong bits = 0;
         for (int i = 0; i < 5; i++) bits |= (ulong)data[offset + i] << (8 * i);
         return bits;
@@ -335,6 +337,7 @@ public sealed class Pro2RumbleOutputQueue
     private static int Amplitude(byte[] data, int band) => (int)((Frame(data, band / 2) >> (band % 2 == 0 ? 10 : 30)) & 1023);
     private static bool SameFrequencies(byte[] a, byte[] b)
     {
+        if ((a[1] >> 4) != (b[1] >> 4) || (a[17] >> 4) != (b[17] >> 4)) return false;
         const ulong frequencyMask = 1023UL | (1023UL << 20);
         for (int frame = 0; frame < 6; frame++) if ((Frame(a, frame) & frequencyMask) != (Frame(b, frame) & frequencyMask)) return false;
         return true;

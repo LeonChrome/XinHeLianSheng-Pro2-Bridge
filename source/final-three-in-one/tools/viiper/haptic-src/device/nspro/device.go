@@ -297,7 +297,7 @@ func (p *Pro) output(out []byte) {
 			}
 			p.enqueueLocked(r)
 		}
-	} else if (out[0] == 1 || out[0] == 0x10) && len(out) >= 10 {
+	} else if (out[0] == 1 || out[0] == 0x10 || out[0] == 0x11) && len(out) >= 10 {
 		if p.vibration {
 			copy(feedback[:8], out[2:10])
 			feedback[8] = 1
@@ -339,8 +339,8 @@ func (p *Pro) output(out []byte) {
 				if len(out) > 11 {
 					p.vibration = out[11] != 0
 					if !p.vibration {
-						feedback = [FeedbackSize]byte{}
-						feedback[8] = 1
+						// Format zero has no samples. Stop both motors explicitly.
+						feedback = [FeedbackSize]byte{0, 1, 0x40, 0x40, 0, 1, 0x40, 0x40, 1}
 					}
 				}
 			case 0x50:

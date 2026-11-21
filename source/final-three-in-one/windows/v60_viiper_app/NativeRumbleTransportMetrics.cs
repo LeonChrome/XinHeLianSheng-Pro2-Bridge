@@ -50,7 +50,7 @@ public sealed class NativeRumbleTransportMetrics
                 hasPreviousPayload = false;
                 return;
             }
-            bool isKnown = (report[1] & 0xf0) == 0x50 && (report[17] & 0xf0) == 0x50;
+            bool isKnown = Pro2NativeRumbleEncoder.HasKnownBlocks(report);
             if (isKnown) known++; else opaque++;
             if (isKnown)
             {
@@ -87,7 +87,7 @@ public sealed class NativeRumbleTransportMetrics
                 else if (generatedKind == "refresh") generatedRefreshSuccess++;
                 else generatedStopSuccess++;
                 if (native) nativeWrites++; else convertedWrites++;
-                if (packet.Length >= 33 && (packet[1] & 0xf0) == 0x50 && (packet[17] & 0xf0) == 0x50)
+                if (Pro2NativeRumbleEncoder.HasKnownBlocks(packet))
                 {
                     int left = Peak(packet, 0), right = Peak(packet, 1);
                     writeLeftPeak = Math.Max(writeLeftPeak, left);
@@ -159,16 +159,16 @@ public sealed class NativeRumbleTransportMetrics
             $"queue_wait_max_ms={Milliseconds(sample.Waits.Max):F3} " +
             $"duplicate_ratio={(sample.Comparisons == 0 ? 0 : sample.Duplicates / (double)sample.Comparisons):F4} " +
             $"duplicate_count={sample.Duplicates} duplicate_comparisons={sample.Comparisons} " +
-            $"format_known5n={sample.Known} format_opaque={sample.Opaque} format_invalid={sample.Invalid} " +
+            $"format_known_1_to_3_samples={sample.Known} format_opaque={sample.Opaque} format_invalid={sample.Invalid} " +
             $"sample_capacity={SampleCapacity} samples_overwritten={sample.Gaps.Overwritten + sample.Durations.Overwritten + sample.Waits.Overwritten + sample.WriteGaps.Overwritten} " +
-            $"clock_errors={sample.ClockErrors} duplicate_scope=adjacent_32B_ignore_seq_for_5n_only " +
+            $"clock_errors={sample.ClockErrors} duplicate_scope=adjacent_32B_ignore_known_sequence " +
             $"mode_scope=all_modes source_kinds={Kinds(sample.Modes.Kinds)} native_source_count={sample.Modes.NativeSources} " +
             $"converted_source_count={sample.Modes.ConvertedSources} native_write_success={sample.Modes.NativeWrites} converted_write_success={sample.Modes.ConvertedWrites} " +
             $"source_write_success={sample.Modes.SourceWrites} generated_refresh_success={sample.Modes.RefreshWrites} generated_stop_success={sample.Modes.GeneratedStops} generated_write_failure={sample.Modes.GeneratedFailures} source_delivery_count_excludes_generated=true " +
             $"source_left_peak_code={sample.Modes.SourceLeft} source_right_peak_code={sample.Modes.SourceRight} " +
             $"write_left_peak_code={sample.Modes.WriteLeft} write_right_peak_code={sample.Modes.WriteRight} amplitude_scope=packed_code_not_force " +
             $"stop_write_success={sample.Modes.StopWrites} stop_source_to_api_max_ms={Milliseconds(sample.Modes.MaxStopWait):F3} " +
-            $"converted_frequency_clamps={sample.Modes.FrequencyClamps} converted_frequency_mapping={Pro2RumbleFrequencyPolicy.Mapping} " +
+            $"converted_frequency_clamps={sample.Modes.FrequencyClamps} pro1_frequency_mapping=pro2_log96 ps5_pcm_frequency_mapping={Pro2RumbleFrequencyPolicy.Mapping} " +
             $"gap_scope=within_window write_gap_scope=all_attempts_including_idle queue_wait_scope=all_write_attempts " +
             $"delivery_scope=BLE_API_completion_not_air_or_playback idle={sample.Sources == 0 && sample.Writes == 0 && sample.Failures == 0}");
         return true;
@@ -219,7 +219,7 @@ public sealed class NativeRumbleTransportMetrics
     private static int Peak(ReadOnlySpan<byte> packet, int side)
     {
         int peak = 0;
-        for (int frame = 0; frame < 3; frame++)
+        for (int frame = 0; frame < Pro2NativeRumbleEncoder.SampleCount(packet[1 + side * 16]); frame++)
         {
             int offset = 2 + side * 16 + frame * 5;
             ulong bits = 0;

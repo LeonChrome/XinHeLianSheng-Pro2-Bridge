@@ -35,7 +35,7 @@ public partial class MainWindow : Window
             var start=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=true};
             foreach(var arg in launch.Arguments)start.ArgumentList.Add(arg);
             using var child=Process.Start(start)??throw new InvalidOperationException("恢复窗口没有启动。");
-            Close();
+            ExitAssistant();
         }
         catch(Exception error){System.Windows.MessageBox.Show(this,"恢复窗口启动失败："+error.Message+"\n管理员进程等待旧助手退出，超时后不会操作蓝牙。","PRO2 蓝牙恢复");}
     }
@@ -87,7 +87,8 @@ public partial class MainWindow : Window
     private Forms.ToolStripMenuItem? autoReconnectOnStartupMenuItem;
     private bool shutdownInProgress;
     private bool shutdownComplete;
-    private bool trayTipShown;
+    private bool exitRequested;
+    private Task? startupWork;
     private async void SelectUsbipPath_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm || !vm.CanManageRuntime) return;
@@ -154,7 +155,7 @@ public partial class MainWindow : Window
             try{Microsoft.Win32.SystemEvents.PowerModeChanged+=HostPowerModeChanged;powerEventsSubscribed=true;}
             catch(Exception error){Bootstrap.Write("optional_power_events_failed "+error.Message);}
         }
-        if (!IsUiSmokeRun() && !Bootstrap.SafeStartup)
+        if ((!IsUiSmokeRun() || Environment.GetEnvironmentVariable("V60_UI_SMOKE_TRAY") == "1") && !Bootstrap.SafeStartup)
         {
             try { CreateTrayIcon(); }
             catch (Exception ex)
@@ -187,6 +188,8 @@ public partial class MainWindow : Window
     private void CreateTrayIcon()
     {
         trayMenu = new Forms.ContextMenuStrip();
+        trayMenu.Items.Add("打开主窗口", null, (_, _) => Dispatcher.BeginInvoke(new Action(ShowFromTray)));
+        trayMenu.Items.Add(new Forms.ToolStripSeparator());
         trayMenu.Items.Add("切换 PS5 模式", null, (_, _) => ExecuteTrayCommand(vm => vm.StartDualSenseCommand));
         trayMenu.Items.Add("切换 Pro1 / Switch Pro", null, (_, _) => ExecuteTrayCommand(vm => vm.StartPro1Command));
         trayMenu.Items.Add("切换 Pro2 / Nintendo", null, (_, _) => ExecuteTrayCommand(vm => vm.StartPro2Command));
@@ -204,7 +207,7 @@ public partial class MainWindow : Window
             vm => vm.AutoReconnectOnStartupEnabled = autoReconnectOnStartupMenuItem.Checked);
         trayMenu.Items.Add(autoReconnectOnStartupMenuItem);
         trayMenu.Items.Add(new Forms.ToolStripSeparator());
-        trayMenu.Items.Add("退出", null, (_, _) => Dispatcher.BeginInvoke(new Action(RequestExitFromTray)));
+        trayMenu.Items.Add("退出助手", null, (_, _) => Dispatcher.BeginInvoke(new Action(ExitAssistant)));
         UpdateTrayToggleChecks();
 
         trayIcon = new Forms.NotifyIcon
@@ -217,20 +220,35 @@ public partial class MainWindow : Window
         trayIcon.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(ShowFromTray));
     }
 
-    private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    internal bool StartInTray()
+    {
+        if (trayIcon?.Visible != true) return false;
+        ShowInTaskbar = false;
+        ((MainViewModel)DataContext).DeferStartupPrompts = true;
+        StartBackgroundServices();
+        return true;
+    }
+
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         UpdatePresentationRefresh();
         if (!IsUiSmokeRun()) FitStartupWindow();
         if (DataContext is MainViewModel initial) initial.RefreshCompactTelemetry();
-        if (IsUiSmokeRun())
-        {
-            return;
-        }
+        StartBackgroundServices();
+    }
 
+    private async void StartBackgroundServices()
+    {
+        if (IsUiSmokeRun()) return;
+        await (startupWork ??= InitializeStartupAsync());
+    }
+
+    private async Task InitializeStartupAsync()
+    {
         if (DataContext is MainViewModel viewModel)
         {
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
-            Bootstrap.Write("window_loaded");
+            Bootstrap.Write("startup_services window_visible=" + IsVisible);
             try { await viewModel.InitializeAfterWindowShownAsync(); }
             catch (OperationCanceledException) { return; }
             if (Bootstrap.SafeStartup) return;
@@ -494,28 +512,15 @@ public partial class MainWindow : Window
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
         UpdatePresentationRefresh();
-        if (WindowState != WindowState.Minimized)
-        {
-            return;
-        }
-
-        if (IsUiSmokeRun() || trayIcon == null)
-        {
-            return;
-        }
-
-        Hide();
-        if (!trayTipShown && trayIcon != null)
-        {
-            trayTipShown = true;
-            trayIcon.BalloonTipTitle = "PRO2 手柄助手仍在运行";
-            trayIcon.BalloonTipText = "右键托盘图标可后台切换手柄模式或进入游戏；双击可打开主界面。";
-            trayIcon.ShowBalloonTip(2500);
-        }
     }
 
-    private void ShowFromTray()
+    internal async void ShowFromTray()
     {
+        if (exitRequested || shutdownInProgress || shutdownComplete) return;
+        var vm = (MainViewModel)DataContext;
+        bool resumePrompts = vm.DeferStartupPrompts;
+        vm.DeferStartupPrompts = false;
+        ShowInTaskbar = true;
         if (WindowState == WindowState.Minimized)
         {
             WindowState = WindowState.Normal;
@@ -523,6 +528,11 @@ public partial class MainWindow : Window
         Show();
         UpdatePresentationRefresh();
         Activate();
+        if (resumePrompts && !IsUiSmokeRun())
+        {
+            if (startupWork != null) await startupWork;
+            if (IsVisible && !shutdownInProgress) await vm.ResumeStartupPromptsAsync();
+        }
     }
 
     private void UpdatePresentationRefresh()
@@ -561,8 +571,10 @@ public partial class MainWindow : Window
         }));
     }
 
-    private void RequestExitFromTray()
+    internal void ExitAssistant()
     {
+        if (gameGlyphWindow?.IsOperationBusy == true) return;
+        exitRequested = true;
         Close();
     }
 
@@ -587,6 +599,17 @@ public partial class MainWindow : Window
         }
 
         e.Cancel = true;
+        if (!exitRequested && trayIcon?.Visible == true)
+        {
+            // WPF rejects visibility changes while Closing is being raised.
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (exitRequested || shutdownInProgress) return;
+                Hide();
+                ShowInTaskbar = false;
+            }));
+            return;
+        }
         if (shutdownInProgress)
         {
             return;

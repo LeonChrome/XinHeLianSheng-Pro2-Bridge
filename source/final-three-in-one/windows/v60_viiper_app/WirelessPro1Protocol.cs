@@ -48,6 +48,27 @@ public sealed class WirelessPro1Protocol
         motion.Add((ticks,state.Clone()));
         while(motion.Count>32)motion.RemoveAt(0);
     }
+    // Internal relay snapshots always carry the complete physical state. The
+    // native btkeyLib engine owns host report modes, IMU enablement and timing.
+    public byte[] BuildRelaySnapshot(GamepadState state,long ticks,long frequency)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if(frequency<=0)throw new ArgumentOutOfRangeException(nameof(frequency));
+        byte[] report=Standard(state,49,0x30,ticks,frequency);
+        for(int i=0;i<3;i++)
+        {
+            long wanted=ticks-(long)(i*frequency/200.0);var selected=state;
+            // A neutral safety snapshot has no valid sensors and must not
+            // inherit the last moving sample from the observation history.
+            if(state.AccelValid||state.GyroValid)
+            {
+                selected=motion.Count>0?motion[0].State:state;
+                for(int j=motion.Count-1;j>=0;j--)if(motion[j].Tick<=wanted){selected=motion[j].State;break;}
+            }
+            WriteMotion(report.AsSpan(13+i*12,12),selected);
+        }
+        return report;
+    }
     public byte[] BuildInput(GamepadState state,long ticks,long frequency,double reportPeriodMs=15)
     {
         if(InputMode==0x3f&&!pendingMcuResponse)return Simple(state);
@@ -116,7 +137,8 @@ public sealed class WirelessPro1Protocol
                 valid=data.Length>=3&&data[0]==0x21&&data[1]==0&&data[2] is 0 or 4;
                 if(valid)
                 {
-                    reply[13]=0xa0;McuState().AsSpan(0,34).CopyTo(reply.AsSpan(15));reply[48]=Pro1NfcProtocol.Crc8(reply.AsSpan(15,33));
+                    byte[] configAck=McuConfigurationAck();reply[13]=0xa0;configAck.CopyTo(reply,15);
+                    log("[WIRELESS_PRO1_MCU_CONFIG_ACK] schema=pro1_config_3_5 prefix="+Convert.ToHexString(configAck.AsSpan(0,8))+" crc="+configAck[33].ToString("X2"));
                     mcuMode=data[2]==4?(byte)4:(byte)1;
                 }
                 break;
@@ -128,7 +150,14 @@ public sealed class WirelessPro1Protocol
             case 0x38:break;
             case 0x40:valid=data.Length>=1&&data[0]<=1;if(valid)ImuEnabled=data[0]==1;break;
             case 0x41:valid=data.Length>=4&&data[0]==3&&data[1]==0&&data[2]==1&&data[3]==1;break;
-            case 0x48:valid=data.Length>=1&&data[0]<=1;if(valid)VibrationEnabled=data[0]==1;break;
+            case 0x48:
+                valid=data.Length>=1&&data[0]<=1;
+                if(valid)
+                {
+                    VibrationEnabled=data[0]==1;
+                    if(!VibrationEnabled)rumble=Pro1PhysicalRumble.Neutral;
+                }
+                break;
             case 0x50:reply[13]=0xd0;BinaryPrimitives.WriteUInt16LittleEndian(reply.AsSpan(15),state.BatteryVoltageMillivolts==0?(ushort)0:checked((ushort)(state.BatteryVoltageMillivolts/2)));break;
             default:valid=false;break; // includes SPI writes / firmware / unknown
         }
@@ -186,6 +215,15 @@ public sealed class WirelessPro1Protocol
         bool zero=true;foreach(byte b in data.Slice(2,8))zero&=b==0;
         if(!zero&&(tag==null||!data.Slice(2,7).SequenceEqual(tag.Uid)||data[9]!=0))return false;
         return data[10..].SequenceEqual(new byte[]{1,3,0,0x3b,0x3c,0x77,0x78,0x86,0,0});
+    }
+    private static byte[] McuConfigurationAck()
+    {
+        // Configuration ACKs use a distinct 34-byte schema, not the 313-byte
+        // runtime status report. Pro Controller MCU firmware remains 3/5.
+        // Compare MissionControl ProcessMcuWrite and its 33-byte CRC coverage.
+        byte[] output=new byte[34];
+        new byte[]{1,0,0xff,0,3,0,5,1}.CopyTo(output,0);
+        output[33]=Pro1NfcProtocol.Crc8(output.AsSpan(0,33));return output;
     }
     private byte[] McuState()
     {

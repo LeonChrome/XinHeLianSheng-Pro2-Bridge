@@ -22,7 +22,8 @@ public static class Pro2OutputPacketMapper
         ViiperDeviceProfile profile,
         ReadOnlySpan<byte> feedback,
         out Pro2OutputPacket packet,
-        out string reason)
+        out string reason,
+        Switch1RumbleStream? pro1Stream = null)
     {
         packet = default!;
         reason = "";
@@ -32,7 +33,7 @@ public static class Pro2OutputPacketMapper
             case ViiperVirtualMode.Pro2:
                 return TryMapNs2Pro(feedback, out packet, out reason);
             case ViiperVirtualMode.Pro1:
-                return Switch1RumbleConverter.TryMap(feedback, out packet, out reason);
+                return (pro1Stream ?? new Switch1RumbleStream()).TryMap(feedback, out packet, out reason);
             case ViiperVirtualMode.Xbox:
             case ViiperVirtualMode.XboxProfessionalImuTest:
                 if (feedback.Length < 2)

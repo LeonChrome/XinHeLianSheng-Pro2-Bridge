@@ -127,17 +127,18 @@ public static class Pro2NfcProtocol
         string page3=Convert.ToHexString(data.Slice(12,4));
         // An amiibo uses F1 10 FF EE, not a blank NDEF tag's E1 10 3E 00.
         // Recognize the format without changing the bytes or authenticating it.
-        string format=page3 switch
-        {
-            "F110FFEE"=>"amiibo_ntag215",
-            "E1103E00" or "E1103E0F"=>"ndef_ntag215",
-            _=>"unknown"
-        };
+        string format=ClassifyNtag215Page(page3);
         return new(buffer.Length,expectedUid.Length,buffer.Slice(8,7).SequenceEqual(expectedUid),
             data[0]==4&&data[..3].SequenceEqual(expectedUid[..3])&&data.Slice(4,4).SequenceEqual(expectedUid[3..]),
             data[3]==(byte)(0x88^data[0]^data[1]^data[2]),
             data[8]==(byte)(data[4]^data[5]^data[6]^data[7]),page3,format,buffer[18]);
     }
+    internal static string ClassifyNtag215Page(string page3)=>page3 switch
+    {
+        "F110FFEE"=>"amiibo_ntag215",
+        "E1103E00" or "E1103E0F"=>"ndef_ntag215",
+        _=>"unknown"
+    };
     public static Pro2NfcReadResult ParseTag(ReadOnlySpan<byte> buffer,ReadOnlySpan<byte> expectedUid)
     {
         var validation=InspectTag(buffer,expectedUid);

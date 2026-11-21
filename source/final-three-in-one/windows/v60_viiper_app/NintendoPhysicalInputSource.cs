@@ -66,7 +66,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     public NintendoHidDevice Device => device;
     public bool IsRunning => running && (!nfcBusy || !device.IsPro1);
     public string Status => status;
-    public bool IsOutputReady => running && initialized && !nfcBusy;
+    public bool IsOutputReady => running && initialized && !nfcBusy && Volatile.Read(ref disposeStarted)==0;
     public bool CanReadNfc => running && device.Kind==NintendoInputKind.Pro1Bluetooth && device.InputLength>=362;
     public string CapabilitySummary => device.IsPro1
         ? "Pro1：按键、摇杆、陀螺仪、震动；实体没有背键和 C 键。NFC："+
@@ -261,7 +261,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
             return new(running,status,hz,age,total,rejected,drops,P(.5),P(.95),P(1),parser.Calibration,device.PhysicalId,nfcStatus);
         }
     }
-    private string Format(PhysicalInputSnapshot s)=>FormattableString.Invariant($"kind={device.Kind} parsed_hz={s.Hz:F2} input_reports={s.Reports} non_input_reports={s.RejectedReports} gap_p50_ms={s.GapP50:F2} gap_p95_ms={s.GapP95:F2} gap_max_ms={s.GapMax:F2} queue_drops={s.QueueDrops} age_ms={s.AgeMs:F1} calibration={s.Calibration} count_scope=physical_reports_only imu_samples_not_button_reports=true nfc={s.NfcStatus} adjacent_identical_raw={Interlocked.Read(ref repeatedRaw)} adjacent_identical_device_clock={Interlocked.Read(ref repeatedClock)} device_clock_changes={Interlocked.Read(ref clockChanges)} output_writes={Interlocked.Read(ref outputWrites)} output_superseded={Interlocked.Read(ref outputSuperseded)} output_failures={Interlocked.Read(ref outputFailures)} cross_generation_rumble=parameter_conversion_unvalidated_frequency_proxy native_pro1_unity=byte_passthrough");
+    private string Format(PhysicalInputSnapshot s)=>FormattableString.Invariant($"kind={device.Kind} parsed_hz={s.Hz:F2} input_reports={s.Reports} non_input_reports={s.RejectedReports} gap_p50_ms={s.GapP50:F2} gap_p95_ms={s.GapP95:F2} gap_max_ms={s.GapMax:F2} queue_drops={s.QueueDrops} age_ms={s.AgeMs:F1} calibration={s.Calibration} count_scope=physical_reports_only imu_samples_not_button_reports=true nfc={s.NfcStatus} adjacent_identical_raw={Interlocked.Read(ref repeatedRaw)} adjacent_identical_device_clock={Interlocked.Read(ref repeatedClock)} device_clock_changes={Interlocked.Read(ref clockChanges)} output_writes={Interlocked.Read(ref outputWrites)} output_superseded={Interlocked.Read(ref outputSuperseded)} output_failures={Interlocked.Read(ref outputFailures)} pro1_to_pro2_frequency_mapping=pro2_log96 pro2_to_pro1_frequency_mapping=legacy_hz_proxy_unvalidated native_pro1_unity=byte_passthrough");
     public bool TryGetLatest(out GamepadState state,out TimeSpan age)
     { lock(gate) { state=latest.Clone(); age=lastTicks==0?TimeSpan.MaxValue:Stopwatch.GetElapsedTime(lastTicks); return IsRunning&&total>0; } }
     public bool TryGetNextFresh(out GamepadState state,out TimeSpan age)
@@ -284,12 +284,13 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
     }
     public int PrepareForConsumerSession() { lock(gate) { int count=states.Count; states.Clear(); return count; } }
     public async Task<bool> WaitForInputAsync(TimeSpan timeout,CancellationToken token)=>await inputSignal.WaitAsync(timeout,token);
-    public bool TryWriteOutputReport(ReadOnlySpan<byte> report,out string error)=>TryWriteOutputPacket(new(report.ToArray(),"physical-bridge",true,null),out error);
+    public bool TryWriteOutputReport(ReadOnlySpan<byte> report,out string error)=>TryWriteOutputPacket(new(report.ToArray(),"physical-bridge",true,null,PreserveNativePayload:true),out error);
     public bool TryWriteOutputPacket(Pro2OutputPacket packet,out string error)
     {
         error="";
         if(!IsOutputReady) { error=nfcBusy?"NFC 正在读取，震动暂停":"实体输入未连接"; return false; }
         if(packet.Report.Length!=64||packet.Report[0]!=2) { error="不支持的震动报告格式"; return false; }
+        if(!device.IsPro1 && Pro2NativeRumbleEncoder.IsEmptyPro1Update(packet)) return true;
         // The writer is bounded; record locally discarded feedback explicitly.
         while(outputs.Reader.Count>=7 && outputs.Reader.TryRead(out _)) Interlocked.Increment(ref outputSuperseded);
         return outputs.Writer.TryWrite(packet);
@@ -304,7 +305,7 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
                 await physicalOutputGate.WaitAsync(token).ConfigureAwait(false);
                 try
                 {
-                if(nfcBusy) continue;
+                if(!IsOutputReady) continue;
                 if(device.IsPro1)
                 {
                     double gain=Volatile.Read(ref rumbleGain);
@@ -321,10 +322,10 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
                 }
                 else
                 {
-                    byte[] scaled=new byte[33];
-                    if(!Pro2NativeRumbleEncoder.TryEncode(packet.Report,scaled,Volatile.Read(ref rumbleGain),out _,out string error))
+                    byte[] report=new byte[64];
+                    byte packetSequence=packet.PreserveNativePayload?(byte)0:NextSequence();
+                    if(!Pro2NativeRumbleEncoder.TryEncodeUsb(packet,report,packetSequence,Volatile.Read(ref rumbleGain),out string error))
                     { Interlocked.Increment(ref outputFailures); log("[PHYSICAL_OUTPUT_REJECTED] "+error); continue; }
-                    byte[] report=(byte[])packet.Report.Clone(); scaled.CopyTo(report,0); report[0]=2;
                     await transport!.WriteAsync(report,token).ConfigureAwait(false);
                 }
                 Interlocked.Increment(ref outputWrites);
@@ -345,8 +346,20 @@ public sealed partial class NintendoPhysicalInputSource : IGamepadInputSource, I
             try
             {
                 using var stop=new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
-                byte[] report=device.IsPro1?[0x10,NextSequence(),..Pro1PhysicalRumble.Neutral]:Pro2OutputPacketMapper.BuildOrdinaryPacket(0,0,"physical-dispose").Report;
-                await transport.WriteAsync(report,stop.Token);
+                await physicalOutputGate.WaitAsync(stop.Token);
+                try
+                {
+                    byte sequence=NextSequence();
+                    byte[] report;
+                    if(device.IsPro1) report=[0x10,sequence,..Pro1PhysicalRumble.Neutral];
+                    else
+                    {
+                        report=Pro2OutputPacketMapper.BuildOrdinaryPacket(0,0,"physical-dispose").Report;
+                        report[1]=report[17]=(byte)(0x50|sequence);
+                    }
+                    await transport.WriteAsync(report,stop.Token);
+                }
+                finally { physicalOutputGate.Release(); }
             }
             catch(Exception e) { log("[PHYSICAL_STOP] "+e.Message); }
         running=false; initialized=false; status="已断开 · "+device.Kind;

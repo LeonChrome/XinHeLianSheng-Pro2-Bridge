@@ -7,8 +7,8 @@ namespace Y700Switch2V60Viiper;
 /// blocks. At unity gain they are opaque: only report ID 02 becomes 00.
 /// Do not route these bytes through the synthesized Xbox/PS5 vibration encoder.
 /// Protocol: ndeadly/switch2_controller_research, hid_reports.md, Output 0x02.
-/// Known 0x5n frames use the four packed ten-bit slots emitted by SDL's
-/// EncodeHDRumble: frequency, amplitude, frequency, amplitude (little endian).
+/// Headers 0x5n, 0x6n and 0x7n declare 1, 2 and 3 five-byte samples.
+/// Each sample contains two little-endian ten-bit frequency/amplitude pairs.
 /// </summary>
 public static class Pro2NativeRumbleEncoder
 {
@@ -32,7 +32,7 @@ public static class Pro2NativeRumbleEncoder
         packet[0] = 0;
         if (gain != 1)
         {
-            if (!KnownFormat(report[1]) || !KnownFormat(report[17]))
+            if (!HasKnownBlocks(report))
             {
                 if (gain == 0)
                 {
@@ -46,7 +46,7 @@ public static class Pro2NativeRumbleEncoder
                 return false;
             }
             for (int side = 1; side <= 17; side += 16)
-            for (int frame = 0; frame < 3; frame++)
+            for (int frame = 0; frame < SampleCount(report[side]); frame++)
             {
                 Span<byte> data = packet.Slice(side + 1 + frame * 5, 5);
                 ulong packed = ReadFrame(data);
@@ -65,14 +65,36 @@ public static class Pro2NativeRumbleEncoder
         if (report.Length < PacketSize) return false;
         for (int side = 1; side <= 17; side += 16)
         {
-            if (!KnownFormat(report[side])) return true; // Never discard opaque commands as "silent".
-            for (int frame = 0; frame < 3; frame++)
+            if (!IsKnownBlock(report[side])) return true; // Never discard opaque commands as "silent".
+            for (int frame = 0; frame < SampleCount(report[side]); frame++)
                 if ((ReadFrame(report.Slice(side + 1 + frame * 5, 5)) & AmplitudeMask) != 0) return true;
         }
         return false;
     }
 
-    private static bool KnownFormat(byte header) => (header & 0xf0) == 0x50;
+    public static bool IsKnownBlock(byte header) => (header >> 4) is >= 5 and <= 7;
+    public static int SampleCount(byte header) => (header >> 4) - 4;
+    public static bool HasKnownBlocks(ReadOnlySpan<byte> report) => report.Length >= PacketSize &&
+        IsKnownBlock(report[1]) && IsKnownBlock(report[17]);
+
+    // An empty pair from the Pro1 decoder carries no new samples. Keep its
+    // original bytes for physical Pro1 sinks, without writing a Pro2 stop.
+    public static bool IsEmptyPro1Update(Pro2OutputPacket packet) =>
+        packet.NativePro1Rumble is {Length: 8} && packet.Report.Length == 64 &&
+        (packet.Report[1] & 0xf0) == 0x40 && (packet.Report[17] & 0xf0) == 0x40;
+
+    public static bool TryEncodeUsb(Pro2OutputPacket source, Span<byte> output, byte sequence, double gain,
+        out string error)
+    {
+        if (output.Length < 64) { error = "Pro2 USB output requires 64 bytes"; return false; }
+        bool encoded = source.PreserveNativePayload
+            ? TryEncode(source.Report, output, gain, out _, out error)
+            : Pro2BleRumblePacketEncoder.TryEncodeRaw02(source.Report, sequence, output, out _, out error, gain);
+        if (!encoded) return false;
+        output[0] = 0x02;
+        source.Report.AsSpan(PacketSize).CopyTo(output[PacketSize..]);
+        return true;
+    }
     private static ulong Scale(ulong amplitude, double gain) =>
         (ulong)Math.Clamp(Math.Round(amplitude * gain, MidpointRounding.AwayFromZero), 0, 1023);
     private static ulong ReadFrame(ReadOnlySpan<byte> data)
